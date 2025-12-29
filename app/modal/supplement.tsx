@@ -11,6 +11,7 @@ import {
   Alert,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { colors, spacing, radius } from "@/theme";
 import { SupplementRoute, SUPPLEMENT_ROUTES } from "@/types/Supplement";
@@ -143,147 +144,154 @@ export default function SupplementModal() {
   ----------------------------------------- */
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: colors.background.app }}
+      edges={["top"]}
     >
-      <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()}>
-            <Text style={styles.cancel}>Cancel</Text>
-          </Pressable>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
+      >
+        <View style={styles.container}>
+          {/* Header */}
+          <View style={styles.header}>
+            <Pressable onPress={() => router.back()}>
+              <Text style={styles.cancel}>Cancel</Text>
+            </Pressable>
 
-          <Text style={styles.title}>
-            {isEdit ? "Edit supplement" : "Add supplement"}
-          </Text>
-
-          <Pressable disabled={!canSave} onPress={handleSave}>
-            <Text style={[styles.save, !canSave && styles.saveDisabled]}>
-              Save
+            <Text style={styles.title}>
+              {isEdit ? "Edit supplement" : "Add supplement"}
             </Text>
-          </Pressable>
-        </View>
 
-        {/* Form */}
-        <ScrollView
-          contentContainerStyle={styles.form}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.field}>
-            <Text style={styles.label}>Name</Text>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="e.g. Magnesium glycinate"
-              placeholderTextColor={colors.text.muted}
-              style={styles.input}
-            />
+            <Pressable disabled={!canSave} onPress={handleSave}>
+              <Text style={[styles.save, !canSave && styles.saveDisabled]}>
+                Save
+              </Text>
+            </Pressable>
           </View>
 
-          <View style={styles.field}>
-            <Text style={styles.label}>Dose</Text>
-            <TextInput
-              value={dose}
-              onChangeText={setDose}
-              placeholder="e.g. 1 capsule, 2000 IU"
-              placeholderTextColor={colors.text.muted}
-              style={styles.input}
-            />
-          </View>
+          {/* Form */}
+          <ScrollView
+            contentContainerStyle={styles.form}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.field}>
+              <Text style={styles.label}>Name</Text>
+              <TextInput
+                value={name}
+                onChangeText={setName}
+                placeholder="e.g. Magnesium glycinate"
+                placeholderTextColor={colors.text.muted}
+                style={styles.input}
+              />
+            </View>
 
-          <View style={styles.field}>
-            <Text style={styles.label}>Type</Text>
+            <View style={styles.field}>
+              <Text style={styles.label}>Dose</Text>
+              <TextInput
+                value={dose}
+                onChangeText={setDose}
+                placeholder="e.g. 1 capsule, 2000 IU"
+                placeholderTextColor={colors.text.muted}
+                style={styles.input}
+              />
+            </View>
 
-            <View style={styles.routeRow}>
-              {SUPPLEMENT_ROUTES.map((r) => (
-                <Pressable
-                  key={r.key}
-                  onPress={() => setRoute(r.key)}
-                  style={[
-                    styles.routeOption,
-                    route === r.key && styles.routeOptionActive,
-                  ]}
-                >
-                  <Icon route={r.key} size={18} />
-                  <Text
+            <View style={styles.field}>
+              <Text style={styles.label}>Type</Text>
+
+              <View style={styles.routeRow}>
+                {SUPPLEMENT_ROUTES.map((r) => (
+                  <Pressable
+                    key={r.key}
+                    onPress={() => setRoute(r.key)}
                     style={[
-                      styles.routeLabel,
-                      route === r.key && styles.routeLabelActive,
+                      styles.routeOption,
+                      route === r.key && styles.routeOptionActive,
                     ]}
                   >
-                    {r.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Days</Text>
-
-            <View style={styles.daysRow}>
-              {DAYS.map((d) => {
-                const active = daysOfWeek.includes(d.value);
-
-                return (
-                  <Pressable
-                    key={d.value}
-                    onPress={() => toggleDay(d.value)}
-                    style={[styles.dayPill, active && styles.dayPillActive]}
-                  >
-                    <Text
-                      style={[styles.dayText, active && styles.dayTextActive]}
-                    >
-                      {d.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Time</Text>
-
-            <View style={styles.timePicker}>
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                snapToInterval={44}
-                decelerationRate="fast"
-              >
-                {TIME_OPTIONS.map((t) => (
-                  <Pressable
-                    key={t.minutes}
-                    onPress={() => setTimeMinutes(t.minutes)}
-                    style={[
-                      styles.timeOption,
-                      t.minutes === timeMinutes && styles.timeOptionActive,
-                    ]}
-                  >
+                    <Icon route={r.key} size={18} />
                     <Text
                       style={[
-                        styles.timeText,
-                        t.minutes === timeMinutes && styles.timeTextActive,
+                        styles.routeLabel,
+                        route === r.key && styles.routeLabelActive,
                       ]}
                     >
-                      {t.label}
+                      {r.label}
                     </Text>
                   </Pressable>
                 ))}
-              </ScrollView>
+              </View>
             </View>
-          </View>
 
-          {isEdit && (
-            <Pressable onPress={handleDelete} style={styles.deleteButton}>
-              <Text style={styles.deleteText}>Delete supplement</Text>
-            </Pressable>
-          )}
-        </ScrollView>
-      </View>
-    </KeyboardAvoidingView>
+            <View style={styles.field}>
+              <Text style={styles.label}>Days</Text>
+
+              <View style={styles.daysRow}>
+                {DAYS.map((d) => {
+                  const active = daysOfWeek.includes(d.value);
+
+                  return (
+                    <Pressable
+                      key={d.value}
+                      onPress={() => toggleDay(d.value)}
+                      style={[styles.dayPill, active && styles.dayPillActive]}
+                    >
+                      <Text
+                        style={[styles.dayText, active && styles.dayTextActive]}
+                      >
+                        {d.label}
+                      </Text>
+
+                      {!active && <View style={styles.diagonalStrike} />}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>Time</Text>
+
+              <View style={styles.timePicker}>
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  snapToInterval={44}
+                  decelerationRate="fast"
+                >
+                  {TIME_OPTIONS.map((t) => (
+                    <Pressable
+                      key={t.minutes}
+                      onPress={() => setTimeMinutes(t.minutes)}
+                      style={[
+                        styles.timeOption,
+                        t.minutes === timeMinutes && styles.timeOptionActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.timeText,
+                          t.minutes === timeMinutes && styles.timeTextActive,
+                        ]}
+                      >
+                        {t.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+            </View>
+
+            {isEdit && (
+              <Pressable onPress={handleDelete} style={styles.deleteButton}>
+                <Text style={styles.deleteText}>Delete supplement</Text>
+              </Pressable>
+            )}
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -444,5 +452,13 @@ const styles = StyleSheet.create({
   dayTextActive: {
     color: colors.text.inverse,
     fontWeight: "600",
+  },
+
+  diagonalStrike: {
+    position: "absolute",
+    width: "140%",
+    height: 1.5,
+    backgroundColor: colors.text.muted,
+    transform: [{ rotate: "-45deg" }],
   },
 });

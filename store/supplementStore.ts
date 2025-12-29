@@ -148,11 +148,17 @@ export const useSupplementsStore = create<SupplementStore>()(
         if (!state) return;
 
         // Backfill timeMinutes for older persisted supplements
-        state.supplements = state.supplements.map((s) =>
-          typeof s.timeMinutes === "number"
-            ? s
-            : { ...s, timeMinutes: timeToMinutes(s.time) }
-        );
+        state.supplements = state.supplements.map((s) => {
+          const withTime =
+            typeof s.timeMinutes === "number"
+              ? s
+              : { ...s, timeMinutes: timeToMinutes(s.time) };
+
+          // Ensure daysOfWeek exists for older records
+          return Array.isArray(withTime.daysOfWeek)
+            ? withTime
+            : { ...withTime, daysOfWeek: [0, 1, 2, 3, 4, 5, 6] };
+        });
       },
     }
   )

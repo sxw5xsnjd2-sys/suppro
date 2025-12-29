@@ -37,7 +37,11 @@ export default function SupplementsScreen() {
   return (
     <Screen
       header={
-        <Header title="Supplements" subtitle="What you’re currently taking" />
+        <Header
+          title="Supplements"
+          subtitle="What you’re currently taking"
+          centered
+        />
       }
     >
       <View style={styles.section}>
@@ -51,6 +55,7 @@ export default function SupplementsScreen() {
                 name={s.name}
                 subtitle={s.dose ? `${s.dose} · ${s.time}` : s.time}
                 route={s.route}
+                showCheckbox={false}
                 onPress={() =>
                   router.push({
                     pathname: "/modal/supplement",
@@ -73,11 +78,11 @@ export default function SupplementsScreen() {
 const styles = StyleSheet.create({
   section: {
     marginTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.xs,
   },
 
   list: {
-    gap: spacing.md,
+    gap: spacing.xs,
   },
 
   empty: {

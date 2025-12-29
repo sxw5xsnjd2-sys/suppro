@@ -3,6 +3,7 @@ import { View, Pressable, StyleSheet, Image } from "react-native";
 import { Tabs, router } from "expo-router";
 import { colors, spacing } from "@/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Stack } from "expo-router";
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
@@ -12,12 +13,17 @@ export default function TabsLayout() {
       <Tabs
         screenOptions={{
           headerShown: false,
+          tabBarShowLabel: true,
           tabBarActiveTintColor: colors.brand.primary,
           tabBarInactiveTintColor: colors.text.muted,
           tabBarStyle: {
             backgroundColor: colors.background.card,
             borderTopColor: colors.border.subtle,
             height: 64,
+          },
+          tabBarLabelStyle: {
+            fontSize: 12,
+            paddingBottom: 4,
           },
         }}
       >

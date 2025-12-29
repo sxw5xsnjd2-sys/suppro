@@ -6,17 +6,25 @@ type HeaderProps = {
   title: string;
   subtitle?: string;
   rightSlot?: React.ReactNode;
+  centered?: boolean;
 };
 
 export const HEADER_HEIGHT = 140;
 
-export function Header({ title, subtitle, rightSlot }: HeaderProps) {
+export function Header({ title, subtitle, rightSlot, centered }: HeaderProps) {
   return (
     <View style={styles.container}>
-      <View style={styles.row}>
-        <View style={styles.textBlock}>
-          <Text style={styles.title}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      <View style={[styles.row, centered && styles.rowCentered]}>
+        <View style={[styles.textBlock, centered && styles.textBlockCentered]}>
+          <Text style={[styles.title, centered && styles.textCentered]}>
+            {title}
+          </Text>
+
+          {subtitle ? (
+            <Text style={[styles.subtitle, centered && styles.textCentered]}>
+              {subtitle}
+            </Text>
+          ) : null}
         </View>
 
         {rightSlot ? <View style={styles.rightSlot}>{rightSlot}</View> : null}
@@ -51,9 +59,19 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     fontSize: 14,
     lineHeight: 18,
-    color: "rgba(255,255,255,0.75)", // muted inverse
+    color: "rgba(255,255,255,0.75)",
   },
   rightSlot: {
     marginLeft: spacing.md,
+  },
+
+  rowCentered: {
+    justifyContent: "center",
+  },
+  textBlockCentered: {
+    alignItems: "center",
+  },
+  textCentered: {
+    textAlign: "center",
   },
 });

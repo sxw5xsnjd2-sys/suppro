@@ -129,11 +129,25 @@ export function HomeHeader() {
       <View style={styles.monthRow}>
         <Text style={styles.monthLabel}>{visibleMonth}</Text>
 
-        {!isTodaySelected && (
-          <Pressable onPress={jumpToToday} style={styles.todayButtonWrap}>
-            <Text style={styles.todayButton}>Today</Text>
-          </Pressable>
-        )}
+        <Pressable
+          onPress={jumpToToday}
+          disabled={isTodaySelected}
+          style={[
+            styles.todayButton,
+            isTodaySelected
+              ? styles.todayButtonHidden
+              : styles.todayButtonVisible,
+          ]}
+        >
+          <Text
+            style={[
+              styles.todayText,
+              isTodaySelected && styles.todayTextHidden,
+            ]}
+          >
+            Today
+          </Text>
+        </Pressable>
       </View>
 
       {/* Scrollable date strip */}
@@ -206,18 +220,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
 
-  todayButtonWrap: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-
-  todayButton: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.text.inverse,
-    opacity: 0.9,
-  },
-
   monthLabel: {
     fontSize: 14,
     fontWeight: "500",
@@ -266,5 +268,28 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     fontSize: 14,
     color: "rgba(255,255,255,0.85)",
+  },
+
+  todayButton: {
+    alignSelf: "flex-end",
+    marginTop: spacing.sm,
+  },
+
+  todayText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: colors.text.inverse,
+  },
+
+  todayButtonHidden: {
+    opacity: 0,
+  },
+
+  todayTextHidden: {
+    color: "transparent",
+  },
+
+  todayButtonVisible: {
+    opacity: 1,
   },
 });

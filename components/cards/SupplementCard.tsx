@@ -11,6 +11,7 @@ type SupplementCardProps = {
   route: SupplementRoute;
   taken?: boolean;
   footer?: string;
+  showCheckbox?: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
 };
@@ -21,6 +22,7 @@ export function SupplementCard({
   taken = false,
   footer,
   route,
+  showCheckbox = true,
   onPress,
   onLongPress,
 }: SupplementCardProps) {
@@ -29,9 +31,9 @@ export function SupplementCard({
       onPress={onPress}
       onLongPress={onLongPress}
       delayLongPress={400}
-      style={({ pressed }) => [styles.wrapper, pressed && { opacity: 0.96 }]}
+      style={({ pressed }) => [styles.wrapper, pressed && styles.pressed]}
     >
-      <View style={styles.card}>
+      <View style={[styles.card, taken && styles.cardTaken]}>
         {/* Left icon */}
         <View style={styles.iconContainer}>
           <Icon route={route} size={28} />
@@ -39,24 +41,28 @@ export function SupplementCard({
 
         {/* Text */}
         <View style={styles.textContainer}>
-          <Text style={styles.name}>{name}</Text>
+          <Text style={[styles.name, taken && styles.nameTaken]}>{name}</Text>
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
         </View>
 
-        {/* Right state */}
-        {taken ? (
-          <View style={styles.check}>
-            <Ionicons
-              name="checkmark-circle"
-              size={22}
-              color={colors.status.success}
-            />
+        {/* Status indicator */}
+        {showCheckbox && (
+          <View style={styles.status}>
+            {taken ? (
+              <Ionicons
+                name="checkmark-circle"
+                size={22}
+                color={colors.status.success}
+              />
+            ) : (
+              <View style={styles.emptyCircle} />
+            )}
           </View>
-        ) : null}
+        )}
       </View>
 
-      {/* ✅ Footer */}
-      {footer ? <Text style={styles.footer}>{footer}</Text> : null}
+      {/* Footer */}
+      {footer ? <Text style={styles.footerOverlay}>{footer}</Text> : null}
     </Pressable>
   );
 }
@@ -67,7 +73,7 @@ const styles = StyleSheet.create({
   },
 
   pressed: {
-    opacity: 0.85,
+    opacity: 0.96,
   },
 
   card: {
@@ -77,6 +83,22 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: radius.lg,
     ...shadows.card,
+  },
+
+  cardTaken: {
+    backgroundColor: "rgba(22,163,74,0.06)", // subtle green wash
+  },
+
+  status: {
+    marginRight: spacing.md,
+  },
+
+  emptyCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: colors.border.subtle,
   },
 
   iconContainer: {
@@ -100,19 +122,28 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
 
+  nameTaken: {
+    color: colors.text.secondary,
+  },
+
   subtitle: {
     fontSize: typography.body.fontSize,
     color: colors.text.secondary,
   },
 
-  check: {
-    marginLeft: spacing.sm,
-  },
-
   footer: {
     marginTop: spacing.xs,
-    marginLeft: 44 + spacing.md,
+    marginLeft: 22 + spacing.md + 44 + spacing.md, // status + icon offset
     fontSize: typography.caption.fontSize ?? 12,
     color: colors.text.muted,
+  },
+
+  footerOverlay: {
+    position: "absolute",
+    right: spacing.md,
+    bottom: spacing.sm,
+    fontSize: typography.caption.fontSize ?? 12,
+    color: colors.text.muted,
+    textAlign: "right",
   },
 });
