@@ -32,6 +32,20 @@ const TIME_OPTIONS = Array.from({ length: 24 * 4 }, (_, i) => {
   };
 });
 
+/* ----------------------------------------
+     Days of weel
+  ----------------------------------------- */
+
+const DAYS = [
+  { label: "S", value: 0 },
+  { label: "M", value: 1 },
+  { label: "T", value: 2 },
+  { label: "W", value: 3 },
+  { label: "T", value: 4 },
+  { label: "F", value: 5 },
+  { label: "S", value: 6 },
+];
+
 export default function SupplementModal() {
   /* ----------------------------------------
      Params & mode
@@ -70,6 +84,16 @@ export default function SupplementModal() {
   const timeLabel =
     TIME_OPTIONS.find((t) => t.minutes === timeMinutes)?.label ?? "08:00";
 
+  const [daysOfWeek, setDaysOfWeek] = useState<number[]>(
+    supplement?.daysOfWeek ?? [0, 1, 2, 3, 4, 5, 6]
+  );
+
+  const toggleDay = (day: number) => {
+    setDaysOfWeek((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()
+    );
+  };
+
   /* ----------------------------------------
      Save / Delete
   ----------------------------------------- */
@@ -83,6 +107,7 @@ export default function SupplementModal() {
       route,
       time: timeLabel,
       timeMinutes,
+      daysOfWeek,
     };
 
     if (isEdit && id) {
@@ -192,6 +217,30 @@ export default function SupplementModal() {
                   </Text>
                 </Pressable>
               ))}
+            </View>
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Days</Text>
+
+            <View style={styles.daysRow}>
+              {DAYS.map((d) => {
+                const active = daysOfWeek.includes(d.value);
+
+                return (
+                  <Pressable
+                    key={d.value}
+                    onPress={() => toggleDay(d.value)}
+                    style={[styles.dayPill, active && styles.dayPillActive]}
+                  >
+                    <Text
+                      style={[styles.dayText, active && styles.dayTextActive]}
+                    >
+                      {d.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
 
@@ -366,5 +415,34 @@ const styles = StyleSheet.create({
     color: "#DC2626",
     fontSize: 15,
     fontWeight: "500",
+  },
+
+  daysRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+
+  dayPill: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.background.card,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  dayPillActive: {
+    backgroundColor: colors.background.header,
+  },
+
+  dayText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    fontWeight: "500",
+  },
+
+  dayTextActive: {
+    color: colors.text.inverse,
+    fontWeight: "600",
   },
 });

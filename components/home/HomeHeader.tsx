@@ -123,6 +123,11 @@ export function HomeHeader() {
           source={require("@/components/icons/Supprologo.png")}
           style={styles.logo}
         />
+      </View>
+
+      {/* Month indicator + Today */}
+      <View style={styles.monthRow}>
+        <Text style={styles.monthLabel}>{visibleMonth}</Text>
 
         {!isTodaySelected && (
           <Pressable onPress={jumpToToday} style={styles.todayButtonWrap}>
@@ -130,9 +135,6 @@ export function HomeHeader() {
           </Pressable>
         )}
       </View>
-
-      {/* Month indicator */}
-      <Text style={styles.monthLabel}>{visibleMonth}</Text>
 
       {/* Scrollable date strip */}
       <ScrollView
@@ -192,14 +194,21 @@ const styles = StyleSheet.create({
   },
 
   logo: {
-    width: 72,
-    height: 72,
+    width: 120,
+    height: 120,
     resizeMode: "contain",
   },
 
+  monthRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.sm,
+  },
+
   todayButtonWrap: {
-    position: "absolute",
-    right: 0,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
   },
 
   todayButton: {
@@ -213,7 +222,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
     color: "rgba(255,255,255,0.85)",
-    marginBottom: spacing.sm,
   },
 
   weekRow: {

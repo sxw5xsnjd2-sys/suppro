@@ -14,6 +14,7 @@ export type Supplement = {
   time: string; // display "HH:mm"
   timeMinutes: number; // minutes since midnight
   route: SupplementRoute;
+  daysOfWeek: number[];
 };
 
 type SupplementStore = {
@@ -62,6 +63,7 @@ export const useSupplementsStore = create<SupplementStore>()(
           time: "08:00",
           timeMinutes: 8 * 60,
           route: "tablet",
+          daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
         },
       ],
 
