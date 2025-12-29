@@ -1,98 +1,86 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
-
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import React from "react";
+import { View, Text, StyleSheet, Alert } from "react-native";
+import { Screen } from "@/components/layout/Screen";
+import { HomeHeader } from "@/components/home/HomeHeader";
+import { SupplementCard } from "@/components/cards/SupplementCard";
+import { colors, spacing } from "@/theme";
+import { useSupplementsStore } from "@/store/supplementStore";
+import { router } from "expo-router";
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const supplements = useSupplementsStore((s) => s.supplements);
+  const selectedDate = useSupplementsStore((s) => s.selectedDate);
+  const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  const takenTimes = takenTimesByDate[selectedDate] ?? {};
+
+  const toggleTaken = useSupplementsStore((s) => s.toggleTaken);
+  const deleteSupplement = useSupplementsStore((s) => s.deleteSupplement);
+
+  const supplementsByTime = supplements.reduce<
+    Record<number, typeof supplements>
+  >((acc, s) => {
+    if (!acc[s.timeMinutes]) acc[s.timeMinutes] = [];
+    acc[s.timeMinutes].push(s);
+    return acc;
+  }, {});
+
+  return (
+    <Screen header={<HomeHeader />}>
+      <View style={styles.content}>
+        {Object.entries(supplementsByTime)
+          .sort(([a], [b]) => Number(a) - Number(b)) // ✅ time order
+          .map(([timeMinutes, items]) => (
+            <View key={timeMinutes} style={styles.timeSection}>
+              <Text style={styles.timeLabel}>
+                {items[0].time} {/* display HH:mm */}
+              </Text>
+
+              <View style={styles.cardGroup}>
+                {items.map((s) => {
+                  const takenAt = takenTimes[s.id];
+
+                  return (
+                    <SupplementCard
+                      key={s.id}
+                      name={s.name}
+                      subtitle={s.dose}
+                      route={s.route}
+                      taken={Boolean(takenAt)}
+                      footer={takenAt ? `Taken at ${takenAt}` : undefined}
+                      onPress={() => toggleTaken(s.id)}
+                      onLongPress={() => {
+                        router.push({
+                          pathname: "/modal/supplement",
+                          params: { id: s.id },
+                        });
+                      }}
+                    />
+                  );
+                })}
+              </View>
+            </View>
+          ))}
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  content: {
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xl,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  timeSection: {
+    marginBottom: spacing.xl,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  timeLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: colors.text.primary,
+    marginBottom: spacing.md,
+  },
+  cardGroup: {
+    gap: spacing.md,
   },
 });
