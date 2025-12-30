@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -32,6 +32,9 @@ const TIME_OPTIONS = Array.from({ length: 24 * 4 }, (_, i) => {
     label: `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`,
   };
 });
+
+const TIME_ITEM_HEIGHT = 44;
+const TIME_PICKER_HEIGHT = 176;
 
 /* ----------------------------------------
      Days of weel
@@ -71,14 +74,25 @@ export default function SupplementModal() {
      Local state
   ----------------------------------------- */
 
+  const initialTimeMinutes = supplement?.timeMinutes ?? 8 * 60;
+  const initialTimeIndex = Math.max(
+    0,
+    TIME_OPTIONS.findIndex((t) => t.minutes === initialTimeMinutes)
+  );
+  const initialTimeOffset = Math.max(
+    0,
+    initialTimeIndex * TIME_ITEM_HEIGHT -
+      (TIME_PICKER_HEIGHT - TIME_ITEM_HEIGHT) / 2
+  );
+
   const [name, setName] = useState(supplement?.name ?? "");
   const [dose, setDose] = useState(supplement?.dose ?? "");
   const [route, setRoute] = useState<SupplementRoute>(
     supplement?.route ?? "tablet"
   );
-  const [timeMinutes, setTimeMinutes] = useState(
-    supplement?.timeMinutes ?? 8 * 60
-  );
+  const [timeMinutes, setTimeMinutes] = useState(initialTimeMinutes);
+  const timeScrollRef = useRef<ScrollView>(null);
+  const hasScrolledInitial = useRef(false);
 
   const canSave = name.trim().length > 0;
 
@@ -138,6 +152,24 @@ export default function SupplementModal() {
       },
     ]);
   };
+
+  useEffect(() => {
+    const index = TIME_OPTIONS.findIndex((t) => t.minutes === timeMinutes);
+    if (index === -1) return;
+
+    const centerOffset =
+      index * TIME_ITEM_HEIGHT -
+      (TIME_PICKER_HEIGHT - TIME_ITEM_HEIGHT) / 2;
+
+    timeScrollRef.current?.scrollTo({
+      y: Math.max(0, centerOffset),
+      animated: hasScrolledInitial.current,
+    });
+
+    if (!hasScrolledInitial.current) {
+      hasScrolledInitial.current = true;
+    }
+  }, [timeMinutes]);
 
   /* ----------------------------------------
      Render
@@ -256,9 +288,11 @@ export default function SupplementModal() {
 
               <View style={styles.timePicker}>
                 <ScrollView
+                  ref={timeScrollRef}
                   showsVerticalScrollIndicator={false}
-                  snapToInterval={44}
+                  snapToInterval={TIME_ITEM_HEIGHT}
                   decelerationRate="fast"
+                  contentOffset={{ x: 0, y: initialTimeOffset }}
                 >
                   {TIME_OPTIONS.map((t) => (
                     <Pressable
