@@ -1,9 +1,13 @@
 import React from "react";
-import { View, Pressable, StyleSheet, Image } from "react-native";
+import { View, Pressable, StyleSheet } from "react-native";
 import { Tabs, router } from "expo-router";
-import { colors, spacing } from "@/theme";
+import { colors } from "@/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Stack } from "expo-router";
+
+import HomeIcon from "@/components/icons/home.svg";
+import SupplementsIcon from "@/components/icons/supplements.svg";
+import HealthIcon from "@/components/icons/health.svg";
+import AiIcon from "@/components/icons/robot.svg";
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
@@ -15,7 +19,7 @@ export default function TabsLayout() {
           headerShown: false,
           tabBarShowLabel: true,
           tabBarActiveTintColor: colors.brand.primary,
-          tabBarInactiveTintColor: colors.text.muted,
+          tabBarInactiveTintColor: "rgba(15, 23, 42, 0.35)",
           tabBarStyle: {
             backgroundColor: colors.background.card,
             borderTopColor: colors.border.subtle,
@@ -32,47 +36,66 @@ export default function TabsLayout() {
           options={{
             title: "Home",
             tabBarIcon: ({ color }) => (
-              <Image
-                source={require("@/components/icons/home.png")}
-                style={[styles.tabIcon, { tintColor: color }]}
+              <HomeIcon
+                width={22}
+                height={22}
+                color={color}
+                fill={color}
+                stroke={color}
+                strokeWidth={0.55}
               />
             ),
           }}
         />
+
         <Tabs.Screen
           name="supplements"
           options={{
             title: "Supplements",
             tabBarItemStyle: { marginRight: 12 },
             tabBarIcon: ({ color }) => (
-              <Image
-                source={require("@/components/icons/supplements.png")}
-                style={[styles.tabIcon, { tintColor: color }]}
+              <SupplementsIcon
+                width={22}
+                height={22}
+                color={color}
+                fill={color}
+                stroke={color}
+                strokeWidth={0.55}
               />
             ),
           }}
         />
+
         <Tabs.Screen
           name="health"
           options={{
             title: "Health",
             tabBarItemStyle: { marginLeft: 12 },
             tabBarIcon: ({ color }) => (
-              <Image
-                source={require("@/components/icons/health.png")}
-                style={[styles.tabIcon, { tintColor: color }]}
+              <HealthIcon
+                width={22}
+                height={22}
+                color={color}
+                fill={color}
+                stroke={color}
+                strokeWidth={0.55}
               />
             ),
           }}
         />
+
         <Tabs.Screen
           name="protocols"
           options={{
             title: "AI",
             tabBarIcon: ({ color }) => (
-              <Image
-                source={require("@/components/icons/robot.png")}
-                style={[styles.tabIcon, { tintColor: color }]}
+              <AiIcon
+                width={22}
+                height={22}
+                color={color}
+                fill={color}
+                stroke={color}
+                strokeWidth={0.55}
               />
             ),
           }}
@@ -96,7 +119,6 @@ export default function TabsLayout() {
 const styles = StyleSheet.create({
   fab: {
     position: "absolute",
-    bottom: 32,
     alignSelf: "center",
     zIndex: 20,
   },
@@ -122,10 +144,5 @@ const styles = StyleSheet.create({
   },
   plusVertical: {
     transform: [{ rotate: "90deg" }],
-  },
-  tabIcon: {
-    width: 22,
-    height: 22,
-    resizeMode: "contain",
   },
 });

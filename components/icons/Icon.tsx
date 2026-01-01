@@ -1,31 +1,26 @@
 import React from "react";
-import { Image, StyleSheet } from "react-native";
 import { SupplementRoute } from "@/types/Supplement";
+
+import Pill from "./pill.svg";
+import Liquid from "./liquid.svg";
+import Powder from "./powder.svg";
+import Cream from "./cream.svg";
+import Syringe from "./syringe.svg";
 
 type Props = {
   route: SupplementRoute;
   size?: number;
 };
 
-const ICONS: Record<SupplementRoute, any> = {
-  tablet: require("./pill.png"),
-  liquid: require("./liquid.png"),
-  powder: require("./powder.png"),
-  topical: require("./cream.png"),
-  injectable: require("./syringe.png"),
+const ICONS: Record<SupplementRoute, React.FC<any>> = {
+  tablet: Pill,
+  liquid: Liquid,
+  powder: Powder,
+  topical: Cream,
+  injectable: Syringe,
 };
 
 export function Icon({ route, size = 28 }: Props) {
-  return (
-    <Image
-      source={ICONS[route]}
-      style={[styles.icon, { width: size, height: size }]}
-    />
-  );
+  const SvgIcon = ICONS[route];
+  return <SvgIcon width={size} height={size} strokeWidth={0.55} />;
 }
-
-const styles = StyleSheet.create({
-  icon: {
-    resizeMode: "contain",
-  },
-});
