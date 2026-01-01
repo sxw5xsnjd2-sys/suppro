@@ -43,6 +43,7 @@ export default function TabsLayout() {
           name="supplements"
           options={{
             title: "Supplements",
+            tabBarItemStyle: { marginRight: 12 },
             tabBarIcon: ({ color }) => (
               <Image
                 source={require("@/components/icons/supplements.png")}
@@ -55,6 +56,7 @@ export default function TabsLayout() {
           name="health"
           options={{
             title: "Health",
+            tabBarItemStyle: { marginLeft: 12 },
             tabBarIcon: ({ color }) => (
               <Image
                 source={require("@/components/icons/health.png")}
@@ -66,10 +68,10 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="protocols"
           options={{
-            title: "Protocols",
+            title: "AI",
             tabBarIcon: ({ color }) => (
               <Image
-                source={require("@/components/icons/protocols.png")}
+                source={require("@/components/icons/robot.png")}
                 style={[styles.tabIcon, { tintColor: color }]}
               />
             ),

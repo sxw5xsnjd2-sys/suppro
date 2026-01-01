@@ -17,7 +17,8 @@ import { useSupplementsStore } from "@/store/supplementStore";
    Date helpers
 ----------------------------------------- */
 
-const ITEM_WIDTH = 44 + spacing.lg; // item + gap
+// Narrower width so we can show ~7 days on most screens instead of ~5
+const ITEM_WIDTH = 44 + spacing.sm; // item + gap
 
 const toISODate = (d: Date) => d.toISOString().split("T")[0];
 
@@ -129,24 +130,8 @@ export function HomeHeader() {
       <View style={styles.monthRow}>
         <Text style={styles.monthLabel}>{visibleMonth}</Text>
 
-        <Pressable
-          onPress={jumpToToday}
-          disabled={isTodaySelected}
-          style={[
-            styles.todayButton,
-            isTodaySelected
-              ? styles.todayButtonHidden
-              : styles.todayButtonVisible,
-          ]}
-        >
-          <Text
-            style={[
-              styles.todayText,
-              isTodaySelected && styles.todayTextHidden,
-            ]}
-          >
-            Today
-          </Text>
+        <Pressable onPress={jumpToToday} style={[styles.todayButton]}>
+          <Text style={[styles.todayText]}>Today</Text>
         </Pressable>
       </View>
 
@@ -228,7 +213,7 @@ const styles = StyleSheet.create({
 
   weekRow: {
     paddingBottom: spacing.sm,
-    gap: spacing.lg,
+    gap: spacing.sm,
   },
 
   dayItem: {
@@ -279,17 +264,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
     color: colors.text.inverse,
-  },
-
-  todayButtonHidden: {
-    opacity: 0,
-  },
-
-  todayTextHidden: {
-    color: "transparent",
-  },
-
-  todayButtonVisible: {
-    opacity: 1,
   },
 });
