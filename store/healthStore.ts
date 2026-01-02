@@ -12,11 +12,12 @@ type HealthState = {
 
   addMetric: (metric: MetricRegistryItem) => void;
   enableMetric: (key: string) => void;
+  deleteMetric: (key: string) => void;
 };
 
 export const useHealthStore = create<HealthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       // ─────────────────────────────────────────────
       // State
       // ─────────────────────────────────────────────
@@ -61,6 +62,12 @@ export const useHealthStore = create<HealthState>()(
           metrics: state.metrics.map((m) =>
             m.key === key ? { ...m, enabled: true } : m
           ),
+        })),
+
+      deleteMetric: (key) =>
+        set((state) => ({
+          metrics: state.metrics.filter((m) => m.key !== key),
+          entries: state.entries.filter((e) => e.type !== key),
         })),
     }),
     {

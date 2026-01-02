@@ -1,6 +1,15 @@
 import React from "react";
 import { View, LayoutChangeEvent } from "react-native";
-import Svg, { Path, Circle } from "react-native-svg";
+import Svg, {
+  Path,
+  Line,
+  Circle,
+  Defs,
+  ClipPath,
+  Rect,
+  G,
+} from "react-native-svg";
+
 import { colors } from "@/theme";
 
 type Props = {
@@ -18,68 +27,89 @@ export function MiniLineChart({
 }: Props) {
   const [width, setWidth] = React.useState(0);
 
-  if (data.length === 0) {
-    return null;
-  }
+  const padding = 10;
+  const top = padding;
+  const bottom = height - padding;
+  const plotHeight = bottom - top;
 
   const onLayout = (e: LayoutChangeEvent) => {
-    setWidth(e.nativeEvent.layout.width);
+    const w = e.nativeEvent.layout.width;
+    if (w !== width) setWidth(w);
   };
 
-  const padding = 8;
-  const clampY = (y: number, margin = 0) =>
-    Math.min(height - padding - margin, Math.max(padding + margin, y));
+  const clamp = (v: number, lo: number, hi: number) =>
+    Math.min(hi, Math.max(lo, v));
 
-  // ⛔️ wait for layout before drawing anything
   if (width === 0) {
     return <View onLayout={onLayout} style={{ height }} />;
   }
 
-  // ✅ Single data point → single dot
+  const x0 = padding;
+  const x1 = width - padding;
+
+  const valueToY = (value: number) => {
+    const v = clamp(value, min, max);
+    const t = (v - min) / (max - min); // 0..1
+    const y = bottom - t * plotHeight;
+    return clamp(y, top, bottom);
+  };
+
+  // 0 points
+  if (data.length === 0) return null;
+
+  // ─────────────────────────────────────────────
+  // 1 point → single dot
+  // ─────────────────────────────────────────────
   if (data.length === 1) {
     const cx = width / 2;
-    const clamped = Math.min(Math.max(data[0], min), max);
-    const chartHeight = height - padding * 2;
-    const rawY =
-      padding + chartHeight - ((clamped - min) / (max - min)) * chartHeight;
-    const cy = clampY(rawY, 3); // keep dot fully inside
+    const cy = valueToY(data[0]);
 
     return (
-      <View onLayout={onLayout}>
-        <Svg width={width} height={height}>
-          {/* Axes */}
-          <Path
-            d={`M ${padding} ${height - padding} L ${width - padding} ${height - padding}`}
-            stroke={colors.border.subtle}
-            strokeWidth={1}
-          />
-          <Path
-            d={`M ${padding} ${padding} L ${padding} ${height - padding}`}
-            stroke={colors.border.subtle}
-            strokeWidth={1}
-          />
+      <View onLayout={onLayout} style={{ height }}>
+        <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+          <Defs>
+            <ClipPath id="clip">
+              <Rect x="0" y="0" width={width} height={height} />
+            </ClipPath>
+          </Defs>
 
-          <Circle
-            cx={cx}
-            cy={cy}
-            r={3}
-            fill={colors.brand.primary}
-            opacity={0.85}
-          />
+          <G clipPath="url(#clip)">
+            {/* axes */}
+            <Line
+              x1={x0}
+              y1={top}
+              x2={x0}
+              y2={bottom}
+              stroke={colors.border.subtle}
+            />
+            <Line
+              x1={x0}
+              y1={bottom}
+              x2={x1}
+              y2={bottom}
+              stroke={colors.border.subtle}
+            />
+
+            <Circle
+              cx={cx}
+              cy={cy}
+              r={3.5}
+              fill={colors.brand.primary}
+              opacity={0.9}
+            />
+          </G>
         </Svg>
       </View>
     );
   }
 
-  const chartWidth = width - padding * 2;
-  const chartHeight = height - padding * 2;
-
+  // ─────────────────────────────────────────────
+  // 2+ points → line
+  // ─────────────────────────────────────────────
   const points = data.map((value, index) => {
-    const clamped = Math.min(Math.max(value, min), max);
-    const x = padding + (index / (data.length - 1)) * chartWidth;
-    const rawY =
-      padding + chartHeight - ((clamped - min) / (max - min)) * chartHeight;
-    const y = clampY(rawY, 1); // keep stroke inside chart box
+    const t = index / (data.length - 1); // 0..1
+    const x = x0 + t * (x1 - x0);
+    const y = valueToY(value);
     return { x, y };
   });
 
@@ -88,21 +118,51 @@ export function MiniLineChart({
     .join(" ");
 
   return (
-    <View onLayout={onLayout}>
-      <Svg width={width} height={height}>
-        {/* Axes */}
-        <Path
-          d={`M ${padding} ${height - padding} L ${width - padding} ${height - padding}`}
-          stroke={colors.border.subtle}
-          strokeWidth={1}
-        />
-        <Path
-          d={`M ${padding} ${padding} L ${padding} ${height - padding}`}
-          stroke={colors.border.subtle}
-          strokeWidth={1}
-        />
+    <View onLayout={onLayout} style={{ height }}>
+      <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+        <Defs>
+          <ClipPath id="clip">
+            <Rect x="0" y="0" width={width} height={height} />
+          </ClipPath>
+        </Defs>
 
-        <Path d={d} stroke={colors.brand.primary} strokeWidth={2} fill="none" />
+        <G clipPath="url(#clip)">
+          {/* axes */}
+          <Line
+            x1={x0}
+            y1={top}
+            x2={x0}
+            y2={bottom}
+            stroke={colors.border.subtle}
+          />
+          <Line
+            x1={x0}
+            y1={bottom}
+            x2={x1}
+            y2={bottom}
+            stroke={colors.border.subtle}
+          />
+
+          {/* line */}
+          <Path
+            d={d}
+            stroke={colors.brand.primary}
+            strokeWidth={2}
+            fill="none"
+          />
+
+          {/* points */}
+          {points.map((p, i) => (
+            <Circle
+              key={i}
+              cx={p.x}
+              cy={p.y}
+              r={2.5}
+              fill={colors.brand.primary}
+              opacity={0.9}
+            />
+          ))}
+        </G>
       </Svg>
     </View>
   );
