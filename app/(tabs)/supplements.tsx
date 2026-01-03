@@ -16,8 +16,8 @@ function EmptyState() {
     <View style={styles.empty}>
       <Text style={styles.emptyTitle}>No supplements added</Text>
       <Text style={styles.emptyText}>
-        Add the supplements you currently take to get reminders, protocols, and
-        health insights.
+        Add the supplements you currently take to get reminders and health
+        insights.
       </Text>
     </View>
   );

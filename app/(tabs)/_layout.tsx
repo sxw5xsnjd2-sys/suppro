@@ -85,7 +85,7 @@ export default function TabsLayout() {
         />
 
         <Tabs.Screen
-          name="protocols"
+          name="ai"
           options={{
             title: "AI",
             tabBarIcon: ({ color }) => (
