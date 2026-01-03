@@ -65,9 +65,14 @@ const formatEntryDate = (dateString: string) => {
 type TimelineEntryRowProps = {
   entry: HealthEntry;
   onDeletePress: (entry: HealthEntry) => void;
+  onSelect: (entry: HealthEntry) => void;
 };
 
-function TimelineEntryRow({ entry, onDeletePress }: TimelineEntryRowProps) {
+function TimelineEntryRow({
+  entry,
+  onDeletePress,
+  onSelect,
+}: TimelineEntryRowProps) {
   const [headerHeight, setHeaderHeight] = useState<number | null>(null);
 
   return (
@@ -107,7 +112,10 @@ function TimelineEntryRow({ entry, onDeletePress }: TimelineEntryRowProps) {
       <View style={styles.timelineCard}>
         <View style={styles.timelineDot} />
 
-        <View style={styles.timelineContent}>
+        <Pressable
+          style={styles.timelineContent}
+          onPress={() => onSelect(entry)}
+        >
           <View
             style={styles.timelineHeader}
             onLayout={({ nativeEvent }) => {
@@ -129,7 +137,7 @@ function TimelineEntryRow({ entry, onDeletePress }: TimelineEntryRowProps) {
           {entry.note ? (
             <Text style={styles.timelineNote}>{entry.note}</Text>
           ) : null}
-        </View>
+        </Pressable>
       </View>
     </Swipeable>
   );
@@ -185,6 +193,16 @@ export function HealthMetricSummaryModal({
   const scrollRef = useRef<ScrollView>(null);
   const insets = useSafeAreaInsets();
   const reversedEntries = useMemo(() => [...sorted].reverse(), [sorted]);
+  const entryIndexMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    sorted.forEach((e, i) => {
+      map[e.id] = i;
+    });
+    return map;
+  }, [sorted]);
+
+  const notesScrollRef = useRef<ScrollView>(null);
+  const entryLayouts = useRef<Record<string, number>>({});
 
   const [showDeleteModal, setShowDeleteModal] = useState(false); // entry-level delete
   const [showMetricDeleteModal, setShowMetricDeleteModal] = useState(false);
@@ -195,9 +213,21 @@ export function HealthMetricSummaryModal({
   };
 
   const [entryToDelete, setEntryToDelete] = useState<HealthEntry | null>(null);
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const handleEntryDeletePress = (entry: HealthEntry) => {
     setEntryToDelete(entry);
     setShowDeleteModal(true);
+  };
+  const handleEntrySelect = (entry: HealthEntry) => {
+    setSelectedEntryId(entry.id);
+
+    const index = entryIndexMap[entry.id];
+    if (index !== undefined) {
+      const x = getX(index);
+      const maxOffset = Math.max(width - screenWidth, 0);
+      const targetX = Math.min(Math.max(x - screenWidth / 2, 0), maxOffset);
+      scrollRef.current?.scrollTo({ x: targetX, animated: true });
+    }
   };
 
   return (
@@ -295,8 +325,31 @@ export function HealthMetricSummaryModal({
                           <Circle
                             cx={x}
                             cy={y}
-                            r={4}
+                            r={16}
+                            fill="transparent"
+                            onPress={() => {
+                              setSelectedEntryId(e.id);
+
+                              const targetY = entryLayouts.current[e.id];
+                              if (targetY !== undefined) {
+                                notesScrollRef.current?.scrollTo({
+                                  y: Math.max(targetY - spacing.md, 0),
+                                  animated: true,
+                                });
+                              }
+                            }}
+                          />
+                          <Circle
+                            cx={x}
+                            cy={y}
+                            r={selectedEntryId === e.id ? 8 : 6}
                             fill={colors.brand.primary}
+                            stroke={
+                              selectedEntryId === e.id
+                                ? colors.brand.primary
+                                : "transparent"
+                            }
+                            strokeWidth={selectedEntryId === e.id ? 2 : 0}
                           />
                           <SvgText
                             x={x}
@@ -316,17 +369,29 @@ export function HealthMetricSummaryModal({
             </View>
 
             <ScrollView
+              ref={notesScrollRef}
               style={styles.notes}
               contentContainerStyle={styles.notesContent}
             >
-              {reversedEntries.map((entry, i) => (
-                <TimelineEntryRow
-                  key={`${entry.id}-${i}`}
-                  entry={entry}
-                  onDeletePress={handleEntryDeletePress}
-                />
-              ))}
-            </ScrollView>
+              {reversedEntries.map((entry) => (
+                <View
+                  key={entry.id}
+                      onLayout={({ nativeEvent }) => {
+                        entryLayouts.current[entry.id] = nativeEvent.layout.y;
+                      }}
+                      style={[
+                        styles.timelineRow,
+                        selectedEntryId === entry.id && styles.selectedRow,
+                      ]}
+                    >
+                      <TimelineEntryRow
+                        entry={entry}
+                        onDeletePress={handleEntryDeletePress}
+                        onSelect={handleEntrySelect}
+                      />
+                    </View>
+                  ))}
+                </ScrollView>
             <DeleteMetricModal
               visible={showDeleteModal}
               metricLabel={label}
@@ -451,8 +516,6 @@ const styles = StyleSheet.create({
   timelineContent: {
     flex: 1,
     paddingBottom: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border.subtle,
   },
 
   timelineHeader: {
@@ -533,5 +596,15 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "600",
     fontSize: 12,
+  },
+
+  selectedRow: {
+    backgroundColor: colors.brand.primary + "0F",
+    borderRadius: 8,
+  },
+
+  timelineRow: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border.subtle,
   },
 });
