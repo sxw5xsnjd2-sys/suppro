@@ -152,9 +152,11 @@ export function HealthMetricSummaryModal({
   onDeleteMetric,
   onDeleteEntry,
 }: Props) {
+  const safeEntries = entries ?? [];
+
   const sorted = useMemo(
-    () => [...entries].sort((a, b) => a.date.localeCompare(b.date)),
-    [entries]
+    () => [...safeEntries].sort((a, b) => a.date.localeCompare(b.date)),
+    [safeEntries]
   );
 
   useEffect(() => {
@@ -229,6 +231,10 @@ export function HealthMetricSummaryModal({
       scrollRef.current?.scrollTo({ x: targetX, animated: true });
     }
   };
+
+  if (!safeEntries.length) {
+    return null;
+  }
 
   return (
     <Modal visible={visible} animationType="slide">
@@ -376,22 +382,22 @@ export function HealthMetricSummaryModal({
               {reversedEntries.map((entry) => (
                 <View
                   key={entry.id}
-                      onLayout={({ nativeEvent }) => {
-                        entryLayouts.current[entry.id] = nativeEvent.layout.y;
-                      }}
-                      style={[
-                        styles.timelineRow,
-                        selectedEntryId === entry.id && styles.selectedRow,
-                      ]}
-                    >
-                      <TimelineEntryRow
-                        entry={entry}
-                        onDeletePress={handleEntryDeletePress}
-                        onSelect={handleEntrySelect}
-                      />
-                    </View>
-                  ))}
-                </ScrollView>
+                  onLayout={({ nativeEvent }) => {
+                    entryLayouts.current[entry.id] = nativeEvent.layout.y;
+                  }}
+                  style={[
+                    styles.timelineRow,
+                    selectedEntryId === entry.id && styles.selectedRow,
+                  ]}
+                >
+                  <TimelineEntryRow
+                    entry={entry}
+                    onDeletePress={handleEntryDeletePress}
+                    onSelect={handleEntrySelect}
+                  />
+                </View>
+              ))}
+            </ScrollView>
             <DeleteMetricModal
               visible={showDeleteModal}
               metricLabel={label}
@@ -415,9 +421,11 @@ export function HealthMetricSummaryModal({
               variant="metric"
               onCancel={() => setShowMetricDeleteModal(false)}
               onConfirm={() => {
-                setShowMetricDeleteModal(false);
-                onDeleteMetric();
                 onClose();
+                requestAnimationFrame(() => {
+                  setShowMetricDeleteModal(false);
+                  onDeleteMetric();
+                });
               }}
             />
           </SafeAreaView>
