@@ -5,6 +5,7 @@ import { Header } from "@/components/layout/Header";
 import { colors, spacing, radius, shadows } from "@/theme";
 
 import { useHealthStore } from "@/store/healthStore";
+import { useSupplementsStore } from "@/store/supplementStore";
 import { MiniLineChart } from "@/components/health/MiniLineChart";
 import { HealthEntryModal } from "@/components/health/HealthEntryModal";
 import { AddMetricModal } from "@/components/health/AddMetricModal";
@@ -15,6 +16,7 @@ export default function HealthScreen() {
   const metrics = useHealthStore((s) => s.metrics);
   const deleteMetric = useHealthStore((s) => s.deleteMetric);
   const deleteEntry = useHealthStore((s) => s.deleteEntry);
+  const supplements = useSupplementsStore((s) => s.supplements);
 
   const enabledMetrics = useMemo(
     () => metrics.filter((m) => m.enabled),
@@ -46,6 +48,15 @@ export default function HealthScreen() {
   const closeSummary = () => {
     setSummaryMetric(null);
   };
+
+  const supplementMarkers = useMemo(
+    () =>
+      supplements.map((s) => ({
+        name: s.name,
+        startDate: s.createdAt,
+      })),
+    [supplements]
+  );
 
   return (
     <Screen
@@ -132,6 +143,7 @@ export default function HealthScreen() {
           closeSummary();
         }}
         onDeleteEntry={(id) => deleteEntry(id)}
+        supplementMarkers={supplementMarkers}
       />
     </Screen>
   );

@@ -131,6 +131,7 @@ export default function SupplementModal() {
       addSupplement({
         id: Date.now().toString(),
         ...payload,
+        createdAt: new Date().toISOString().split("T")[0],
       });
     }
 

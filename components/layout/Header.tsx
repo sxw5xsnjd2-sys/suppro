@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing } from "@/theme";
 
 type HeaderProps = {
@@ -12,8 +13,18 @@ type HeaderProps = {
 export const HEADER_HEIGHT = 140;
 
 export function Header({ title, subtitle, rightSlot, centered }: HeaderProps) {
+  const insets = useSafeAreaInsets();
+
   return (
-    <View style={styles.container}>
+    <View
+      style={[
+        styles.container,
+        {
+          paddingTop: insets.top + spacing.md,
+          height: HEADER_HEIGHT + insets.top,
+        },
+      ]}
+    >
       <View style={[styles.row, centered && styles.rowCentered]}>
         <View style={[styles.textBlock, centered && styles.textBlockCentered]}>
           <Text style={[styles.title, centered && styles.textCentered]}>

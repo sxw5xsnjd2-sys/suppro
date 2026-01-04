@@ -23,6 +23,11 @@ import {
 } from "react-native-gesture-handler";
 import { DeleteMetricModal } from "./DeleteMetricModal";
 
+type SupplementMarker = {
+  name: string;
+  startDate: string; // YYYY-MM-DD
+};
+
 type Props = {
   visible: boolean;
   label?: string;
@@ -31,6 +36,7 @@ type Props = {
   onClose: () => void;
   onDeleteMetric: () => void;
   onDeleteEntry: (id: string) => void;
+  supplementMarkers?: SupplementMarker[];
 };
 
 const CHART_HEIGHT = 260;
@@ -151,6 +157,7 @@ export function HealthMetricSummaryModal({
   onClose,
   onDeleteMetric,
   onDeleteEntry,
+  supplementMarkers,
 }: Props) {
   const safeEntries = entries ?? [];
 
@@ -180,6 +187,65 @@ export function HealthMetricSummaryModal({
     (i / Math.max(sorted.length - 1, 1)) * (width - SIDE_PADDING * 2);
 
   const getY = (value: number) => TOP + ((10 - value) / 9) * PLOT_HEIGHT;
+
+  const markersWithX = useMemo(() => {
+    if (!supplementMarkers || supplementMarkers.length === 0) return [];
+    if (sorted.length === 0) return [];
+
+    const firstDate = sorted[0].date;
+    const lastDate = sorted[sorted.length - 1].date;
+
+    return supplementMarkers.map((marker) => {
+      const startDate = marker.startDate;
+
+      if (startDate <= firstDate) return { ...marker, x: getX(0) };
+      if (startDate >= lastDate)
+        return { ...marker, x: getX(sorted.length - 1) };
+
+      const index = sorted.findIndex((e) => e.date >= startDate);
+      return {
+        ...marker,
+        x: getX(index === -1 ? sorted.length - 1 : index),
+      };
+    });
+  }, [sorted, supplementMarkers, width]);
+
+  const markersWithStack = useMemo(() => {
+    const countByX: Record<number, number> = {};
+    return markersWithX.map((m) => {
+      const count = countByX[m.x] ?? 0;
+      countByX[m.x] = count + 1;
+      return { ...m, stack: count };
+    });
+  }, [markersWithX]);
+
+  const showCondensedMarkers = markersWithX.length > 3;
+
+  const condensedMarkers = useMemo(() => {
+    if (!showCondensedMarkers) return [];
+
+    const byX = new Map<
+      number,
+      {
+        count: number;
+        startDate: string;
+      }
+    >();
+
+    markersWithX.forEach((m) => {
+      const existing = byX.get(m.x);
+      if (existing) {
+        byX.set(m.x, { ...existing, count: existing.count + 1 });
+      } else {
+        byX.set(m.x, { count: 1, startDate: m.startDate });
+      }
+    });
+
+    return Array.from(byX.entries()).map(([x, value]) => ({
+      x,
+      ...value,
+    }));
+  }, [markersWithX, showCondensedMarkers]);
 
   const path =
     sorted.length >= 2
@@ -292,6 +358,78 @@ export function HealthMetricSummaryModal({
                   showsHorizontalScrollIndicator={false}
                 >
                   <Svg width={width} height={CHART_HEIGHT}>
+                    {/* Supplement start markers */}
+                    {showCondensedMarkers
+                      ? condensedMarkers.map((marker, idx) => (
+                          <React.Fragment
+                            key={`${marker.startDate}-condensed-${idx}`}
+                          >
+                            <Line
+                              x1={marker.x}
+                              y1={TOP}
+                              x2={marker.x}
+                              y2={BOTTOM}
+                              stroke={colors.brand.primary}
+                              strokeWidth={1.5}
+                              strokeDasharray="4 3"
+                            />
+                            <SvgText
+                              x={marker.x}
+                              y={TOP - 10}
+                              fontSize="10"
+                              fill={colors.text.secondary}
+                              textAnchor="middle"
+                            >
+                              {`${marker.count} supplements started`}
+                            </SvgText>
+                            <SvgText
+                              x={marker.x}
+                              y={BOTTOM + 32}
+                              fontSize="10"
+                              fill={colors.text.muted}
+                              textAnchor="middle"
+                            >
+                              {marker.startDate.split("-").reverse().join("/")}
+                            </SvgText>
+                          </React.Fragment>
+                        ))
+                      : markersWithStack.map((marker, idx) => {
+                          const stackOffset = marker.stack * 14; // stack per X to avoid overlaps
+                          return (
+                            <React.Fragment
+                              key={`${marker.startDate}-${idx}`}
+                            >
+                              <Line
+                                x1={marker.x}
+                                y1={TOP}
+                                x2={marker.x}
+                                y2={BOTTOM}
+                                stroke={colors.brand.primary}
+                                strokeWidth={1.5}
+                                strokeDasharray="4 3"
+                              />
+                              <SvgText
+                                x={marker.x}
+                                y={TOP - 10 - stackOffset}
+                                fontSize="10"
+                                fill={colors.text.secondary}
+                                textAnchor="middle"
+                              >
+                                {`${marker.name} start`}
+                              </SvgText>
+                              <SvgText
+                                x={marker.x}
+                                y={BOTTOM + 32 + stackOffset}
+                                fontSize="10"
+                                fill={colors.text.muted}
+                                textAnchor="middle"
+                              >
+                                {marker.startDate.split("-").reverse().join("/")}
+                              </SvgText>
+                            </React.Fragment>
+                          );
+                        })}
+
                     {/* X axis */}
                     <Line
                       x1={SIDE_PADDING}

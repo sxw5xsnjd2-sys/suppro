@@ -12,6 +12,7 @@ export type Supplement = {
   time: string;
   timeMinutes: number;
   dose?: string;
+  createdAt: string;
 };
 
 export const SUPPLEMENT_ROUTES: {

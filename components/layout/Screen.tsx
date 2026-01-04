@@ -5,9 +5,10 @@ import { colors, spacing } from "@/theme";
 type ScreenProps = {
   children: React.ReactNode;
   header?: React.ReactNode;
+  scrollable?: boolean;
 };
 
-export function Screen({ children, header }: ScreenProps) {
+export function Screen({ children, header, scrollable = true }: ScreenProps) {
   const [headerHeight, setHeaderHeight] = useState(0);
 
   const onHeaderLayout = (e: LayoutChangeEvent) => {
@@ -23,15 +24,27 @@ export function Screen({ children, header }: ScreenProps) {
         </View>
       ) : null}
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.content,
-          header ? { paddingTop: headerHeight + spacing.md } : null,
-        ]}
-      >
-        {children}
-      </ScrollView>
+      {scrollable ? (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[
+            styles.content,
+            header ? { paddingTop: headerHeight + spacing.md } : null,
+          ]}
+        >
+          {children}
+        </ScrollView>
+      ) : (
+        <View
+          style={[
+            styles.content,
+            header ? { paddingTop: headerHeight + spacing.md } : null,
+            { flex: 1 },
+          ]}
+        >
+          {children}
+        </View>
+      )}
     </View>
   );
 }

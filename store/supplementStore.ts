@@ -15,6 +15,7 @@ export type Supplement = {
   timeMinutes: number; // minutes since midnight
   route: SupplementRoute;
   daysOfWeek: number[];
+  createdAt: string; // YYYY-MM-DD (first time it was added)
 };
 
 type SupplementStore = {
@@ -64,6 +65,7 @@ export const useSupplementsStore = create<SupplementStore>()(
           timeMinutes: 8 * 60,
           route: "tablet",
           daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+          createdAt: today(),
         },
       ],
 
@@ -155,9 +157,14 @@ export const useSupplementsStore = create<SupplementStore>()(
               : { ...s, timeMinutes: timeToMinutes(s.time) };
 
           // Ensure daysOfWeek exists for older records
-          return Array.isArray(withTime.daysOfWeek)
+          const withDays = Array.isArray(withTime.daysOfWeek)
             ? withTime
             : { ...withTime, daysOfWeek: [0, 1, 2, 3, 4, 5, 6] };
+
+          // Backfill createdAt if missing
+          return withDays.createdAt
+            ? withDays
+            : { ...withDays, createdAt: today() };
         });
       },
     }
