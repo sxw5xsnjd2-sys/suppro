@@ -15,7 +15,10 @@ export type Supplement = {
   timeMinutes: number; // minutes since midnight
   route: SupplementRoute;
   daysOfWeek: number[];
-  createdAt: string; // YYYY-MM-DD (first time it was added)
+  startDate: string; // YYYY-MM-DD (first time it was added)
+  endDate?: string | null; // YYYY-MM-DD (optional)
+  // Legacy compatibility: keep createdAt if already persisted
+  createdAt?: string;
 };
 
 type SupplementStore = {
@@ -65,7 +68,8 @@ export const useSupplementsStore = create<SupplementStore>()(
           timeMinutes: 8 * 60,
           route: "tablet",
           daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
-          createdAt: today(),
+          startDate: today(),
+          endDate: null,
         },
       ],
 
@@ -81,7 +85,14 @@ export const useSupplementsStore = create<SupplementStore>()(
 
       addSupplement: (s) =>
         set((state) => ({
-          supplements: [...state.supplements, s],
+          supplements: [
+            ...state.supplements,
+            {
+              ...s,
+              startDate: s.startDate ?? today(),
+              endDate: s.endDate ?? null,
+            },
+          ],
         })),
 
       updateSupplement: (id, updates) =>
@@ -147,25 +158,43 @@ export const useSupplementsStore = create<SupplementStore>()(
       /* ---------- Rehydration & Migration ---------- */
 
       onRehydrateStorage: () => (state) => {
-        if (!state) return;
+        if (!state?.supplements) return;
 
-        // Backfill timeMinutes for older persisted supplements
-        state.supplements = state.supplements.map((s) => {
-          const withTime =
-            typeof s.timeMinutes === "number"
-              ? s
-              : { ...s, timeMinutes: timeToMinutes(s.time) };
+        let didMigrate = false;
 
-          // Ensure daysOfWeek exists for older records
-          const withDays = Array.isArray(withTime.daysOfWeek)
-            ? withTime
-            : { ...withTime, daysOfWeek: [0, 1, 2, 3, 4, 5, 6] };
+        const migrated = state.supplements.map((s) => {
+          let updated = s;
 
-          // Backfill createdAt if missing
-          return withDays.createdAt
-            ? withDays
-            : { ...withDays, createdAt: today() };
+          if (typeof updated.timeMinutes !== "number") {
+            updated = { ...updated, timeMinutes: timeToMinutes(updated.time) };
+            didMigrate = true;
+          }
+
+          if (!Array.isArray(updated.daysOfWeek)) {
+            updated = { ...updated, daysOfWeek: [0, 1, 2, 3, 4, 5, 6] };
+            didMigrate = true;
+          }
+
+          const startDate = updated.startDate ?? updated.createdAt;
+          if (!startDate) {
+            updated = { ...updated, startDate: today() };
+            didMigrate = true;
+          } else if (!updated.startDate) {
+            updated = { ...updated, startDate };
+            didMigrate = true;
+          }
+
+          if (updated.endDate === undefined) {
+            updated = { ...updated, endDate: null };
+            didMigrate = true;
+          }
+
+          return updated;
         });
+
+        if (didMigrate) {
+          useSupplementsStore.setState({ supplements: migrated });
+        }
       },
     }
   )

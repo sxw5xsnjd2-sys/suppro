@@ -51,10 +51,12 @@ export default function HealthScreen() {
 
   const supplementMarkers = useMemo(
     () =>
-      supplements.map((s) => ({
-        name: s.name,
-        startDate: s.createdAt,
-      })),
+      supplements
+        .filter((s) => s.startDate || s.createdAt)
+        .map((s) => ({
+          name: s.name,
+          startDate: s.startDate ?? s.createdAt ?? "",
+        })),
     [supplements]
   );
 

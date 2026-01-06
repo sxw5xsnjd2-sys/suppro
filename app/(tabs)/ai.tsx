@@ -11,10 +11,10 @@ import {
 } from "react-native";
 import { Screen } from "@/components/layout/Screen";
 import { Header } from "@/components/layout/Header";
-import { colors, spacing } from "@/theme";
+import { colors, spacing, radius, shadows } from "@/theme";
 import { useChatStore } from "@/store/aiStore";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-// Placeholder – we’ll implement this later
 async function sendChatToLLM(prompt: string): Promise<string> {
   return "This is a placeholder AI response.";
 }
@@ -22,26 +22,33 @@ async function sendChatToLLM(prompt: string): Promise<string> {
 export default function AIScreen() {
   const { messages, status, addMessage, setStatus, clearMessages } =
     useChatStore();
+
   const [input, setInput] = useState("");
+  const [focused, setFocused] = useState(false);
+
+  const promptCards = [
+    "Can you recommend a better stack based on my metrics?",
+    "Can you find me latest supplement news?",
+    "Can you rate my stack?",
+  ];
 
   const onSend = async () => {
     if (!input.trim()) return;
 
-    const userText = input.trim();
+    const text = input.trim();
     setInput("");
-
-    addMessage({ role: "user", content: userText });
+    addMessage({ role: "user", content: text });
     setStatus("loading");
 
     try {
-      const response = await sendChatToLLM(userText);
-      addMessage({ role: "assistant", content: response });
+      const res = await sendChatToLLM(text);
+      addMessage({ role: "assistant", content: res });
       setStatus("idle");
-    } catch (e) {
-      setStatus("error", "Failed to get response");
+    } catch {
+      setStatus("error");
       addMessage({
         role: "assistant",
-        content: "Sorry — something went wrong. Please try again.",
+        content: "Sorry — something went wrong.",
       });
     }
   };
@@ -54,28 +61,29 @@ export default function AIScreen() {
           title="Suppro AI"
           subtitle="Ask about supplements, symptoms, and your stack"
           centered
+          rightSlot={
+            <Pressable onPress={clearMessages}>
+              <Text style={styles.refreshText}>Refresh</Text>
+            </Pressable>
+          }
         />
       }
     >
-      <Pressable onPress={clearMessages} style={styles.refreshRow}>
-        <Text style={styles.refreshText}>Refresh chat</Text>
-      </Pressable>
-
       <FlatList
         data={messages}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
         keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.list}
         renderItem={({ item }) => (
           <View
             style={[
-              styles.bubble,
-              item.role === "user" ? styles.userBubble : styles.aiBubble,
+              styles.message,
+              item.role === "user" ? styles.user : styles.ai,
             ]}
           >
             <Text
               style={[
-                styles.text,
+                styles.messageText,
                 item.role === "user" ? styles.userText : styles.aiText,
               ]}
             >
@@ -86,30 +94,49 @@ export default function AIScreen() {
       />
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={24}
       >
-        <View style={styles.inputRow}>
-          <TextInput
-            value={input}
-            onChangeText={setInput}
-            placeholder="Ask about supplements or symptoms…"
-            placeholderTextColor={colors.text.muted}
-            style={styles.input}
-            editable={status !== "loading"}
-          />
-          <Pressable
-            onPress={onSend}
-            disabled={status === "loading"}
-            style={[
-              styles.sendButton,
-              status === "loading" && styles.sendDisabled,
-            ]}
-          >
-            <Text style={styles.sendText}>
-              {status === "loading" ? "…" : "Send"}
-            </Text>
-          </Pressable>
-        </View>
+        <SafeAreaView style={styles.composerSafe}>
+          {messages.length === 0 && (
+            <View style={styles.promptStack}>
+              {promptCards.map((p) => (
+                <Pressable
+                  key={p}
+                  onPress={() => setInput(p)}
+                  style={styles.promptCard}
+                >
+                  <Text style={styles.promptText}>{p}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          <View style={styles.composer}>
+            <TextInput
+              value={input}
+              onChangeText={setInput}
+              placeholder="Ask about supplements or symptoms…"
+              placeholderTextColor={colors.text.muted}
+              style={[styles.input, focused && styles.inputFocused]}
+              multiline
+              editable={status !== "loading"}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+            />
+
+            <Pressable
+              onPress={onSend}
+              disabled={!input.trim() || status === "loading"}
+              style={[
+                styles.send,
+                (!input.trim() || status === "loading") && styles.sendDisabled,
+              ]}
+            >
+              <Text style={styles.sendArrow}>→</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
       </KeyboardAvoidingView>
     </Screen>
   );
@@ -117,27 +144,28 @@ export default function AIScreen() {
 
 const styles = StyleSheet.create({
   list: {
-    padding: spacing.md,
-    paddingBottom: spacing.xl,
+    paddingHorizontal: spacing.md,
+    paddingBottom: 180,
   },
-  bubble: {
-    maxWidth: "85%",
+
+  message: {
+    maxWidth: "82%",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.lg,
     marginBottom: spacing.sm,
-    padding: spacing.sm,
-    borderRadius: 12,
   },
-  userBubble: {
+  user: {
     alignSelf: "flex-end",
     backgroundColor: colors.brand.primary,
   },
-  aiBubble: {
+  ai: {
     alignSelf: "flex-start",
     backgroundColor: colors.background.card,
   },
-  text: {
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center",
+  messageText: {
+    fontSize: 15,
+    lineHeight: 22,
   },
   userText: {
     color: colors.text.inverse,
@@ -145,45 +173,72 @@ const styles = StyleSheet.create({
   aiText: {
     color: colors.text.primary,
   },
-  inputRow: {
-    flexDirection: "row",
-    padding: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.border.subtle,
-    backgroundColor: colors.background.app,
-  },
-  input: {
-    flex: 1,
-    padding: spacing.sm,
-    borderRadius: 10,
-    backgroundColor: colors.background.card,
-    color: colors.text.primary,
-    marginRight: spacing.sm,
-  },
-  sendButton: {
-    paddingHorizontal: spacing.md,
-    justifyContent: "center",
-    borderRadius: 10,
-    backgroundColor: colors.brand.primary,
-  },
-  sendDisabled: {
-    opacity: 0.6,
-  },
-  sendText: {
-    color: colors.text.inverse,
-    fontWeight: "600",
-  },
-
-  refreshRow: {
-    alignSelf: "flex-end",
-    marginTop: spacing.sm,
-    marginBottom: spacing.xs,
-    marginRight: spacing.md,
-  },
 
   refreshText: {
     fontSize: 13,
-    fontWeight: "500",
     color: colors.text.muted,
+  },
+
+  composerSafe: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+  },
+
+  promptStack: {
+    marginBottom: spacing.md,
+    gap: spacing.xs,
+  },
+  promptCard: {
+    backgroundColor: colors.background.card,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.lg,
+    ...shadows.card,
+  },
+  promptText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+  },
+
+  composer: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    backgroundColor: colors.background.card,
+    borderRadius: radius.xl,
+    padding: spacing.sm,
+    ...shadows.card,
+  },
+
+  input: {
+    flex: 1,
+    minHeight: 44,
+    maxHeight: 120,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.lg,
+    backgroundColor: colors.background.app,
+    color: colors.text.primary,
+  },
+  inputFocused: {
+    minHeight: 72,
+  },
+
+  send: {
+    width: 44,
+    height: 44,
+    marginLeft: spacing.sm,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.brand.primary,
+    ...shadows.card,
+  },
+  sendDisabled: {
+    opacity: 0.4,
+  },
+  sendArrow: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.text.inverse,
   },
 });

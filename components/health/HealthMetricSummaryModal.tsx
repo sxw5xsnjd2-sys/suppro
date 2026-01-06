@@ -6,10 +6,18 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
+  Alert,
   useWindowDimensions,
   Animated,
 } from "react-native";
-import Svg, { Path, Text as SvgText, Line, Circle } from "react-native-svg";
+import Svg, {
+  Path,
+  Text as SvgText,
+  Line,
+  Circle,
+  Rect,
+  TSpan,
+} from "react-native-svg";
 import { colors, spacing, typography } from "@/theme";
 import { HealthEntry } from "@/types/HealthMetric";
 import {
@@ -26,6 +34,13 @@ import { DeleteMetricModal } from "./DeleteMetricModal";
 type SupplementMarker = {
   name: string;
   startDate: string; // YYYY-MM-DD
+};
+
+type CondensedMarker = {
+  x: number;
+  count: number;
+  startDate: string;
+  names: string[];
 };
 
 type Props = {
@@ -229,23 +244,39 @@ export function HealthMetricSummaryModal({
       {
         count: number;
         startDate: string;
+        names: string[];
       }
     >();
 
     markersWithX.forEach((m) => {
       const existing = byX.get(m.x);
       if (existing) {
-        byX.set(m.x, { ...existing, count: existing.count + 1 });
+        byX.set(m.x, {
+          ...existing,
+          count: existing.count + 1,
+          names: [...existing.names, m.name],
+        });
       } else {
-        byX.set(m.x, { count: 1, startDate: m.startDate });
+        byX.set(m.x, { count: 1, startDate: m.startDate, names: [m.name] });
       }
     });
 
-    return Array.from(byX.entries()).map(([x, value]) => ({
-      x,
-      ...value,
-    }));
+    return Array.from(byX.entries()).map(
+      ([x, value]) =>
+        ({
+          x,
+          ...value,
+        } as CondensedMarker)
+    );
   }, [markersWithX, showCondensedMarkers]);
+
+  const handleCondensedMarkerPress = (marker: CondensedMarker) => {
+    const supplementList = marker.names.join("\n");
+    Alert.alert(
+      `${marker.count} supplement${marker.count === 1 ? "" : "s"} started`,
+      supplementList
+    );
+  };
 
   const path =
     sorted.length >= 2
@@ -364,6 +395,51 @@ export function HealthMetricSummaryModal({
                           <React.Fragment
                             key={`${marker.startDate}-condensed-${idx}`}
                           >
+                            {(() => {
+                              const BOX_WIDTH = 82;
+                              const BOX_HEIGHT = 32;
+                              const boxX = marker.x - BOX_WIDTH / 2;
+                              const boxY = TOP - BOX_HEIGHT - 6;
+                              const noun =
+                                marker.count === 1
+                                  ? "supplement"
+                                  : "supplements";
+                              return (
+                                <>
+                                  <Rect
+                                    x={boxX}
+                                    y={boxY}
+                                    width={BOX_WIDTH}
+                                    height={BOX_HEIGHT}
+                                    rx={6}
+                                    fill={colors.background.card}
+                                    stroke={colors.border.subtle}
+                                    onPress={() =>
+                                      handleCondensedMarkerPress(
+                                        marker as CondensedMarker
+                                      )
+                                    }
+                                  />
+                                  <SvgText
+                                    x={marker.x}
+                                    y={boxY + 12}
+                                    fontSize="10"
+                                    fill={colors.text.secondary}
+                                    textAnchor="middle"
+                                    onPress={() =>
+                                      handleCondensedMarkerPress(
+                                        marker as CondensedMarker
+                                      )
+                                    }
+                                  >
+                                    <TSpan>{`${marker.count} ${noun}`}</TSpan>
+                                    <TSpan x={marker.x} dy={12}>
+                                      started
+                                    </TSpan>
+                                  </SvgText>
+                                </>
+                              );
+                            })()}
                             <Line
                               x1={marker.x}
                               y1={TOP}
@@ -373,32 +449,12 @@ export function HealthMetricSummaryModal({
                               strokeWidth={1.5}
                               strokeDasharray="4 3"
                             />
-                            <SvgText
-                              x={marker.x}
-                              y={TOP - 10}
-                              fontSize="10"
-                              fill={colors.text.secondary}
-                              textAnchor="middle"
-                            >
-                              {`${marker.count} supplements started`}
-                            </SvgText>
-                            <SvgText
-                              x={marker.x}
-                              y={BOTTOM + 32}
-                              fontSize="10"
-                              fill={colors.text.muted}
-                              textAnchor="middle"
-                            >
-                              {marker.startDate.split("-").reverse().join("/")}
-                            </SvgText>
                           </React.Fragment>
                         ))
                       : markersWithStack.map((marker, idx) => {
                           const stackOffset = marker.stack * 14; // stack per X to avoid overlaps
                           return (
-                            <React.Fragment
-                              key={`${marker.startDate}-${idx}`}
-                            >
+                            <React.Fragment key={`${marker.startDate}-${idx}`}>
                               <Line
                                 x1={marker.x}
                                 y1={TOP}
@@ -416,15 +472,6 @@ export function HealthMetricSummaryModal({
                                 textAnchor="middle"
                               >
                                 {`${marker.name} start`}
-                              </SvgText>
-                              <SvgText
-                                x={marker.x}
-                                y={BOTTOM + 32 + stackOffset}
-                                fontSize="10"
-                                fill={colors.text.muted}
-                                textAnchor="middle"
-                              >
-                                {marker.startDate.split("-").reverse().join("/")}
                               </SvgText>
                             </React.Fragment>
                           );

@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
   Alert,
+  Modal,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -17,6 +18,156 @@ import { colors, spacing, radius } from "@/theme";
 import { SupplementRoute, SUPPLEMENT_ROUTES } from "@/types/Supplement";
 import { useSupplementsStore } from "@/store/supplementStore";
 import { Icon } from "@/components/icons/Icon";
+
+const todayYYYYMMDD = () => new Date().toISOString().split("T")[0];
+
+const isValidISODate = (value: string | undefined | null) => {
+  if (!value) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  if (!y || !m || !d) return false;
+  const dt = new Date(value);
+  return (
+    dt instanceof Date &&
+    !Number.isNaN(dt.getTime()) &&
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() + 1 === m &&
+    dt.getUTCDate() === d
+  );
+};
+
+const formatDisplayDate = (iso: string | null | undefined) => {
+  if (!iso) return "Set date";
+  if (!isValidISODate(iso)) return "Invalid date";
+  const [y, m, d] = iso.split("-").map(Number);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${String(d).padStart(2, "0")}-${months[(m || 1) - 1]}`;
+};
+
+const daysInMonth = (year: number, monthIndex: number) =>
+  new Date(year, monthIndex + 1, 0).getDate();
+
+type DatePickerModalProps = {
+  visible: boolean;
+  initialDate: string;
+  onSelect: (iso: string) => void;
+  onClose: () => void;
+  title: string;
+};
+
+function DatePickerModal({
+  visible,
+  initialDate,
+  onSelect,
+  onClose,
+  title,
+}: DatePickerModalProps) {
+  const parsed = isValidISODate(initialDate)
+    ? new Date(initialDate + "T00:00:00")
+    : new Date();
+  const [year, setYear] = useState(parsed.getFullYear());
+  const [month, setMonth] = useState(parsed.getMonth()); // 0-index
+
+  const handleMonthChange = (delta: number) => {
+    setMonth((prev) => {
+      const next = prev + delta;
+      if (next < 0) {
+        setYear((y) => y - 1);
+        return 11;
+      }
+      if (next > 11) {
+        setYear((y) => y + 1);
+        return 0;
+      }
+      return next;
+    });
+  };
+
+  const dayCells = (() => {
+    const firstDay = new Date(year, month, 1).getDay(); // 0-6
+    const totalDays = daysInMonth(year, month);
+    const blanks = Array.from({ length: firstDay }, () => null);
+    const days = Array.from({ length: totalDays }, (_, i) => i + 1);
+    return [...blanks, ...days];
+  })();
+
+  const handleSelectDay = (day: number | null) => {
+    if (!day) return;
+    const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    onSelect(iso);
+    onClose();
+  };
+
+  const monthLabel = new Date(year, month, 1).toLocaleString("en-US", {
+    month: "short",
+    year: "numeric",
+  });
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.dateModalBackdrop}>
+        <View style={styles.dateModalCard}>
+          <View style={styles.dateModalHeader}>
+            <Pressable onPress={() => handleMonthChange(-1)} hitSlop={8}>
+              <Text style={styles.navArrow}>‹</Text>
+            </Pressable>
+            <View style={{ flex: 1, alignItems: "center" }}>
+              <Text style={styles.dateModalTitle}>{title}</Text>
+              <Text style={styles.dateModalMonth}>{monthLabel}</Text>
+            </View>
+            <Pressable onPress={() => handleMonthChange(1)} hitSlop={8}>
+              <Text style={styles.navArrow}>›</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.weekdayRow}>
+            {["S", "M", "T", "W", "T", "F", "S"].map((d, idx) => (
+              <Text key={`${d}-${idx}`} style={styles.weekday}>
+                {d}
+              </Text>
+            ))}
+          </View>
+
+          <View style={styles.calendarGrid}>
+            {dayCells.map((day, idx) => {
+              const isInitial =
+                day &&
+                isValidISODate(initialDate) &&
+                `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}` ===
+                  initialDate;
+
+              return (
+                <Pressable
+                  key={`${day ?? "blank"}-${idx}`}
+                  style={[
+                    styles.dayCell,
+                    isInitial && styles.dayCellActive,
+                    !day && styles.dayCellEmpty,
+                  ]}
+                  disabled={!day}
+                  onPress={() => handleSelectDay(day)}
+                >
+                  <Text
+                    style={[
+                      styles.dayLabel,
+                      isInitial && styles.dayLabelActive,
+                      !day && styles.dayLabelEmpty,
+                    ]}
+                  >
+                    {day ?? ""}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Pressable onPress={onClose} style={styles.dateModalClose}>
+            <Text style={styles.dateModalCloseText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
 
 /* ----------------------------------------
    Time options (15-minute intervals)
@@ -91,10 +242,22 @@ export default function SupplementModal() {
     supplement?.route ?? "tablet"
   );
   const [timeMinutes, setTimeMinutes] = useState(initialTimeMinutes);
+  const [startDate, setStartDate] = useState(
+    supplement?.startDate ?? supplement?.createdAt ?? todayYYYYMMDD()
+  );
+  const [endDate, setEndDate] = useState<string | null>(
+    supplement?.endDate ?? null
+  );
+  const [activeDatePicker, setActiveDatePicker] = useState<"start" | "end" | null>(null);
   const timeScrollRef = useRef<ScrollView>(null);
   const hasScrolledInitial = useRef(false);
 
-  const canSave = name.trim().length > 0;
+  const startDateValid = isValidISODate(startDate);
+  const endDateValid = !endDate || isValidISODate(endDate);
+  const chronologicalValid =
+    !endDate || (startDateValid && endDateValid && endDate >= startDate);
+  const canSave =
+    name.trim().length > 0 && startDateValid && endDateValid && chronologicalValid;
 
   const timeLabel =
     TIME_OPTIONS.find((t) => t.minutes === timeMinutes)?.label ?? "08:00";
@@ -123,6 +286,8 @@ export default function SupplementModal() {
       time: timeLabel,
       timeMinutes,
       daysOfWeek,
+      startDate: startDateValid ? startDate : todayYYYYMMDD(),
+      endDate: endDateValid ? endDate || null : null,
     };
 
     if (isEdit && id) {
@@ -131,7 +296,6 @@ export default function SupplementModal() {
       addSupplement({
         id: Date.now().toString(),
         ...payload,
-        createdAt: new Date().toISOString().split("T")[0],
       });
     }
 
@@ -259,6 +423,58 @@ export default function SupplementModal() {
             </View>
 
             <View style={styles.field}>
+              <Text style={styles.label}>Start date</Text>
+              <Pressable
+                onPress={() => setActiveDatePicker("start")}
+                style={[
+                  styles.input,
+                  styles.dateField,
+                  (!startDateValid || !chronologicalValid) && styles.inputError,
+                ]}
+              >
+                <Text style={styles.dateFieldText}>
+                  {formatDisplayDate(startDate)}
+                </Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>End date (optional)</Text>
+              <Pressable
+                onPress={() => setActiveDatePicker("end")}
+                style={[
+                  styles.input,
+                  styles.dateField,
+                  (!endDateValid || !chronologicalValid) && styles.inputError,
+                ]}
+              >
+                <Text style={styles.dateFieldText}>
+                  {endDate ? formatDisplayDate(endDate) : "Ongoing"}
+                </Text>
+              </Pressable>
+              {endDate && (
+                <Pressable
+                  onPress={() => setEndDate(null)}
+                  hitSlop={6}
+                  style={styles.clearEndDate}
+                >
+                  <Text style={styles.clearEndDateText}>Set to ongoing</Text>
+                </Pressable>
+              )}
+              {(!startDateValid || !endDateValid || !chronologicalValid) && (
+                <Text style={styles.errorText}>
+                  {(() => {
+                    if (!startDateValid) return "Enter a valid start date.";
+                    if (!endDateValid) return "Enter a valid end date or leave it blank.";
+                    if (!chronologicalValid)
+                      return "End date must be on or after the start date.";
+                    return "";
+                  })()}
+                </Text>
+              )}
+            </View>
+
+            <View style={styles.field}>
               <Text style={styles.label}>Days</Text>
 
               <View style={styles.daysRow}>
@@ -326,6 +542,27 @@ export default function SupplementModal() {
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
+
+      <DatePickerModal
+        visible={activeDatePicker === "start"}
+        initialDate={startDate}
+        onSelect={(iso) => {
+          setStartDate(iso);
+          if (endDate && iso > endDate) {
+            setEndDate(iso);
+          }
+        }}
+        onClose={() => setActiveDatePicker(null)}
+        title="Select start date"
+      />
+
+      <DatePickerModal
+        visible={activeDatePicker === "end"}
+        initialDate={endDate ?? startDate}
+        onSelect={(iso) => setEndDate(iso)}
+        onClose={() => setActiveDatePicker(null)}
+        title="Select end date"
+      />
     </SafeAreaView>
   );
 }
@@ -390,6 +627,113 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     fontSize: 15,
     color: colors.text.primary,
+  },
+  inputError: {
+    borderWidth: 1,
+    borderColor: "#DC2626",
+  },
+  errorText: {
+    marginTop: spacing.xs,
+    color: "#DC2626",
+    fontSize: 12,
+  },
+  dateField: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  dateFieldText: {
+    fontSize: 15,
+    color: colors.text.primary,
+  },
+  dateModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "center",
+    padding: spacing.lg,
+  },
+  dateModalCard: {
+    backgroundColor: colors.background.card,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+  },
+  dateModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.sm,
+  },
+  dateModalTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.text.primary,
+  },
+  dateModalMonth: {
+    marginTop: 2,
+    fontSize: 13,
+    color: colors.text.secondary,
+  },
+  navArrow: {
+    fontSize: 18,
+    color: colors.text.primary,
+    paddingHorizontal: spacing.xs,
+  },
+  weekdayRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: spacing.xs,
+  },
+  weekday: {
+    width: "14.28%",
+    textAlign: "center",
+    fontSize: 12,
+    color: colors.text.secondary,
+  },
+  calendarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  dayCell: {
+    width: "14.28%",
+    aspectRatio: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.sm,
+    marginBottom: spacing.xs / 2,
+  },
+  dayCellEmpty: {
+    backgroundColor: "transparent",
+  },
+  dayCellActive: {
+    backgroundColor: colors.background.header,
+  },
+  dayLabel: {
+    fontSize: 14,
+    color: colors.text.primary,
+  },
+  dayLabelActive: {
+    color: colors.text.inverse,
+    fontWeight: "600",
+  },
+  dayLabelEmpty: {
+    color: colors.text.secondary,
+  },
+  dateModalClose: {
+    marginTop: spacing.sm,
+    alignItems: "center",
+  },
+  dateModalCloseText: {
+    color: colors.text.secondary,
+    fontWeight: "600",
+  },
+  clearEndDate: {
+    marginTop: spacing.xs / 2,
+    alignSelf: "flex-start",
+  },
+  clearEndDateText: {
+    fontSize: 13,
+    color: colors.brand.primary,
+    fontWeight: "600",
   },
 
   routeRow: {

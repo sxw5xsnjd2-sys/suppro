@@ -12,7 +12,10 @@ export type Supplement = {
   time: string;
   timeMinutes: number;
   dose?: string;
-  createdAt: string;
+  startDate: string; // YYYY-MM-DD
+  endDate?: string | null; // YYYY-MM-DD
+  // Legacy field; keep for backward compatibility with old persisted data
+  createdAt?: string;
 };
 
 export const SUPPLEMENT_ROUTES: {
