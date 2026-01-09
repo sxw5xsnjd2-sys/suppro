@@ -56,6 +56,12 @@ export default function SupplementsScreen() {
                 subtitle={s.dose ? `${s.dose} · ${s.time}` : s.time}
                 route={s.route}
                 showCheckbox={false}
+                onInfoPress={() =>
+                  router.push({
+                    pathname: "/modal/supplement-info",
+                    params: { id: s.id },
+                  })
+                }
                 onPress={() =>
                   router.push({
                     pathname: "/modal/supplement",

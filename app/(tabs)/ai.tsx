@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,14 +6,15 @@ import {
   Pressable,
   FlatList,
   StyleSheet,
-  KeyboardAvoidingView,
+  Animated,
+  Keyboard,
   Platform,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Screen } from "@/components/common/layout/Screen";
 import { Header } from "@/components/common/layout/Header";
 import { colors, spacing, radius, shadows } from "@/theme";
 import { useChatStore } from "@/features/ai/store";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 async function sendChatToLLM(prompt: string): Promise<string> {
   return "This is a placeholder AI response.";
@@ -23,14 +24,81 @@ export default function AIScreen() {
   const { messages, status, addMessage, setStatus, clearMessages } =
     useChatStore();
 
+  const insets = useSafeAreaInsets();
+  const keyboardShift = useRef(new Animated.Value(0)).current;
+  const listRef = useRef<FlatList>(null);
+
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(0);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [input, setInput] = useState("");
   const [focused, setFocused] = useState(false);
+  const scrollToLatest = (animated = true) =>
+    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated }));
 
   const promptCards = [
     "Can you recommend a better stack based on my metrics?",
     "Can you find me latest supplement news?",
     "Can you rate my stack?",
   ];
+
+  // ✅ Keyboard animation effect
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const handleShow = (e: any) => {
+      const height = e?.endCoordinates?.height ?? 0;
+      const duration = e?.duration ?? 250;
+      const target = -Math.max(0, height - insets.bottom);
+
+      setKeyboardHeight(height);
+      setKeyboardVisible(true);
+
+      Animated.timing(keyboardShift, {
+        toValue: target,
+        duration,
+        useNativeDriver: true,
+      }).start();
+      scrollToLatest(false);
+    };
+
+    const handleHide = (e: any) => {
+      const duration = e?.duration ?? 200;
+
+      setKeyboardHeight(0);
+      setKeyboardVisible(false);
+
+      Animated.timing(keyboardShift, {
+        toValue: 0,
+        duration,
+        useNativeDriver: true,
+      }).start();
+    };
+
+    const showSub = Keyboard.addListener(showEvent, handleShow);
+    const hideSub = Keyboard.addListener(hideEvent, handleHide);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [insets.bottom, keyboardShift]);
+
+  // ✅ Auto-scroll when messages change (MUST be top-level)
+  useEffect(() => {
+    if (messages.length === 0) return;
+
+    scrollToLatest(true);
+  }, [messages.length]);
+
+  useEffect(() => {
+    if (keyboardVisible) {
+      scrollToLatest(false);
+    }
+  }, [keyboardVisible]);
 
   const onSend = async () => {
     if (!input.trim()) return;
@@ -61,83 +129,111 @@ export default function AIScreen() {
           title="Suppro AI"
           subtitle="Ask about supplements, symptoms, and your stack"
           centered
-          rightSlot={
-            <Pressable onPress={clearMessages}>
-              <Text style={styles.refreshText}>Refresh</Text>
-            </Pressable>
-          }
         />
       }
     >
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => item.id}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={styles.list}
-        renderItem={({ item }) => (
-          <View
-            style={[
-              styles.message,
-              item.role === "user" ? styles.user : styles.ai,
-            ]}
+      <View style={{ flex: 1 }}>
+        <View style={styles.refreshRow}>
+          <Pressable onPress={clearMessages}>
+            <Text style={styles.refreshText}>Refresh</Text>
+          </Pressable>
+        </View>
+
+        <View style={{ flex: 1, overflow: "hidden" }}>
+          <Animated.View
+            style={{
+              flex: 1,
+              transform: [{ translateY: keyboardShift }],
+            }}
           >
-            <Text
-              style={[
-                styles.messageText,
-                item.role === "user" ? styles.userText : styles.aiText,
+            <FlatList
+              ref={listRef}
+              data={messages}
+              keyExtractor={(item) => item.id}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={[
+                styles.list,
+                {
+                  paddingBottom:
+                    composerHeight +
+                    (keyboardVisible ? keyboardHeight : insets.bottom),
+                },
               ]}
-            >
-              {item.content}
-            </Text>
-          </View>
-        )}
-      />
-
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={24}
-      >
-        <SafeAreaView style={styles.composerSafe}>
-          {messages.length === 0 && (
-            <View style={styles.promptStack}>
-              {promptCards.map((p) => (
-                <Pressable
-                  key={p}
-                  onPress={() => setInput(p)}
-                  style={styles.promptCard}
+              renderItem={({ item }) => (
+                <View
+                  style={[
+                    styles.message,
+                    item.role === "user" ? styles.user : styles.ai,
+                  ]}
                 >
-                  <Text style={styles.promptText}>{p}</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-
-          <View style={styles.composer}>
-            <TextInput
-              value={input}
-              onChangeText={setInput}
-              placeholder="Ask about supplements or symptoms…"
-              placeholderTextColor={colors.text.muted}
-              style={[styles.input, focused && styles.inputFocused]}
-              multiline
-              editable={status !== "loading"}
-              onFocus={() => setFocused(true)}
-              onBlur={() => setFocused(false)}
+                  <Text
+                    style={[
+                      styles.messageText,
+                      item.role === "user" ? styles.userText : styles.aiText,
+                    ]}
+                  >
+                    {item.content}
+                  </Text>
+                </View>
+              )}
             />
+          </Animated.View>
 
-            <Pressable
-              onPress={onSend}
-              disabled={!input.trim() || status === "loading"}
-              style={[
-                styles.send,
-                (!input.trim() || status === "loading") && styles.sendDisabled,
-              ]}
-            >
-              <Text style={styles.sendArrow}>→</Text>
-            </Pressable>
-          </View>
-        </SafeAreaView>
-      </KeyboardAvoidingView>
+          <Animated.View
+            style={[
+              styles.composerSafe,
+              {
+                paddingBottom: keyboardVisible ? 0 : insets.bottom,
+              },
+              { transform: [{ translateY: keyboardShift }] },
+            ]}
+            onLayout={(e) => setComposerHeight(e.nativeEvent.layout.height)}
+          >
+            {messages.length === 0 && (
+              <View style={styles.promptStack}>
+                {promptCards.map((p) => (
+                  <Pressable
+                    key={p}
+                    onPress={() => setInput(p)}
+                    style={styles.promptCard}
+                  >
+                    <Text style={styles.promptText}>{p}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            <View style={styles.composer}>
+              <TextInput
+                value={input}
+                onChangeText={setInput}
+                placeholder="Ask about supplements or symptoms…"
+                placeholderTextColor={colors.text.muted}
+                style={[styles.input, focused && styles.inputFocused]}
+                multiline
+                editable={status !== "loading"}
+                onFocus={() => {
+                  setFocused(true);
+                  scrollToLatest(true);
+                }}
+                onBlur={() => setFocused(false)}
+              />
+
+              <Pressable
+                onPress={onSend}
+                disabled={!input.trim() || status === "loading"}
+                style={[
+                  styles.send,
+                  (!input.trim() || status === "loading") &&
+                    styles.sendDisabled,
+                ]}
+              >
+                <Text style={styles.sendArrow}>→</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        </View>
+      </View>
     </Screen>
   );
 }
@@ -145,7 +241,7 @@ export default function AIScreen() {
 const styles = StyleSheet.create({
   list: {
     paddingHorizontal: spacing.md,
-    paddingBottom: 180,
+    paddingBottom: spacing.md,
   },
 
   message: {
@@ -175,8 +271,15 @@ const styles = StyleSheet.create({
   },
 
   refreshText: {
-    fontSize: 13,
+    fontSize: 15,
     color: colors.text.muted,
+  },
+
+  refreshRow: {
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
+    alignItems: "flex-end",
   },
 
   composerSafe: {
@@ -196,7 +299,7 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   promptText: {
-    fontSize: 14,
+    fontSize: 16,
     color: colors.text.secondary,
   },
 
@@ -213,6 +316,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 44,
     maxHeight: 120,
+    fontSize: 15,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.lg,

@@ -87,6 +87,7 @@ const styles = StyleSheet.create({
   content: {
     paddingTop: spacing.xl,
     paddingBottom: spacing.xl,
+    paddingHorizontal: spacing.sm,
   },
   timeSection: {
     marginBottom: spacing.xl,

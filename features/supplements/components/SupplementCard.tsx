@@ -14,6 +14,7 @@ type SupplementCardProps = {
   showCheckbox?: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
+  onInfoPress?: () => void;
 };
 
 export function SupplementCard({
@@ -25,6 +26,7 @@ export function SupplementCard({
   showCheckbox = true,
   onPress,
   onLongPress,
+  onInfoPress,
 }: SupplementCardProps) {
   return (
     <Pressable
@@ -45,20 +47,35 @@ export function SupplementCard({
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
         </View>
 
-        {/* Status indicator */}
-        {showCheckbox && (
-          <View style={styles.status}>
-            {taken ? (
-              <Ionicons
-                name="checkmark-circle"
-                size={22}
-                color={colors.status.success}
-              />
-            ) : (
-              <View style={styles.emptyCircle} />
-            )}
-          </View>
-        )}
+        <View style={styles.trailing}>
+          {/* Status indicator */}
+          {showCheckbox && (
+            <View style={styles.status}>
+              {taken ? (
+                <Ionicons
+                  name="checkmark-circle"
+                  size={22}
+                  color={colors.status.success}
+                />
+              ) : (
+                <View style={styles.emptyCircle} />
+              )}
+            </View>
+          )}
+
+          {onInfoPress ? (
+            <Pressable
+              onPress={onInfoPress}
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.infoButton,
+                pressed && styles.infoButtonPressed,
+              ]}
+            >
+              <Text style={styles.infoText}>More info</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       {/* Footer */}
@@ -90,7 +107,7 @@ const styles = StyleSheet.create({
   },
 
   status: {
-    marginRight: spacing.md,
+    marginRight: spacing.sm,
   },
 
   emptyCircle: {
@@ -145,5 +162,26 @@ const styles = StyleSheet.create({
     fontSize: typography.caption.fontSize ?? 12,
     color: colors.text.muted,
     textAlign: "right",
+  },
+
+  trailing: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+
+  infoButton: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
+    backgroundColor: colors.background.app,
+  },
+  infoButtonPressed: {
+    opacity: 0.8,
+  },
+  infoText: {
+    fontSize: typography.caption.fontSize ?? 12,
+    fontWeight: "600",
+    color: colors.brand.primary,
   },
 });

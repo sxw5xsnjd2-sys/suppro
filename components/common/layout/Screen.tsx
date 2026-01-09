@@ -62,7 +62,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   content: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xl,
+    paddingHorizontal: spacing.xs,
+    paddingBottom: spacing.sm,
   },
 });
