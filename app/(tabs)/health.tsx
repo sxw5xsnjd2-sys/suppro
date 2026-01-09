@@ -1,15 +1,15 @@
 import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
-import { Screen } from "@/components/layout/Screen";
-import { Header } from "@/components/layout/Header";
+import { Screen } from "@/components/common/layout/Screen";
+import { Header } from "@/components/common/layout/Header";
 import { colors, spacing, radius, shadows } from "@/theme";
 
-import { useHealthStore } from "@/store/healthStore";
-import { useSupplementsStore } from "@/store/supplementStore";
-import { MiniLineChart } from "@/components/health/MiniLineChart";
-import { HealthEntryModal } from "@/components/health/HealthEntryModal";
-import { AddMetricModal } from "@/components/health/AddMetricModal";
-import { HealthMetricSummaryModal } from "@/components/health/HealthMetricSummaryModal";
+import { useHealthStore } from "@/features/health/store";
+import { useSupplementsStore } from "@/features/supplements/store";
+import { MiniLineChart } from "@/features/health/components/MiniLineChart";
+import { HealthEntryModal } from "@/features/health/components/HealthEntryModal";
+import { AddMetricModal } from "@/features/health/components/AddMetricModal";
+import { HealthMetricSummaryModal } from "@/features/health/components/HealthMetricSummaryModal";
 
 export default function HealthScreen() {
   const entries = useHealthStore((s) => s.entries);

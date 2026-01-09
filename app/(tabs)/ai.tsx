@@ -9,10 +9,10 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
-import { Screen } from "@/components/layout/Screen";
-import { Header } from "@/components/layout/Header";
+import { Screen } from "@/components/common/layout/Screen";
+import { Header } from "@/components/common/layout/Header";
 import { colors, spacing, radius, shadows } from "@/theme";
-import { useChatStore } from "@/store/aiStore";
+import { useChatStore } from "@/features/ai/store";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 async function sendChatToLLM(prompt: string): Promise<string> {

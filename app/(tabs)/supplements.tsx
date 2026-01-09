@@ -1,10 +1,10 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { Screen } from "@/components/layout/Screen";
-import { Header } from "@/components/layout/Header";
-import { SupplementCard } from "@/components/cards/SupplementCard";
+import { Screen } from "@/components/common/layout/Screen";
+import { Header } from "@/components/common/layout/Header";
+import { SupplementCard } from "@/features/supplements/components/SupplementCard";
 import { colors, spacing } from "@/theme";
-import { useSupplementsStore } from "@/store/supplementStore";
+import { useSupplementsStore } from "@/features/supplements/store";
 import { router } from "expo-router";
 
 /* ----------------------------------------

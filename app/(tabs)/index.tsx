@@ -1,10 +1,10 @@
 import React from "react";
-import { View, Text, StyleSheet, Alert } from "react-native";
-import { Screen } from "@/components/layout/Screen";
-import { HomeHeader } from "@/components/home/HomeHeader";
-import { SupplementCard } from "@/components/cards/SupplementCard";
+import { View, Text, StyleSheet } from "react-native";
+import { Screen } from "@/components/common/layout/Screen";
+import { HomeHeader } from "@/features/supplements/components/HomeHeader";
+import { SupplementCard } from "@/features/supplements/components/SupplementCard";
 import { colors, spacing } from "@/theme";
-import { useSupplementsStore } from "@/store/supplementStore";
+import { useSupplementsStore } from "@/features/supplements/store";
 import { router } from "expo-router";
 
 function EmptyState() {
@@ -32,8 +32,6 @@ export default function HomeScreen() {
   const takenTimes = takenTimesByDate[selectedDate] ?? {};
 
   const toggleTaken = useSupplementsStore((s) => s.toggleTaken);
-  const deleteSupplement = useSupplementsStore((s) => s.deleteSupplement);
-
   const supplementsByTime = dueSupplements.reduce<
     Record<number, typeof dueSupplements>
   >((acc, s) => {

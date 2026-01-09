@@ -4,10 +4,10 @@ import { Tabs, router } from "expo-router";
 import { colors } from "@/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import HomeIcon from "@/components/icons/home.svg";
-import SupplementsIcon from "@/components/icons/supplements.svg";
-import HealthIcon from "@/components/icons/health.svg";
-import AiIcon from "@/components/icons/robot.svg";
+import HomeIcon from "@/assets/icons/tab/home.svg";
+import SupplementsIcon from "@/assets/icons/tab/supplements.svg";
+import HealthIcon from "@/assets/icons/tab/health.svg";
+import AiIcon from "@/assets/icons/tab/robot.svg";
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
