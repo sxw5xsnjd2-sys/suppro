@@ -6,22 +6,16 @@ import { colors, spacing } from "@/theme";
 import { metalGradients, type MetalGradient } from "@/utils/metalStyles";
 import { getSupplementById } from "@src/data/getSupplement";
 import type { SupplementWithBenefits } from "@src/types/supplements";
-
-/* ---------------- Helpers ---------------- */
-
-const getTier = (score: number) => {
-  const clamped = Math.max(0, Math.min(100, score));
-  if (clamped <= 50) return "bronze";
-  if (clamped <= 75) return "silver";
-  return "gold";
-};
+import MedalIcon from "@/assets/icons/supplements/medal.svg";
+import { getRatingStyle } from "@/utils/ratingStyles";
+import HappyIcon from "@/assets/icons/supplements/happy.svg";
+import NeutralIcon from "@/assets/icons/supplements/neutral.svg";
+import SadIcon from "@/assets/icons/supplements/sad.svg";
 
 /* ---------------- Screen ---------------- */
 
 export default function SupplementInfoModal() {
   const { id } = useLocalSearchParams<{ id?: string }>();
-
-  console.log("SUPPLEMENT INFO ID PARAM:", id);
 
   const [data, setData] = useState<SupplementWithBenefits | null>(null);
 
@@ -31,71 +25,102 @@ export default function SupplementInfoModal() {
   }, [id]);
 
   const rating = data?.evidence_score ?? 0;
-  const tier = getTier(rating);
+  const ratingStyle = getRatingStyle(rating);
+  const RatingIcon =
+    rating < 50 ? SadIcon : rating < 75 ? NeutralIcon : HappyIcon;
 
   const benefits = useMemo(() => data?.supplement_benefits ?? [], [data]);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} style={{ flex: 1 }}>
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>{data?.name ?? "Supplement"}</Text>
+      <View style={styles.headerBand}>
+        <View style={styles.headerRow}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarInitial}>
+              {(data?.name?.[0] ?? "S").toUpperCase()}
+            </Text>
+          </View>
+          <Text style={styles.pageTitle}>{data?.name ?? "Supplement"}</Text>
+        </View>
       </View>
 
-      {/* Score Card */}
-      <LinearGradient
-        colors={metalGradients[tier]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.scoreCard}
-      >
-        <Text style={styles.scoreText}>{rating} / 100</Text>
-      </LinearGradient>
+      {/* Rating + Benefits Card */}
+      <View style={styles.heroCard}>
+        <LinearGradient
+          colors={ratingStyle.gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.scoreCard, { borderColor: ratingStyle.border }]}
+        >
+          <View style={styles.scoreCardRow}>
+            <View style={styles.scoreIcon}>
+              <RatingIcon width={48} height={48} />
+            </View>
+            <View style={styles.scoreValueWrap}>
+              <Text style={styles.scoreText}>{rating} / 100</Text>
+            </View>
+            <View style={styles.scoreIcon}>
+              <View style={styles.heartBox}>
+                <Text
+                  style={[styles.heart, { color: ratingStyle.gradient[0] }]}
+                >
+                  ♡
+                </Text>
+              </View>
+            </View>
+          </View>
+        </LinearGradient>
 
-      {/* Dynamic Metrics */}
-      <View style={styles.metricRow}>
-        {benefits.map((b) => (
-          <Metric
-            key={b.id}
-            label={b.label}
-            gradient={
-              b.icon === "gold"
-                ? metalGradients.gold
-                : b.icon === "silver"
-                ? metalGradients.silver
-                : metalGradients.bronze
-            }
-          />
-        ))}
+        <View style={styles.metricRow}>
+          {benefits.map((b) => (
+            <Metric
+              key={b.id}
+              label={b.label}
+              gradient={
+                b.icon === "gold"
+                  ? metalGradients.gold
+                  : b.icon === "silver"
+                  ? metalGradients.silver
+                  : metalGradients.bronze
+              }
+            />
+          ))}
+        </View>
       </View>
 
-      {/* What is it */}
-      <View style={styles.inlineSection}>
-        <Text style={styles.inlineTitle}>What is it?</Text>
-        <Text style={styles.inlineBody}>{data?.what_is_it ?? "—"}</Text>
-      </View>
-
-      {/* Why use it */}
-      <View style={styles.inlineSection}>
-        <Text style={styles.inlineTitle}>Why use it?</Text>
-        <Text style={styles.inlineBody}>{data?.why_use_it ?? "—"}</Text>
-      </View>
-
-      {/* Risks / interactions */}
-      <View style={styles.inlineSection}>
-        <Text style={styles.inlineTitle}>Risks & interactions</Text>
-        <Text style={styles.inlineBody}>
-          {data?.risks_and_interactions ?? "—"}
-        </Text>
+      {/* Info Sections */}
+      <View style={styles.whiteCard}>
+        <SectionRow label="What is it?" />
+        <SectionRow label="Why use it?" />
+        <SectionRow label="Risks & interactions" />
       </View>
 
       {/* Evidence */}
-      <View style={styles.evidenceBox}>
-        <Text style={styles.evidenceTitle}>Evidence summary</Text>
-        <Text style={styles.inlineBody}>{data?.evidence ?? "—"}</Text>
+      <View style={styles.evidenceCard}>
+        <View style={styles.evidenceHeaderRow}>
+          <Text style={styles.evidenceHeading}>Evidence</Text>
+          <Text style={styles.chevron}>›</Text>
+        </View>
+        {benefits.length === 0 ? (
+          <Text style={styles.emptyEvidence}>No evidence listed yet.</Text>
+        ) : (
+          benefits.map((b) => (
+            <EvidenceRow
+              key={b.id}
+              label={b.label}
+              gradient={
+                b.icon === "gold"
+                  ? metalGradients.gold
+                  : b.icon === "silver"
+                  ? metalGradients.silver
+                  : metalGradients.bronze
+              }
+            />
+          ))
+        )}
       </View>
 
-      {/* Close */}
       <Pressable onPress={() => router.back()} style={styles.closeButton}>
         <Text style={styles.closeText}>Close</Text>
       </Pressable>
@@ -114,13 +139,18 @@ function Metric({
 }) {
   return (
     <View style={styles.metricItem}>
-      <LinearGradient
-        colors={gradient}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.metricCircle}
-      />
-      <Text style={styles.metricLabel}>{label}</Text>
+      <View style={styles.metricCircleWrapper}>
+        <LinearGradient
+          colors={gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.metricCircle}
+        />
+        <MedalIcon width={26} height={26} style={styles.metricMedal} />
+      </View>
+      <View style={styles.metricLabelWrap}>
+        <Text style={styles.metricLabel}>{label}</Text>
+      </View>
     </View>
   );
 }
@@ -134,10 +164,26 @@ function SectionRow({ label }: { label: string }) {
   );
 }
 
-function EvidenceRow({ label }: { label: string }) {
+function EvidenceRow({
+  label,
+  gradient,
+}: {
+  label: string;
+  gradient: MetalGradient;
+}) {
   return (
     <View style={styles.evidenceRow}>
-      <Text style={styles.evidenceText}>{label}</Text>
+      <View style={styles.evidenceLeft}>
+        <LinearGradient
+          colors={gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.evidenceBadge}
+        >
+          <MedalIcon width={20} height={20} />
+        </LinearGradient>
+        <Text style={styles.evidenceText}>{label}</Text>
+      </View>
       <Text style={styles.chevron}>›</Text>
     </View>
   );
@@ -147,47 +193,140 @@ function EvidenceRow({ label }: { label: string }) {
 
 const styles = StyleSheet.create({
   container: {
-    padding: spacing.lg,
-    paddingBottom: spacing.xl,
-    backgroundColor: colors.background.app,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xl * 2,
+    backgroundColor: "#F4F5F7",
+    flexGrow: 1,
   },
 
-  header: {
+  headerBand: {
+    backgroundColor: "#FFFFFF",
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.md,
     marginBottom: spacing.lg,
+    marginHorizontal: -spacing.md,
+    marginTop: -spacing.lg,
+    alignItems: "flex-start",
   },
 
-  title: {
-    fontSize: 22,
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  avatarInitial: {
+    fontSize: 18,
     fontWeight: "600",
+    color: colors.text.primary,
+  },
+
+  pageTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: colors.text.primary,
+  },
+
+  heroCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
 
   scoreCard: {
-    borderRadius: 16,
-    paddingVertical: spacing.lg,
-    alignItems: "center",
-    marginBottom: spacing.lg,
+    borderRadius: 18,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
     shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 5,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+
+  scoreCardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  scoreIcon: {
+    width: 60,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  scoreValueWrap: {
+    flex: 1,
+    alignItems: "center",
   },
 
   scoreText: {
-    fontSize: 28,
-    fontWeight: "800",
+    fontSize: 38,
+    fontWeight: "700",
     color: "#111",
+  },
+
+  heart: {
+    fontSize: 22,
+    fontWeight: "700",
+  },
+
+  heartBox: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.05)",
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
 
   metricRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: spacing.lg,
+    flexWrap: "wrap",
+    justifyContent: "flex-start",
+    alignItems: "center",
+    paddingBottom: spacing.sm,
   },
 
   metricItem: {
-    flex: 1,
+    flexBasis: "30%",
+    maxWidth: "30%",
+    minWidth: 90,
     alignItems: "center",
+    marginHorizontal: spacing.xs,
+    marginVertical: spacing.xs,
+  },
+
+  metricCircleWrapper: {
+    width: 56,
+    height: 56,
+    marginBottom: spacing.xs,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   metricCircle: {
@@ -196,16 +335,46 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     marginBottom: spacing.xs,
     shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  metricMedal: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: [{ translateX: -13 }, { translateY: -13 }],
+  },
+
+  metricLabelWrap: {
+    marginTop: -8,
+    maxWidth: 64,
+    minHeight: 18,
+    alignItems: "center",
   },
 
   metricLabel: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: colors.text.primary,
+    fontSize: 8,
+    fontWeight: "600",
+    color: colors.text.secondary,
+    textAlign: "center",
+  },
+
+  whiteCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.lg,
+    shadowColor: "#000",
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
   },
 
   sectionRow: {
@@ -218,6 +387,8 @@ const styles = StyleSheet.create({
 
   sectionText: {
     fontSize: 16,
+    color: colors.text.primary,
+    fontWeight: "600",
   },
 
   chevron: {
@@ -225,28 +396,57 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
 
-  evidenceBox: {
-    marginTop: spacing.lg,
-    borderWidth: 1,
+  evidenceCard: {
+    backgroundColor: "#FFFFFF",
     borderRadius: 16,
     padding: spacing.md,
-    backgroundColor: "rgba(255,255,255,0.6)",
-    borderColor: colors.border.subtle,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: "#E8D9B0",
   },
 
-  evidenceTitle: {
-    fontSize: 16,
-    fontWeight: "600",
+  evidenceHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: spacing.sm,
+  },
+
+  evidenceHeading: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#8A6A2F",
   },
 
   evidenceRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
+    alignItems: "center",
+  },
+
+  evidenceLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  evidenceBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   evidenceText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.text.primary,
+    marginLeft: spacing.sm,
+  },
+
+  emptyEvidence: {
+    color: colors.text.secondary,
     fontSize: 14,
   },
 
@@ -257,21 +457,5 @@ const styles = StyleSheet.create({
 
   closeText: {
     color: colors.text.muted,
-  },
-
-  inlineSection: {
-    marginBottom: spacing.lg,
-  },
-
-  inlineTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: spacing.xs,
-  },
-
-  inlineBody: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: colors.text.primary,
   },
 });
