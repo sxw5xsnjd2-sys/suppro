@@ -15,9 +15,13 @@ import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { colors, spacing, radius } from "@/theme";
-import { SupplementRoute, SUPPLEMENT_ROUTES } from "@/features/supplements/types";
+import {
+  SupplementRoute,
+  SUPPLEMENT_ROUTES,
+} from "@/features/supplements/types";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { Icon } from "@/features/supplements/icons/Icon";
+import { searchSupplementCatalog } from "@src/data/searchSupplementCatalog";
 
 const todayYYYYMMDD = () => new Date().toISOString().split("T")[0];
 
@@ -39,7 +43,20 @@ const formatDisplayDate = (iso: string | null | undefined) => {
   if (!iso) return "Set date";
   if (!isValidISODate(iso)) return "Invalid date";
   const [, m, d] = iso.split("-").map(Number);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
   return `${String(d).padStart(2, "0")}-${months[(m || 1) - 1]}`;
 };
 
@@ -92,7 +109,9 @@ function DatePickerModal({
 
   const handleSelectDay = (day: number | null) => {
     if (!day) return;
-    const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(
+      day
+    ).padStart(2, "0")}`;
     onSelect(iso);
     onClose();
   };
@@ -103,7 +122,12 @@ function DatePickerModal({
   });
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
       <View style={styles.dateModalBackdrop}>
         <View style={styles.dateModalCard}>
           <View style={styles.dateModalHeader}>
@@ -132,8 +156,9 @@ function DatePickerModal({
               const isInitial =
                 day &&
                 isValidISODate(initialDate) &&
-                `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}` ===
-                  initialDate;
+                `${year}-${String(month + 1).padStart(2, "0")}-${String(
+                  day
+                ).padStart(2, "0")}` === initialDate;
 
               return (
                 <Pressable
@@ -206,6 +231,12 @@ export default function SupplementModal() {
      Params & mode
   ----------------------------------------- */
 
+  const { newCatalogId, newCatalogName } =
+    useLocalSearchParams<{
+      newCatalogId?: string;
+      newCatalogName?: string;
+    }>();
+
   const { id } = useLocalSearchParams<{ id?: string }>();
   const isEdit = Boolean(id);
 
@@ -237,6 +268,10 @@ export default function SupplementModal() {
   );
 
   const [name, setName] = useState(supplement?.name ?? "");
+  const [matches, setMatches] = useState<{ id: string; name: string }[]>([]);
+  const [catalogId, setCatalogId] = useState<string | null>(
+    supplement?.catalogId ?? null
+  );
   const [dose, setDose] = useState(supplement?.dose ?? "");
   const [route, setRoute] = useState<SupplementRoute>(
     supplement?.route ?? "tablet"
@@ -248,7 +283,9 @@ export default function SupplementModal() {
   const [endDate, setEndDate] = useState<string | null>(
     supplement?.endDate ?? null
   );
-  const [activeDatePicker, setActiveDatePicker] = useState<"start" | "end" | null>(null);
+  const [activeDatePicker, setActiveDatePicker] = useState<
+    "start" | "end" | null
+  >(null);
   const timeScrollRef = useRef<ScrollView | null>(null);
   const hasScrolledInitial = useRef(false);
 
@@ -257,7 +294,11 @@ export default function SupplementModal() {
   const chronologicalValid =
     !endDate || (startDateValid && endDateValid && endDate >= startDate);
   const canSave =
-    name.trim().length > 0 && startDateValid && endDateValid && chronologicalValid;
+    name.trim().length > 0 &&
+    !!catalogId &&
+    startDateValid &&
+    endDateValid &&
+    chronologicalValid;
 
   const timeLabel =
     TIME_OPTIONS.find((t) => t.minutes === timeMinutes)?.label ?? "08:00";
@@ -272,15 +313,43 @@ export default function SupplementModal() {
     );
   };
 
+  useEffect(() => {
+    let active = true;
+
+    if (!name.trim()) {
+      setMatches([]);
+      setCatalogId(null);
+      return;
+    }
+
+    searchSupplementCatalog(name).then((results) => {
+      if (active) setMatches(results);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [name]);
+
+  useEffect(() => {
+    if (newCatalogId && newCatalogName) {
+      setName(newCatalogName);
+      setCatalogId(newCatalogId);
+      setMatches([]);
+    }
+  }, [newCatalogId, newCatalogName]);
+
   /* ----------------------------------------
      Save / Delete
   ----------------------------------------- */
 
   const handleSave = () => {
     if (!canSave) return;
+    if (!catalogId) return;
 
     const payload = {
       name: name.trim(),
+      catalogId,
       dose: dose.trim() || undefined,
       route,
       time: timeLabel,
@@ -323,8 +392,7 @@ export default function SupplementModal() {
     if (index === -1) return;
 
     const centerOffset =
-      index * TIME_ITEM_HEIGHT -
-      (TIME_PICKER_HEIGHT - TIME_ITEM_HEIGHT) / 2;
+      index * TIME_ITEM_HEIGHT - (TIME_PICKER_HEIGHT - TIME_ITEM_HEIGHT) / 2;
 
     timeScrollRef.current?.scrollTo({
       y: Math.max(0, centerOffset),
@@ -373,15 +441,68 @@ export default function SupplementModal() {
             contentContainerStyle={styles.form}
             keyboardShouldPersistTaps="handled"
           >
-            <View style={styles.field}>
-              <Text style={styles.label}>Name</Text>
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ fontWeight: "600", marginBottom: 6 }}>
+                Supplement name
+              </Text>
+
               <TextInput
                 value={name}
-                onChangeText={setName}
-                placeholder="e.g. Magnesium glycinate"
-                placeholderTextColor={colors.text.muted}
-                style={styles.input}
+                onChangeText={(text) => {
+                  setName(text);
+                  setCatalogId(null); // reset until user selects
+                }}
+                placeholder="Type supplement name"
+                style={{
+                  borderWidth: 1,
+                  borderRadius: 10,
+                  padding: 12,
+                  borderColor: "#ddd",
+                }}
               />
+
+              {/* Dropdown */}
+              {name.trim().length >= 3 && (
+                <View
+                  style={{
+                    marginTop: 6,
+                    borderWidth: 1,
+                    borderRadius: 10,
+                    borderColor: "#eee",
+                    backgroundColor: "#fff",
+                  }}
+                >
+                  {/* Matching catalog results (if any) */}
+                  {matches.map((m) => (
+                    <Pressable
+                      key={m.id}
+                      onPress={() => {
+                        setName(m.name);
+                        setCatalogId(m.id);
+                        setMatches([]);
+                      }}
+                      style={{ padding: 12 }}
+                    >
+                      <Text>{m.name}</Text>
+                    </Pressable>
+                  ))}
+
+                  {/* Always visible once user has typed 3+ characters */}
+                  <Pressable
+                    onPress={() => {
+                      router.push("/(modals)/modal/add-supplement-catalog");
+                    }}
+                    style={{
+                      padding: 12,
+                      borderTopWidth: matches.length > 0 ? 1 : 0,
+                      borderColor: "#eee",
+                      opacity: 0.6,
+                    }}
+                  >
+                    <Text>+ Add new supplement</Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
 
             <View style={styles.field}>
@@ -465,7 +586,8 @@ export default function SupplementModal() {
                 <Text style={styles.errorText}>
                   {(() => {
                     if (!startDateValid) return "Enter a valid start date.";
-                    if (!endDateValid) return "Enter a valid end date or leave it blank.";
+                    if (!endDateValid)
+                      return "Enter a valid end date or leave it blank.";
                     if (!chronologicalValid)
                       return "End date must be on or after the start date.";
                     return "";

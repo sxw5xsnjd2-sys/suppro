@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { colors, spacing } from "@/theme";
-import { metalGradients } from "@/utils/metalStyles";
+import { metalGradients, type MetalGradient } from "@/utils/metalStyles";
 import { getSupplementById } from "@src/data/getSupplement";
 import type { SupplementWithBenefits } from "@src/types/supplements";
 
@@ -11,8 +11,8 @@ import type { SupplementWithBenefits } from "@src/types/supplements";
 
 const getTier = (score: number) => {
   const clamped = Math.max(0, Math.min(100, score));
-  if (clamped <= 33) return "bronze";
-  if (clamped <= 66) return "silver";
+  if (clamped <= 50) return "bronze";
+  if (clamped <= 75) return "silver";
   return "gold";
 };
 
@@ -20,6 +20,9 @@ const getTier = (score: number) => {
 
 export default function SupplementInfoModal() {
   const { id } = useLocalSearchParams<{ id?: string }>();
+
+  console.log("SUPPLEMENT INFO ID PARAM:", id);
+
   const [data, setData] = useState<SupplementWithBenefits | null>(null);
 
   useEffect(() => {
@@ -66,15 +69,30 @@ export default function SupplementInfoModal() {
         ))}
       </View>
 
-      {/* Info Rows */}
-      <SectionRow label="What is it?" />
-      <SectionRow label="Why use it?" />
-      <SectionRow label="Risks / interactions?" />
+      {/* What is it */}
+      <View style={styles.inlineSection}>
+        <Text style={styles.inlineTitle}>What is it?</Text>
+        <Text style={styles.inlineBody}>{data?.what_is_it ?? "—"}</Text>
+      </View>
+
+      {/* Why use it */}
+      <View style={styles.inlineSection}>
+        <Text style={styles.inlineTitle}>Why use it?</Text>
+        <Text style={styles.inlineBody}>{data?.why_use_it ?? "—"}</Text>
+      </View>
+
+      {/* Risks / interactions */}
+      <View style={styles.inlineSection}>
+        <Text style={styles.inlineTitle}>Risks & interactions</Text>
+        <Text style={styles.inlineBody}>
+          {data?.risks_and_interactions ?? "—"}
+        </Text>
+      </View>
 
       {/* Evidence */}
       <View style={styles.evidenceBox}>
-        <Text style={styles.evidenceTitle}>Evidence</Text>
-        <EvidenceRow label={data?.evidence ?? "No evidence summary yet"} />
+        <Text style={styles.evidenceTitle}>Evidence summary</Text>
+        <Text style={styles.inlineBody}>{data?.evidence ?? "—"}</Text>
       </View>
 
       {/* Close */}
@@ -92,7 +110,7 @@ function Metric({
   gradient,
 }: {
   label: string;
-  gradient: readonly string[];
+  gradient: MetalGradient;
 }) {
   return (
     <View style={styles.metricItem}>
@@ -239,5 +257,21 @@ const styles = StyleSheet.create({
 
   closeText: {
     color: colors.text.muted,
+  },
+
+  inlineSection: {
+    marginBottom: spacing.lg,
+  },
+
+  inlineTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: spacing.xs,
+  },
+
+  inlineBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.text.primary,
   },
 });

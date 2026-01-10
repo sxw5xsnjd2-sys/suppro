@@ -9,6 +9,8 @@ import { SupplementRoute } from "@/features/supplements/types";
 
 export type Supplement = {
   id: string;
+  catalogId: string;
+
   name: string;
   dose?: string;
   time: string; // display "HH:mm"
@@ -61,12 +63,13 @@ export const useSupplementsStore = create<SupplementStore>()(
     (set, get) => ({
       supplements: [
         {
-          id: "1",
-          name: "Omega 3",
-          dose: "1 capsule",
+          id: "local-creatine",
+          catalogId: "948a9744-85f8-4987-9f09-40db85e4e188",
+          name: "Creatine",
+          dose: "5 g",
           time: "08:00",
           timeMinutes: 8 * 60,
-          route: "tablet",
+          route: "powder",
           daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
           startDate: today(),
           endDate: null,

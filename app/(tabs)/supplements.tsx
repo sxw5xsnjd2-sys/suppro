@@ -59,7 +59,7 @@ export default function SupplementsScreen() {
                 onInfoPress={() =>
                   router.push({
                     pathname: "/modal/supplement-info",
-                    params: { id: s.id },
+                    params: { id: s.catalogId },
                   })
                 }
                 onPress={() =>

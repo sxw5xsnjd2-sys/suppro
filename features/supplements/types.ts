@@ -7,6 +7,8 @@ export type SupplementRoute =
 
 export type Supplement = {
   id: string;
+  catalogId: string;
+
   name: string;
   route: SupplementRoute;
   time: string;
