@@ -1,9 +1,11 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { colors, spacing } from "@/theme";
 import { metalGradients } from "@/utils/metalStyles";
+import { getSupplementById } from "@src/data/getSupplement";
+import type { SupplementWithBenefits } from "@src/types/supplements";
 
 /* ---------------- Helpers ---------------- */
 
@@ -17,17 +19,24 @@ const getTier = (score: number) => {
 /* ---------------- Screen ---------------- */
 
 export default function SupplementInfoModal() {
-  const { name } = useLocalSearchParams<{ name?: string }>();
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const [data, setData] = useState<SupplementWithBenefits | null>(null);
 
-  // Placeholder rating until wired to data
-  const rating = 76;
+  useEffect(() => {
+    if (!id) return;
+    getSupplementById(id).then(setData);
+  }, [id]);
+
+  const rating = data?.evidence_score ?? 0;
   const tier = getTier(rating);
+
+  const benefits = useMemo(() => data?.supplement_benefits ?? [], [data]);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>{name ?? "Supplement"}</Text>
+        <Text style={styles.title}>{data?.name ?? "Supplement"}</Text>
       </View>
 
       {/* Score Card */}
@@ -40,11 +49,21 @@ export default function SupplementInfoModal() {
         <Text style={styles.scoreText}>{rating} / 100</Text>
       </LinearGradient>
 
-      {/* Strength / Endurance / Memory */}
+      {/* Dynamic Metrics */}
       <View style={styles.metricRow}>
-        <Metric label="Strength" gradient={metalGradients.gold} />
-        <Metric label="Endurance" gradient={metalGradients.silver} />
-        <Metric label="Memory" gradient={metalGradients.bronze} />
+        {benefits.map((b) => (
+          <Metric
+            key={b.id}
+            label={b.label}
+            gradient={
+              b.icon === "gold"
+                ? metalGradients.gold
+                : b.icon === "silver"
+                ? metalGradients.silver
+                : metalGradients.bronze
+            }
+          />
+        ))}
       </View>
 
       {/* Info Rows */}
@@ -55,9 +74,7 @@ export default function SupplementInfoModal() {
       {/* Evidence */}
       <View style={styles.evidenceBox}>
         <Text style={styles.evidenceTitle}>Evidence</Text>
-        <EvidenceRow label="Evidence for enhanced strength" />
-        <EvidenceRow label="Emerging evidence for cognitive / memory" />
-        <EvidenceRow label="Strong evidence for improved endurance" />
+        <EvidenceRow label={data?.evidence ?? "No evidence summary yet"} />
       </View>
 
       {/* Close */}
