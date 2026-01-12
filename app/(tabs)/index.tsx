@@ -8,6 +8,8 @@ import { useSupplementsStore } from "@/features/supplements/store";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { searchSupplementCatalog } from "@src/data/searchSupplementCatalog";
+import { getSupplementRatings } from "@src/data/getSupplementRatings";
+import { getRatingStyle } from "@/utils/ratingStyles";
 
 function EmptyState() {
   return (
@@ -26,6 +28,9 @@ export default function HomeScreen() {
   const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
   const [searchQuery, setSearchQuery] = useState("");
   const [matches, setMatches] = useState<{ id: string; name: string }[]>([]);
+  const [ratingByCatalog, setRatingByCatalog] = useState<Record<string, number>>(
+    {}
+  );
 
   const todayDay = new Date(selectedDate).getDay();
 
@@ -43,6 +48,13 @@ export default function HomeScreen() {
     return dueSupplements.filter((s) => s.name.toLowerCase().includes(q));
   }, [dueSupplements, searchQuery]);
 
+  const ratingColorFor = (catalogId?: string) => {
+    if (!catalogId) return undefined;
+    const score = ratingByCatalog[catalogId];
+    if (typeof score !== "number") return undefined;
+    return getRatingStyle(score).gradient[0];
+  };
+
   const takenTimes = takenTimesByDate[selectedDate] ?? {};
 
   const toggleTaken = useSupplementsStore((s) => s.toggleTaken);
@@ -53,6 +65,27 @@ export default function HomeScreen() {
     acc[s.timeMinutes].push(s);
     return acc;
   }, {});
+
+  useEffect(() => {
+    let active = true;
+
+    const catalogIds = Array.from(
+      new Set(visibleSupplements.map((s) => s.catalogId).filter(Boolean))
+    );
+
+    if (catalogIds.length === 0) {
+      setRatingByCatalog({});
+      return;
+    }
+
+    getSupplementRatings(catalogIds).then((map) => {
+      if (active) setRatingByCatalog(map);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [visibleSupplements]);
 
   // Supabase search for catalog when typing
   useEffect(() => {
@@ -145,6 +178,7 @@ export default function HomeScreen() {
                       name={s.name}
                       subtitle={s.dose}
                       route={s.route}
+                      iconBorderColor={ratingColorFor(s.catalogId)}
                       taken={Boolean(takenTimes[s.id])}
                       footer={
                         takenTimes[s.id]

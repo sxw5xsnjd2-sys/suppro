@@ -12,6 +12,7 @@ type SupplementCardProps = {
   taken?: boolean;
   footer?: string;
   showCheckbox?: boolean;
+  iconBorderColor?: string;
   onPress?: () => void;
   onLongPress?: () => void;
   onInfoPress?: () => void;
@@ -24,6 +25,7 @@ export function SupplementCard({
   footer,
   route,
   showCheckbox = true,
+  iconBorderColor,
   onPress,
   onLongPress,
   onInfoPress,
@@ -37,7 +39,14 @@ export function SupplementCard({
     >
       <View style={[styles.card, taken && styles.cardTaken]}>
         {/* Left icon */}
-        <View style={styles.iconContainer}>
+        <View
+          style={[
+            styles.iconContainer,
+            iconBorderColor
+              ? { borderColor: iconBorderColor, borderWidth: 2 }
+              : undefined,
+          ]}
+        >
           <Icon route={route} size={28} />
         </View>
 
