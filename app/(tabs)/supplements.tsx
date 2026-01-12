@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
   },
 
   empty: {
-    marginTop: spacing.xl,
+    marginTop: -spacing.md,
     padding: spacing.lg,
     backgroundColor: colors.background.card,
     borderRadius: 16,

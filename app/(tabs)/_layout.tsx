@@ -1,7 +1,8 @@
 import React from "react";
 import { View, Pressable, StyleSheet } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { Tabs, router } from "expo-router";
-import { colors } from "@/theme";
+import { colors, gradients } from "@/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import HomeIcon from "@/assets/icons/tab/home.svg";
@@ -23,7 +24,9 @@ export default function TabsLayout() {
           tabBarStyle: {
             backgroundColor: colors.background.card,
             borderTopColor: colors.border.subtle,
-            height: 64,
+            height: 42 + insets.bottom,
+            paddingBottom: Math.max(0, insets.bottom),
+            paddingTop: 8,
           },
           tabBarLabelStyle: {
             fontSize: 12,
@@ -107,10 +110,15 @@ export default function TabsLayout() {
         onPress={() => router.push("/modal/supplement")}
         style={[styles.fab, { bottom: insets.bottom + 8 }]}
       >
-        <View style={styles.fabInner}>
+        <LinearGradient
+          colors={gradients.header}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.fabInner}
+        >
           <View style={styles.plus} />
           <View style={[styles.plus, styles.plusVertical]} />
-        </View>
+        </LinearGradient>
       </Pressable>
     </View>
   );
@@ -126,7 +134,6 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: colors.brand.primary,
     justifyContent: "center",
     alignItems: "center",
     shadowColor: "#000",

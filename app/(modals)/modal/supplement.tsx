@@ -272,6 +272,7 @@ export default function SupplementModal() {
   const [catalogId, setCatalogId] = useState<string | null>(
     supplement?.catalogId ?? null
   );
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [dose, setDose] = useState(supplement?.dose ?? "");
   const [route, setRoute] = useState<SupplementRoute>(
     supplement?.route ?? "tablet"
@@ -316,14 +317,24 @@ export default function SupplementModal() {
   useEffect(() => {
     let active = true;
 
+    if (catalogId) {
+      setMatches([]);
+      setDropdownOpen(false);
+      return;
+    }
+
     if (!name.trim()) {
       setMatches([]);
       setCatalogId(null);
+      setDropdownOpen(false);
       return;
     }
 
     searchSupplementCatalog(name).then((results) => {
-      if (active) setMatches(results);
+      if (active) {
+        setMatches(results);
+        setDropdownOpen(name.trim().length > 0);
+      }
     });
 
     return () => {
@@ -439,7 +450,7 @@ export default function SupplementModal() {
           {/* Form */}
           <ScrollView
             contentContainerStyle={styles.form}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
           >
             <View style={{ marginBottom: 16 }}>
               <Text style={{ fontWeight: "600", marginBottom: 6 }}>
@@ -451,8 +462,11 @@ export default function SupplementModal() {
                 onChangeText={(text) => {
                   setName(text);
                   setCatalogId(null); // reset until user selects
+                  setDropdownOpen(text.trim().length > 0);
                 }}
                 placeholder="Type supplement name"
+                onFocus={() => setDropdownOpen(name.trim().length > 0)}
+                onBlur={() => setDropdownOpen(false)}
                 style={{
                   borderWidth: 1,
                   borderRadius: 10,
@@ -462,7 +476,7 @@ export default function SupplementModal() {
               />
 
               {/* Dropdown */}
-              {name.trim().length >= 3 && (
+              {dropdownOpen && name.trim().length > 0 && (
                 <View
                   style={{
                     marginTop: 6,
@@ -480,6 +494,7 @@ export default function SupplementModal() {
                         setName(m.name);
                         setCatalogId(m.id);
                         setMatches([]);
+                        setDropdownOpen(false);
                       }}
                       style={{ padding: 12 }}
                     >
@@ -487,9 +502,9 @@ export default function SupplementModal() {
                     </Pressable>
                   ))}
 
-                  {/* Always visible once user has typed 3+ characters */}
                   <Pressable
                     onPress={() => {
+                      setDropdownOpen(false);
                       router.push("/(modals)/modal/add-supplement-catalog");
                     }}
                     style={{
@@ -501,6 +516,7 @@ export default function SupplementModal() {
                   >
                     <Text>+ Add new supplement</Text>
                   </Pressable>
+
                 </View>
               )}
             </View>

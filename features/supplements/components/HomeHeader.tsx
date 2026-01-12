@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect, useState } from "react";
+import React, { useMemo, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,8 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from "react-native";
-import { colors, spacing } from "@/theme";
+import { LinearGradient } from "expo-linear-gradient";
+import { colors, spacing, gradients } from "@/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSupplementsStore } from "@/features/supplements/store";
 
@@ -39,6 +40,13 @@ const formatFullDate = (date: string) =>
     month: "long",
   });
 
+const formatFullDateWithYear = (date: string) =>
+  new Date(date).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const buildDateRange = (daysBefore = 180, daysAfter = 180) => {
@@ -54,11 +62,15 @@ const buildDateRange = (daysBefore = 180, daysAfter = 180) => {
   });
 };
 
+type HomeHeaderProps = {
+  searchSlot?: React.ReactNode;
+};
+
 /* ----------------------------------------
    Component
 ----------------------------------------- */
 
-export function HomeHeader() {
+export function HomeHeader({ searchSlot }: HomeHeaderProps) {
   const insets = useSafeAreaInsets();
 
   const selectedDate = useSupplementsStore((s) => s.selectedDate);
@@ -70,9 +82,7 @@ export function HomeHeader() {
 
   const todayIndex = dates.indexOf(todayISO());
 
-  const [visibleMonth, setVisibleMonth] = useState(
-    formatMonthYear(selectedDate)
-  );
+  const visibleDateLabel = formatFullDateWithYear(selectedDate);
 
   /* ----------------------------------------
      Auto-center today on mount
@@ -91,23 +101,11 @@ export function HomeHeader() {
      Scroll handler → month indicator
   ----------------------------------------- */
 
-  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const x = e.nativeEvent.contentOffset.x;
-    const index = Math.round(x / ITEM_WIDTH);
-
-    const date = dates[index];
-    if (date) {
-      const monthLabel = formatMonthYear(date);
-      if (monthLabel !== visibleMonth) {
-        setVisibleMonth(monthLabel);
-      }
-    }
-  };
-
   const isTodaySelected = selectedDate === todayISO();
 
   const jumpToToday = () => {
-    setSelectedDate(todayISO());
+    const today = todayISO();
+    setSelectedDate(today);
     if (todayIndex > -1) {
       scrollRef.current?.scrollTo({
         x: Math.max(0, todayIndex * ITEM_WIDTH - 150),
@@ -117,18 +115,23 @@ export function HomeHeader() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + spacing.md }]}>
+    <LinearGradient
+      colors={gradients.header}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={[styles.container, { paddingTop: insets.top + spacing.md }]}
+    >
       {/* Top row */}
       <View style={styles.topRow}>
         <Image
           source={require("@/assets/icons/Supprologo.png")}
           style={styles.logo}
         />
+        <Text style={styles.brandText}>Suppro</Text>
       </View>
 
-      {/* Month indicator + Today */}
       <View style={styles.monthRow}>
-        <Text style={styles.monthLabel}>{visibleMonth}</Text>
+        <Text style={styles.monthLabel}>{visibleDateLabel}</Text>
 
         <Pressable onPress={jumpToToday} style={[styles.todayButton]}>
           <Text style={[styles.todayText]}>Today</Text>
@@ -141,8 +144,6 @@ export function HomeHeader() {
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.weekRow}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
       >
         {dates.map((date, index) => {
           const active = date === selectedDate;
@@ -167,9 +168,13 @@ export function HomeHeader() {
         })}
       </ScrollView>
 
-      {/* Selected date label */}
-      <Text style={styles.selectedDate}>{formatFullDate(selectedDate)}</Text>
-    </View>
+      {searchSlot ? (
+        <View style={styles.searchShell}>
+          <View style={styles.searchDivider} />
+          {searchSlot}
+        </View>
+      ) : null}
+    </LinearGradient>
   );
 }
 
@@ -179,9 +184,8 @@ export function HomeHeader() {
 
 const styles = StyleSheet.create({
   container: {
-    paddingBottom: spacing.lg,
+    paddingBottom: spacing.xs,
     paddingHorizontal: spacing.lg,
-    backgroundColor: colors.background.header,
   },
 
   topRow: {
@@ -190,12 +194,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginBottom: spacing.sm,
+    gap: spacing.sm,
   },
 
   logo: {
-    width: 120,
-    height: 120,
+    width: 45,
+    height: 45,
     resizeMode: "contain",
+  },
+
+  brandText: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.text.inverse,
   },
 
   monthRow: {
@@ -249,10 +260,20 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
 
-  selectedDate: {
-    marginTop: spacing.md,
-    fontSize: 14,
-    color: "rgba(255,255,255,0.85)",
+  searchShell: {
+    marginTop: 0,
+    backgroundColor: colors.background.app,
+    borderRadius: 0,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginHorizontal: -spacing.lg, // extend to edges to remove blue margin
+    marginBottom: -spacing.lg,
+  },
+
+  searchDivider: {
+    height: 1,
+    backgroundColor: colors.border.subtle,
+    marginBottom: spacing.sm,
   },
 
   todayButton: {

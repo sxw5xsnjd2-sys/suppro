@@ -1,7 +1,8 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, spacing } from "@/theme";
+import { colors, spacing, gradients } from "@/theme";
 
 type HeaderProps = {
   title: string;
@@ -10,13 +11,13 @@ type HeaderProps = {
   centered?: boolean;
 };
 
-export const HEADER_HEIGHT = 140;
+export const HEADER_HEIGHT = 80;
 
 export function Header({ title, subtitle, rightSlot, centered }: HeaderProps) {
   const insets = useSafeAreaInsets();
 
   return (
-    <View
+    <LinearGradient
       style={[
         styles.container,
         {
@@ -24,6 +25,9 @@ export function Header({ title, subtitle, rightSlot, centered }: HeaderProps) {
           height: HEADER_HEIGHT + insets.top,
         },
       ]}
+      colors={gradients.header}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
     >
       <View style={[styles.row, centered && styles.rowCentered]}>
         <View style={[styles.textBlock, centered && styles.textBlockCentered]}>
@@ -40,14 +44,13 @@ export function Header({ title, subtitle, rightSlot, centered }: HeaderProps) {
 
         {rightSlot ? <View style={styles.rightSlot}>{rightSlot}</View> : null}
       </View>
-    </View>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     height: HEADER_HEIGHT,
-    backgroundColor: colors.background.header,
     paddingHorizontal: spacing.lg,
     justifyContent: "flex-end",
     paddingBottom: spacing.md,

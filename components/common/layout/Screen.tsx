@@ -6,9 +6,15 @@ type ScreenProps = {
   children: React.ReactNode;
   header?: React.ReactNode;
   scrollable?: boolean;
+  stickyHeaderIndices?: number[];
 };
 
-export function Screen({ children, header, scrollable = true }: ScreenProps) {
+export function Screen({
+  children,
+  header,
+  scrollable = true,
+  stickyHeaderIndices,
+}: ScreenProps) {
   const [headerHeight, setHeaderHeight] = useState(0);
 
   const onHeaderLayout = (e: LayoutChangeEvent) => {
@@ -31,6 +37,7 @@ export function Screen({ children, header, scrollable = true }: ScreenProps) {
             styles.content,
             header ? { paddingTop: headerHeight + spacing.md } : null,
           ]}
+          stickyHeaderIndices={stickyHeaderIndices}
         >
           {children}
         </ScrollView>

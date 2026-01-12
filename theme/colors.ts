@@ -1,14 +1,15 @@
 export const colors = {
   // Core brand
   brand: {
-    primary: "#0B2C5F", // Match header blue for buttons + accents
+    // primary: "#", // Match header blue for buttons + accents
+    primary: "#175c91",
     dark: "#0B2C5F", // Deep header blue
   },
 
   // Backgrounds
   background: {
     app: "#F6F8FC", // Main app background (very light grey)
-    header: "#0B2C5F", // Top gradient start
+    header: "#175c91", // Top gradient start
     headerAlt: "#163D7A", // Top gradient end
     card: "#FFFFFF", // White cards
   },
@@ -39,4 +40,8 @@ export const colors = {
     muted: "#94A3B8",
     inverse: "#FFFFFF",
   },
+};
+
+export const gradients = {
+  header: [colors.background.header, colors.background.headerAlt] as const,
 };
