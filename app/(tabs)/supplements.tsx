@@ -88,7 +88,7 @@ export default function SupplementsScreen() {
                 name={s.name}
                 subtitle={s.dose ? `${s.dose} · ${s.time}` : s.time}
                 route={s.route}
-                iconBorderColor={iconColorFor(s.catalogId)}
+                iconBackgroundColor={iconColorFor(s.catalogId)}
                 showCheckbox={false}
                 onInfoPress={() =>
                   router.push({

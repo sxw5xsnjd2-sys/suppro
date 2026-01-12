@@ -178,7 +178,7 @@ export default function HomeScreen() {
                       name={s.name}
                       subtitle={s.dose}
                       route={s.route}
-                      iconBorderColor={ratingColorFor(s.catalogId)}
+                      iconBackgroundColor={ratingColorFor(s.catalogId)}
                       taken={Boolean(takenTimes[s.id])}
                       footer={
                         takenTimes[s.id]

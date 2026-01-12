@@ -461,6 +461,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
+    opacity: 0.8,
   },
 
   scoreCardRow: {
@@ -542,6 +543,7 @@ const styles = StyleSheet.create({
     elevation: 3,
     alignItems: "center",
     justifyContent: "center",
+    opacity: 0.75,
   },
 
   metricLabelWrap: {

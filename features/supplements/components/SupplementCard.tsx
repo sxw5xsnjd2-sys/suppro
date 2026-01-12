@@ -12,7 +12,7 @@ type SupplementCardProps = {
   taken?: boolean;
   footer?: string;
   showCheckbox?: boolean;
-  iconBorderColor?: string;
+  iconBackgroundColor?: string;
   onPress?: () => void;
   onLongPress?: () => void;
   onInfoPress?: () => void;
@@ -25,7 +25,7 @@ export function SupplementCard({
   footer,
   route,
   showCheckbox = true,
-  iconBorderColor,
+  iconBackgroundColor,
   onPress,
   onLongPress,
   onInfoPress,
@@ -42,9 +42,9 @@ export function SupplementCard({
         <View
           style={[
             styles.iconContainer,
-            iconBorderColor
-              ? { borderColor: iconBorderColor, borderWidth: 2 }
-              : undefined,
+            iconBackgroundColor && {
+              backgroundColor: `${iconBackgroundColor}22`,
+            },
           ]}
         >
           <Icon route={route} size={28} />
@@ -131,7 +131,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#F1F5F9",
+    backgroundColor: colors.background.card,
     alignItems: "center",
     justifyContent: "center",
     marginRight: spacing.md,
