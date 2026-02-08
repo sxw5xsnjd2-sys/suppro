@@ -1,7 +1,5 @@
 export const metalGradients = {
-    bronze: ["#F2C28B", "#C27A3A", "#8A5524"],
-    // silver: ["#FFFFFF", "#D6DAE3", "#B8BCC8"],
-    // silver: ["#F5F7FA", "#C9CED6", "#9AA1AB"],
-    silver: ["#FFFFFF", "#D1D6DE", "#8F96A3"],
-    gold: ["#FFF6CC", "#E3C15F", "#B9972E"],
+    bronze: ["#F7C8A0", "#C96B27", "#7A3D12"],
+    silver: ["#F5F8FC", "#A9B4C7", "#5E6A7C"],
+    gold: ["#FFF0A8", "#E3B324", "#8A6700"],
 };

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import { colors, spacing, gradients } from "@/theme";
+import { colors, spacing, radius, shadows } from "@/theme";
 import { metalGradients } from "@/utils/metalStyles";
 import { getSupplementById } from "@src/data/getSupplement";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -244,9 +244,9 @@ export default function SupplementInfoModal() {
                 },
             });
         }} disabled={!data?.id || !data?.name}>
-        <LinearGradient colors={gradients.header} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.addButtonInner}>
+        <View style={styles.addButtonInner}>
           <Text style={styles.addButtonText}>+ Add to supplements</Text>
-        </LinearGradient>
+        </View>
       </Pressable>
 
       {/* Info Sections */}
@@ -317,11 +317,11 @@ const styles = StyleSheet.create({
         paddingTop: spacing.lg,
         paddingHorizontal: spacing.md,
         paddingBottom: spacing.xl * 2,
-        backgroundColor: "#F4F5F7",
+        backgroundColor: colors.background.app,
         flexGrow: 1,
     },
     headerBand: {
-        backgroundColor: "#FFFFFF",
+        backgroundColor: colors.background.card,
         paddingVertical: spacing.lg,
         paddingHorizontal: spacing.md,
         marginBottom: spacing.lg,
@@ -338,7 +338,7 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: "#F1F5F9",
+        backgroundColor: colors.brand.soft,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -353,15 +353,11 @@ const styles = StyleSheet.create({
         color: colors.text.primary,
     },
     heroCard: {
-        backgroundColor: "#FFFFFF",
-        borderRadius: 20,
+        backgroundColor: colors.background.card,
+        borderRadius: radius.xl,
         padding: spacing.md,
         marginBottom: spacing.lg,
-        shadowColor: "#000",
-        shadowOpacity: 0.06,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 4,
+        ...shadows.card,
     },
     scoreCard: {
         borderRadius: 18,
@@ -393,7 +389,7 @@ const styles = StyleSheet.create({
     scoreText: {
         fontSize: 38,
         fontWeight: "700",
-        color: "#111",
+        color: colors.text.primary,
     },
     unratedCard: {
         backgroundColor: "#FFF7ED",
@@ -410,17 +406,12 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
     heartBox: {
-        backgroundColor: "#FFFFFF",
+        backgroundColor: colors.background.card,
         borderRadius: 16,
         paddingHorizontal: spacing.sm,
         paddingVertical: spacing.xs,
         borderWidth: 1,
-        borderColor: "rgba(0,0,0,0.05)",
-        shadowColor: "#000",
-        shadowOpacity: 0.04,
-        shadowRadius: 4,
-        shadowOffset: { width: 0, height: 2 },
-        elevation: 2,
+        borderColor: colors.border.subtle,
     },
     verificationRow: {
         flexDirection: "row",
@@ -460,11 +451,9 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.sm,
     },
     metricItem: {
-        flexBasis: "30%",
-        maxWidth: "30%",
-        minWidth: 90,
+        flexBasis: "33.3333%",
+        maxWidth: "33.3333%",
         alignItems: "center",
-        marginHorizontal: spacing.xs,
         marginVertical: spacing.xs,
     },
     metricCircleWrapper: {
@@ -479,8 +468,8 @@ const styles = StyleSheet.create({
         height: 40,
         borderRadius: 20,
         marginBottom: spacing.xs,
-        shadowColor: "#000",
-        shadowOpacity: 0.1,
+        shadowColor: colors.brand.dark,
+        shadowOpacity: 0.08,
         shadowRadius: 6,
         shadowOffset: { width: 0, height: 3 },
         elevation: 3,
@@ -504,39 +493,34 @@ const styles = StyleSheet.create({
         marginTop: spacing.xs - 1,
         marginBottom: spacing.lg,
         marginHorizontal: spacing.lg,
-        borderRadius: 14,
-        shadowColor: "#000",
-        shadowOpacity: 0.08,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 4,
+        borderRadius: radius.lg,
+        ...shadows.card,
         overflow: "hidden",
     },
     addButtonInner: {
         paddingVertical: spacing.md,
         alignItems: "center",
         justifyContent: "center",
-        borderRadius: 14,
+        borderRadius: radius.lg,
+        backgroundColor: colors.border.strong,
+        borderWidth: 1,
+        borderColor: colors.brand.primary,
     },
     addButtonDisabled: {
         opacity: 0.7,
     },
     addButtonText: {
-        color: colors.text.inverse,
+        color: colors.text.primary,
         fontSize: 16,
         fontWeight: "700",
     },
     whiteCard: {
-        backgroundColor: "#FFFFFF",
-        borderRadius: 16,
+        backgroundColor: colors.background.card,
+        borderRadius: radius.lg,
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.xs,
         marginBottom: spacing.lg,
-        shadowColor: "#000",
-        shadowOpacity: 0.03,
-        shadowRadius: 4,
-        shadowOffset: { width: 0, height: 1 },
-        elevation: 2,
+        ...shadows.card,
     },
     sectionRow: {
         paddingVertical: spacing.md,
@@ -564,12 +548,12 @@ const styles = StyleSheet.create({
         lineHeight: 20,
     },
     evidenceCard: {
-        backgroundColor: "#FFFFFF",
-        borderRadius: 16,
+        backgroundColor: colors.background.card,
+        borderRadius: radius.lg,
         padding: spacing.md,
         marginBottom: spacing.lg,
         borderWidth: 1,
-        borderColor: "#E8D9B0",
+        borderColor: colors.border.subtle,
     },
     evidenceHeaderRow: {
         flexDirection: "row",
@@ -614,6 +598,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     closeText: {
-        color: colors.text.muted,
+        color: colors.text.secondary,
+        fontWeight: "600",
     },
 });

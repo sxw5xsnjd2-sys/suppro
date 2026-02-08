@@ -9,142 +9,201 @@ import { MiniLineChart } from "@/features/health/components/MiniLineChart";
 import { HealthEntryModal } from "@/features/health/components/HealthEntryModal";
 import { AddMetricModal } from "@/features/health/components/AddMetricModal";
 import { HealthMetricSummaryModal } from "@/features/health/components/HealthMetricSummaryModal";
+import { formatMetricValue, isNumericMetric, normalizeMetric } from "@/features/health/metricDefinitions";
+
 export default function HealthScreen() {
-    const entries = useHealthStore((s) => s.entries);
-    const metrics = useHealthStore((s) => s.metrics);
-    const deleteMetric = useHealthStore((s) => s.deleteMetric);
-    const deleteEntry = useHealthStore((s) => s.deleteEntry);
-    const supplements = useSupplementsStore((s) => s.supplements);
-    const enabledMetrics = useMemo(() => metrics.filter((m) => m.enabled), [metrics]);
-    const [entryModalOpen, setEntryModalOpen] = useState(false);
-    const [activeMetric, setActiveMetric] = useState(null);
-    const [metricPickerOpen, setMetricPickerOpen] = useState(false);
-    // Summary modal stub (no UI yet)
-    const [summaryMetric, setSummaryMetric] = useState(null);
-    const openTrack = (metric) => {
-        setActiveMetric(metric);
-        setEntryModalOpen(true);
-    };
-    const closeTrack = () => {
-        setEntryModalOpen(false);
-        setActiveMetric(null);
-    };
-    const openSummary = (metric) => {
-        setSummaryMetric(metric);
-    };
-    const closeSummary = () => {
-        setSummaryMetric(null);
-    };
-    const supplementMarkers = useMemo(() => supplements
+  const entries = useHealthStore((s) => s.entries);
+  const metrics = useHealthStore((s) => s.metrics);
+  const deleteMetric = useHealthStore((s) => s.deleteMetric);
+  const deleteEntry = useHealthStore((s) => s.deleteEntry);
+  const supplements = useSupplementsStore((s) => s.supplements);
+
+  const normalizedMetrics = useMemo(
+    () => (metrics ?? []).map((metric) => normalizeMetric(metric)).filter(Boolean),
+    [metrics]
+  );
+  const enabledMetrics = useMemo(() => normalizedMetrics.filter((m) => m.enabled), [normalizedMetrics]);
+
+  const [entryModalOpen, setEntryModalOpen] = useState(false);
+  const [activeMetric, setActiveMetric] = useState(null);
+  const [metricPickerOpen, setMetricPickerOpen] = useState(false);
+  const [summaryMetric, setSummaryMetric] = useState(null);
+
+  const summaryMetricConfig = useMemo(
+    () => enabledMetrics.find((m) => m.key === summaryMetric) ?? null,
+    [enabledMetrics, summaryMetric]
+  );
+
+  const supplementMarkers = useMemo(
+    () =>
+      supplements
         .filter((s) => s.startDate || s.createdAt)
-        .map((s) => ({
-        name: s.name,
-        startDate: s.startDate ?? s.createdAt ?? "",
-    })), [supplements]);
-    return (<Screen header={<Header title="Health" subtitle="Track your symptoms over time" centered/>}>
-      {/* Add metric */}
+        .map((s) => ({ name: s.name, startDate: s.startDate ?? s.createdAt ?? "" })),
+    [supplements]
+  );
+
+  return (
+    <Screen header={<Header title="Health" subtitle="Track your trends" centered />}>
       <Pressable onPress={() => setMetricPickerOpen(true)} style={styles.addMetricRow}>
         <Text style={styles.addMetricText}>+ Add metric</Text>
       </Pressable>
 
       <View style={styles.container}>
-        {enabledMetrics.map(({ key, label }) => {
-            const series = entries
-                .filter((e) => e.type === key)
-                .sort((a, b) => a.date.localeCompare(b.date))
-                .slice(-50)
-                .map((e) => e.value);
-            return (<View key={key} style={styles.card}>
-              {/* Header */}
+        {enabledMetrics.map((metricConfig) => {
+          const { key, label } = metricConfig;
+          const metricEntries = entries
+            .filter((entry) => entry.type === key)
+            .sort((a, b) => a.date.localeCompare(b.date));
+
+          const numericSeries = metricEntries
+            .map((entry) => {
+              const numericValue = Number(entry.value);
+              if (!Number.isFinite(numericValue)) return null;
+              return {
+                value: numericValue,
+                hasNote: typeof entry.note === "string" && entry.note.trim().length > 0,
+              };
+            })
+            .filter(Boolean)
+            .slice(-50);
+
+          let chartMin = 1;
+          let chartMax = 10;
+          if (metricConfig && isNumericMetric(metricConfig) && numericSeries.length > 0) {
+            const values = numericSeries.map((point) => point.value);
+            const dataMin = Math.min(...values);
+            const dataMax = Math.max(...values);
+            const configuredMin = Number.isFinite(metricConfig.min) ? metricConfig.min : dataMin;
+            const configuredMax = Number.isFinite(metricConfig.max) ? metricConfig.max : dataMax;
+            chartMin = Math.min(configuredMin, dataMin);
+            chartMax = Math.max(configuredMax, dataMax);
+            if (chartMax === chartMin) {
+              chartMax += 1;
+            }
+          }
+
+          const latestEntry = metricEntries.length ? metricEntries[metricEntries.length - 1] : null;
+          const latestValue = latestEntry ? formatMetricValue(metricConfig, latestEntry.value) : null;
+          const hasChart = Boolean(metricConfig && isNumericMetric(metricConfig) && numericSeries.length > 0);
+          const hasEntries = metricEntries.length > 0;
+
+          return (
+            <View key={key} style={styles.card}>
               <View style={styles.cardHeader}>
                 <Text style={styles.label}>{label}</Text>
-
-                <Pressable onPress={() => openTrack(key)} style={({ pressed }) => [
-                    styles.trackButton,
-                    pressed && { opacity: 0.85 },
-                ]} hitSlop={6}>
+                <Pressable
+                  onPress={() => {
+                    setActiveMetric(key);
+                    setEntryModalOpen(true);
+                  }}
+                  style={({ pressed }) => [styles.trackButton, pressed && { opacity: 0.85 }]}
+                  hitSlop={6}
+                >
                   <Text style={styles.trackButtonText}>Track</Text>
                 </Pressable>
               </View>
 
-              {/* Card body → summary */}
-              <Pressable onPress={() => openSummary(key)}>
-                {series.length ? (<MiniLineChart data={series}/>) : (<Text style={styles.empty}>
-                    No data yet. Tap Track to add today’s value.
-                  </Text>)}
+              <Pressable onPress={() => hasEntries && setSummaryMetric(key)}>
+                {hasChart ? (
+                  <MiniLineChart data={numericSeries} min={chartMin} max={chartMax} />
+                ) : hasEntries ? (
+                  <Text style={styles.latestValue}>Latest: {latestValue}</Text>
+                ) : (
+                  <Text style={styles.empty}>No data yet. Tap Track to add today&apos;s value.</Text>
+                )}
               </Pressable>
-            </View>);
+            </View>
+          );
         })}
       </View>
 
-      {/* Track modal */}
-      <HealthEntryModal visible={entryModalOpen} metric={activeMetric} onClose={closeTrack}/>
+      <HealthEntryModal
+        visible={entryModalOpen}
+        metric={activeMetric}
+        onClose={() => {
+          setEntryModalOpen(false);
+          setActiveMetric(null);
+        }}
+      />
 
-      {/* Add metric modal */}
-      <AddMetricModal visible={metricPickerOpen} onClose={() => setMetricPickerOpen(false)}/>
+      <AddMetricModal visible={metricPickerOpen} onClose={() => setMetricPickerOpen(false)} />
 
-      {/* Summary modal will go here later */}
-      <HealthMetricSummaryModal visible={!!summaryMetric} label={enabledMetrics.find((m) => m.key === summaryMetric)?.label} metricKey={summaryMetric} entries={entries.filter((e) => e.type === summaryMetric)} onClose={closeSummary} onDeleteMetric={() => {
-            if (!summaryMetric)
-                return;
-            deleteMetric(summaryMetric);
-            closeSummary();
-        }} onDeleteEntry={(id) => deleteEntry(id)} supplementMarkers={supplementMarkers}/>
-    </Screen>);
+      <HealthMetricSummaryModal
+        visible={!!summaryMetric}
+        label={summaryMetricConfig?.label}
+        metric={summaryMetricConfig}
+        metricKey={summaryMetric}
+        entries={entries.filter((e) => e.type === summaryMetric)}
+        onClose={() => setSummaryMetric(null)}
+        onDeleteMetric={() => {
+          if (!summaryMetric) return;
+          deleteMetric(summaryMetric);
+          setSummaryMetric(null);
+        }}
+        onDeleteEntry={(id) => deleteEntry(id)}
+        supplementMarkers={supplementMarkers}
+      />
+    </Screen>
+  );
 }
+
 const styles = StyleSheet.create({
-    container: {
-        marginTop: spacing.lg,
-        paddingHorizontal: spacing.xs,
-    },
-    card: {
-        backgroundColor: colors.background.card,
-        borderRadius: radius.lg,
-        padding: spacing.md,
-        marginBottom: spacing.xs,
-        ...shadows.card,
-    },
-    cardHeader: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginBottom: spacing.sm,
-    },
-    label: {
-        fontSize: 16,
-        fontWeight: "600",
-        color: colors.text.primary,
-    },
-    trackText: {
-        fontSize: 13,
-        color: colors.text.secondary,
-    },
-    empty: {
-        marginTop: spacing.sm,
-        fontSize: 14,
-        color: colors.text.muted,
-    },
-    addMetricRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        paddingHorizontal: spacing.xs,
-        paddingVertical: spacing.sm,
-        marginBottom: spacing.sm,
-    },
-    addMetricText: {
-        fontSize: 15,
-        color: colors.text.secondary,
-    },
-    trackButton: {
-        paddingHorizontal: spacing.sm,
-        paddingVertical: 4,
-        borderRadius: radius.sm,
-        backgroundColor: colors.brand.primary,
-    },
-    trackButtonText: {
-        fontSize: 13,
-        fontWeight: "500",
-        color: colors.text.inverse,
-    },
+  container: {
+    marginTop: spacing.md,
+    gap: spacing.md,
+  },
+  card: {
+    backgroundColor: colors.background.card,
+    borderRadius: radius.xl,
+    padding: spacing.md,
+    ...shadows.card,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.sm,
+  },
+  label: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.text.primary,
+  },
+  empty: {
+    marginTop: spacing.sm,
+    fontSize: 14,
+    color: colors.text.muted,
+  },
+  latestValue: {
+    marginTop: spacing.sm,
+    fontSize: 14,
+    color: colors.text.secondary,
+    fontWeight: "600",
+  },
+  addMetricRow: {
+    marginTop: spacing.md,
+    alignSelf: "center",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border.strong,
+    backgroundColor: colors.background.elevated,
+  },
+  addMetricText: {
+    fontSize: 15,
+    color: colors.brand.primary,
+    fontWeight: "700",
+  },
+  trackButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.brand.primary,
+  },
+  trackButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.text.inverse,
+  },
 });

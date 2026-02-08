@@ -9,8 +9,8 @@ export function Header({ title, subtitle, rightSlot, centered }) {
     return (<LinearGradient style={[
             styles.container,
             {
-                paddingTop: insets.top + spacing.md,
-                height: HEADER_HEIGHT + insets.top,
+                paddingTop: insets.top + spacing.sm,
+                height: HEADER_HEIGHT + insets.top + spacing.sm,
             },
         ]} colors={gradients.header} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
       <View style={[styles.row, centered && styles.rowCentered]}>
@@ -30,10 +30,12 @@ export function Header({ title, subtitle, rightSlot, centered }) {
 }
 const styles = StyleSheet.create({
     container: {
-        height: HEADER_HEIGHT,
+        height: HEADER_HEIGHT + spacing.md,
         paddingHorizontal: spacing.lg,
         justifyContent: "flex-end",
         paddingBottom: spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border.subtle,
     },
     row: {
         flexDirection: "row",
@@ -44,16 +46,16 @@ const styles = StyleSheet.create({
         flexShrink: 1,
     },
     title: {
-        fontSize: 28,
-        lineHeight: 32,
+        fontSize: 32,
+        lineHeight: 36,
         fontWeight: "700",
-        color: colors.text.inverse,
+        color: colors.text.primary,
     },
     subtitle: {
         marginTop: spacing.xs,
-        fontSize: 14,
-        lineHeight: 18,
-        color: "rgba(255,255,255,0.75)",
+        fontSize: 16,
+        lineHeight: 20,
+        color: colors.text.secondary,
     },
     rightSlot: {
         marginLeft: spacing.md,

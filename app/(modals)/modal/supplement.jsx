@@ -7,6 +7,8 @@ import { SUPPLEMENT_ROUTES, } from "@/features/supplements/types";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { Icon } from "@/features/supplements/icons/Icon";
 import { searchSupplementCatalog } from "@src/data/searchSupplementCatalog";
+import { getScopedSupabase } from "@src/lib/supabase";
+import { getClientId } from "@src/lib/clientId";
 const todayYYYYMMDD = () => new Date().toISOString().split("T")[0];
 const isValidISODate = (value) => {
     if (!value)
@@ -182,6 +184,7 @@ export default function SupplementModal() {
     const [name, setName] = useState(supplement?.name ?? "");
     const [matches, setMatches] = useState([]);
     const [catalogId, setCatalogId] = useState(supplement?.catalogId ?? null);
+    const [saving, setSaving] = useState(false);
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [dose, setDose] = useState(supplement?.dose ?? "");
     const [route, setRoute] = useState(supplement?.route ?? "tablet");
@@ -225,7 +228,7 @@ export default function SupplementModal() {
         return () => {
             active = false;
         };
-    }, [name]);
+    }, [name, catalogId]);
     useEffect(() => {
         if (newCatalogId && newCatalogName) {
             setName(newCatalogName);
@@ -236,36 +239,100 @@ export default function SupplementModal() {
     /* ----------------------------------------
        Save / Delete
     ----------------------------------------- */
-    const handleSave = () => {
-        if (!canSave)
+    const handleSave = async () => {
+        if (!canSave || saving)
             return;
-        const derivedCatalogId = catalogId ??
-            `custom-${name
-                .trim()
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/(^-|-$)/g, "") || Date.now().toString()}`;
-        const payload = {
-            name: name.trim(),
-            catalogId: derivedCatalogId,
-            dose: dose.trim() || undefined,
-            route,
-            time: timeLabel,
-            timeMinutes,
-            daysOfWeek,
-            startDate: startDateValid ? startDate : todayYYYYMMDD(),
-            endDate: endDateValid ? endDate || null : null,
-        };
-        if (isEdit && id) {
-            updateSupplement(id, payload);
+        setSaving(true);
+        try {
+            const trimmedName = name.trim();
+            let resolvedCatalogId = catalogId;
+            const needsUserCatalogId = !resolvedCatalogId || resolvedCatalogId.startsWith("custom-");
+            if (needsUserCatalogId) {
+                const [supabase, clientId] = await Promise.all([
+                    getScopedSupabase(),
+                    getClientId(),
+                ]);
+                const findExistingByName = async () => {
+                    const { data: exactMatch, error: exactError } = await supabase
+                        .from("user_supplements")
+                        .select("id")
+                        .eq("name", trimmedName)
+                        .maybeSingle();
+                    if (!exactError && exactMatch?.id) {
+                        return `user-${exactMatch.id}`;
+                    }
+                    const { data: fuzzyMatch, error: fuzzyError } = await supabase
+                        .from("user_supplements")
+                        .select("id")
+                        .ilike("name", trimmedName)
+                        .limit(1)
+                        .maybeSingle();
+                    if (!fuzzyError && fuzzyMatch?.id) {
+                        return `user-${fuzzyMatch.id}`;
+                    }
+                    return null;
+                };
+                const existingCatalogId = await findExistingByName();
+                if (existingCatalogId) {
+                    resolvedCatalogId = existingCatalogId;
+                }
+                else {
+                    const { data, error } = await supabase
+                        .from("user_supplements")
+                        .insert({
+                        client_id: clientId,
+                        name: trimmedName,
+                    })
+                        .select("id")
+                        .single();
+                    if (error) {
+                        if (error.code === "23505") {
+                            const duplicateCatalogId = await findExistingByName();
+                            if (duplicateCatalogId) {
+                                resolvedCatalogId = duplicateCatalogId;
+                            }
+                            else {
+                                throw error;
+                            }
+                        }
+                        else {
+                            throw error;
+                        }
+                    }
+                    else {
+                        resolvedCatalogId = `user-${data.id}`;
+                    }
+                }
+            }
+            const payload = {
+                name: trimmedName,
+                catalogId: resolvedCatalogId,
+                dose: dose.trim() || undefined,
+                route,
+                time: timeLabel,
+                timeMinutes,
+                daysOfWeek,
+                startDate: startDateValid ? startDate : todayYYYYMMDD(),
+                endDate: endDateValid ? endDate || null : null,
+            };
+            if (isEdit && id) {
+                updateSupplement(id, payload);
+            }
+            else {
+                addSupplement({
+                    id: Date.now().toString(),
+                    ...payload,
+                });
+            }
+            router.back();
         }
-        else {
-            addSupplement({
-                id: Date.now().toString(),
-                ...payload,
-            });
+        catch (error) {
+            console.error("Failed to save custom supplement to user_supplements", error);
+            Alert.alert("Could not save supplement", "Please try again in a moment.");
         }
-        router.back();
+        finally {
+            setSaving(false);
+        }
     };
     const handleDelete = () => {
         if (!id)
@@ -311,61 +378,35 @@ export default function SupplementModal() {
               {isEdit ? "Edit supplement" : "Add supplement"}
             </Text>
 
-            <Pressable disabled={!canSave} onPress={handleSave}>
-              <Text style={[styles.save, !canSave && styles.saveDisabled]}>
-                Save
+            <Pressable disabled={!canSave || saving} onPress={handleSave}>
+              <Text style={[styles.save, (!canSave || saving) && styles.saveDisabled]}>
+                {saving ? "Saving..." : "Save"}
               </Text>
             </Pressable>
           </View>
 
           {/* Form */}
           <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="always">
-            <View style={{ marginBottom: 16 }}>
-              <Text style={{ fontWeight: "600", marginBottom: 6 }}>
-                Supplement name
-              </Text>
+            <View style={styles.field}>
+              <Text style={styles.label}>Supplement name</Text>
 
               <TextInput value={name} onChangeText={(text) => {
             setName(text);
             setCatalogId(null); // reset until user selects
             setDropdownOpen(text.trim().length > 0);
-        }} placeholder="Type supplement name" onFocus={() => setDropdownOpen(name.trim().length > 0)} onBlur={() => setDropdownOpen(false)} style={{
-            borderWidth: 1,
-            borderRadius: 10,
-            padding: 12,
-            borderColor: "#ddd",
-        }}/>
+        }} placeholder="Type supplement name" onFocus={() => setDropdownOpen(name.trim().length > 0)} onBlur={() => setDropdownOpen(false)} style={styles.input}/>
 
               {/* Dropdown */}
-              {dropdownOpen && name.trim().length > 0 && (<View style={{
-                marginTop: 6,
-                borderWidth: 1,
-                borderRadius: 10,
-                borderColor: "#eee",
-                backgroundColor: "#fff",
-            }}>
+              {dropdownOpen && name.trim().length > 0 && (<View style={styles.dropdownPanel}>
                   {/* Matching catalog results (if any) */}
                   {matches.map((m) => (<Pressable key={`${m.verified ? "v" : "u"}-${m.id}`} onPress={() => {
                     setName(m.name);
                     setCatalogId(m.id);
                     setMatches([]);
                     setDropdownOpen(false);
-                }} style={{
-                    padding: 12,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                }}>
+                }} style={styles.dropdownItem}>
                       <Text>{m.name}</Text>
-                      {!m.verified && (<Text style={{
-                        fontSize: 12,
-                        color: "#B45309",
-                        paddingHorizontal: 8,
-                        paddingVertical: 2,
-                        borderRadius: 999,
-                        backgroundColor: "#FEF3C7",
-                    }}>
+                      {!m.verified && (<Text style={styles.unverifiedBadge}>
                           Unverified
                         </Text>)}
                     </Pressable>))}
@@ -373,13 +414,11 @@ export default function SupplementModal() {
                   <Pressable onPress={() => {
                 setDropdownOpen(false);
                 router.push("/(modals)/modal/add-supplement-catalog");
-            }} style={{
-                padding: 12,
-                borderTopWidth: matches.length > 0 ? 1 : 0,
-                borderColor: "#eee",
-                opacity: 0.6,
-            }}>
-                    <Text>+ Add new supplement</Text>
+            }} style={[
+                styles.dropdownAdd,
+                matches.length > 0 && styles.dropdownAddWithBorder,
+            ]}>
+                    <Text style={styles.dropdownAddText}>+ Add new supplement</Text>
                   </Pressable>
 
                 </View>)}
@@ -512,12 +551,14 @@ const styles = StyleSheet.create({
         backgroundColor: colors.background.app,
     },
     header: {
-        paddingTop: spacing.xl,
+        paddingTop: spacing.lg,
         paddingHorizontal: spacing.lg,
         paddingBottom: spacing.md,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border.subtle,
     },
     title: {
         fontSize: 17,
@@ -548,11 +589,13 @@ const styles = StyleSheet.create({
         marginBottom: spacing.xs,
     },
     input: {
-        backgroundColor: colors.background.card,
+        backgroundColor: colors.background.elevated,
         borderRadius: radius.md,
         padding: spacing.md,
         fontSize: 15,
         color: colors.text.primary,
+        borderWidth: 1,
+        borderColor: colors.border.subtle,
     },
     inputError: {
         borderWidth: 1,
@@ -560,7 +603,7 @@ const styles = StyleSheet.create({
     },
     errorText: {
         marginTop: spacing.xs,
-        color: "#DC2626",
+        color: colors.status.danger,
         fontSize: 12,
     },
     dateField: {
@@ -674,17 +717,20 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.md,
         borderRadius: radius.md,
         backgroundColor: colors.background.card,
+        borderWidth: 1,
+        borderColor: colors.border.subtle,
     },
     routeOptionActive: {
-        backgroundColor: colors.background.header,
+        backgroundColor: colors.border.strong,
+        borderColor: colors.brand.primary,
     },
     routeLabel: {
         fontSize: 13,
         color: colors.text.secondary,
     },
     routeLabelActive: {
-        color: colors.text.inverse,
-        fontWeight: "500",
+        color: colors.text.primary,
+        fontWeight: "600",
     },
     timePicker: {
         height: 176,
@@ -697,14 +743,14 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     timeOptionActive: {
-        backgroundColor: colors.background.header,
+        backgroundColor: colors.border.strong,
     },
     timeText: {
         fontSize: 16,
         color: colors.text.secondary,
     },
     timeTextActive: {
-        color: colors.text.inverse,
+        color: colors.text.primary,
         fontWeight: "600",
     },
     deleteButton: {
@@ -713,7 +759,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     deleteText: {
-        color: "#DC2626",
+        color: colors.status.danger,
         fontSize: 15,
         fontWeight: "500",
     },
@@ -726,11 +772,14 @@ const styles = StyleSheet.create({
         height: 36,
         borderRadius: 18,
         backgroundColor: colors.background.card,
+        borderWidth: 1,
+        borderColor: colors.border.subtle,
         alignItems: "center",
         justifyContent: "center",
     },
     dayPillActive: {
-        backgroundColor: colors.background.header,
+        backgroundColor: colors.border.strong,
+        borderColor: colors.brand.primary,
     },
     dayText: {
         fontSize: 14,
@@ -738,7 +787,7 @@ const styles = StyleSheet.create({
         fontWeight: "500",
     },
     dayTextActive: {
-        color: colors.text.inverse,
+        color: colors.text.primary,
         fontWeight: "600",
     },
     diagonalStrike: {
@@ -747,5 +796,40 @@ const styles = StyleSheet.create({
         height: 1.5,
         backgroundColor: colors.text.muted,
         transform: [{ rotate: "-45deg" }],
+    },
+    dropdownPanel: {
+        marginTop: 6,
+        borderWidth: 1,
+        borderRadius: radius.md,
+        borderColor: colors.border.subtle,
+        backgroundColor: colors.background.card,
+        overflow: "hidden",
+    },
+    dropdownItem: {
+        padding: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: spacing.xs,
+    },
+    dropdownAdd: {
+        padding: 12,
+        opacity: 0.75,
+    },
+    dropdownAddWithBorder: {
+        borderTopWidth: 1,
+        borderColor: colors.border.subtle,
+    },
+    dropdownAddText: {
+        color: colors.text.secondary,
+        fontWeight: "600",
+    },
+    unverifiedBadge: {
+        fontSize: 12,
+        color: "#9C6B10",
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 999,
+        backgroundColor: "#F9EEC2",
     },
 });

@@ -1,17 +1,13 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { DEFAULT_METRICS, normalizeMetric } from "./metricDefinitions";
 export const useHealthStore = create()(persist((set) => ({
     // ─────────────────────────────────────────────
     // State
     // ─────────────────────────────────────────────
     entries: [],
-    metrics: [
-        { key: "sleep", label: "Sleep", enabled: true },
-        { key: "mood", label: "Mood", enabled: true },
-        { key: "energy", label: "Energy", enabled: true },
-        { key: "stress", label: "Stress", enabled: true },
-    ],
+    metrics: DEFAULT_METRICS.map((metric) => ({ ...metric })),
     // ─────────────────────────────────────────────
     // Entry actions
     // ─────────────────────────────────────────────
@@ -25,11 +21,19 @@ export const useHealthStore = create()(persist((set) => ({
     // Metric registry actions
     // ─────────────────────────────────────────────
     addMetric: (metric) => set((state) => {
-        const exists = state.metrics.some((m) => m.key === metric.key);
-        if (exists)
+        const normalized = normalizeMetric(metric);
+        if (!normalized?.key)
             return state;
+        const exists = state.metrics.some((m) => m.key === normalized.key);
+        if (exists) {
+            return {
+                metrics: state.metrics.map((m) => m.key === normalized.key
+                    ? { ...m, ...normalized, enabled: true }
+                    : m),
+            };
+        }
         return {
-            metrics: [...state.metrics, metric],
+            metrics: [...state.metrics, normalized],
         };
     }),
     enableMetric: (key) => set((state) => ({

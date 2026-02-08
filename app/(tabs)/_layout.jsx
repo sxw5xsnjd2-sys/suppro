@@ -2,30 +2,35 @@ import React from "react";
 import { View, Pressable, StyleSheet } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Tabs, router } from "expo-router";
-import { colors, gradients } from "@/theme";
+import { colors, gradients, spacing } from "@/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import HomeIcon from "@/assets/icons/tab/home.svg";
 import SupplementsIcon from "@/assets/icons/tab/supplements.svg";
 import HealthIcon from "@/assets/icons/tab/health.svg";
-import AiIcon from "@/assets/icons/tab/robot.svg";
+import StatsIcon from "@/assets/icons/tab/statistics.svg";
 export default function TabsLayout() {
     const insets = useSafeAreaInsets();
     return (<View style={{ flex: 1 }}>
       <Tabs screenOptions={{
             headerShown: false,
             tabBarShowLabel: true,
-            tabBarActiveTintColor: colors.brand.primary,
-            tabBarInactiveTintColor: "rgba(15, 23, 42, 0.35)",
+            tabBarActiveTintColor: colors.brand.dark,
+            tabBarInactiveTintColor: colors.text.muted,
             tabBarStyle: {
                 backgroundColor: colors.background.card,
-                borderTopColor: colors.border.subtle,
-                height: 42 + insets.bottom,
-                paddingBottom: Math.max(0, insets.bottom),
-                paddingTop: 8,
+                borderTopWidth: 0,
+                height: 66 + insets.bottom,
+                paddingBottom: Math.max(insets.bottom, spacing.xs),
+                paddingTop: spacing.xs,
             },
             tabBarLabelStyle: {
                 fontSize: 12,
-                paddingBottom: 4,
+                fontWeight: "600",
+                paddingBottom: 2,
+            },
+            tabBarItemStyle: {
+                borderRightWidth: 1,
+                borderRightColor: colors.border.subtle,
             },
         }}>
         <Tabs.Screen name="index" options={{
@@ -35,25 +40,26 @@ export default function TabsLayout() {
 
         <Tabs.Screen name="supplements" options={{
             title: "Supplements",
-            tabBarItemStyle: { marginRight: 12 },
             tabBarIcon: ({ color }) => (<SupplementsIcon width={22} height={22} color={color} fill={color} stroke={color} strokeWidth={0.55}/>),
         }}/>
 
         <Tabs.Screen name="health" options={{
             title: "Health",
-            tabBarItemStyle: { marginLeft: 12 },
             tabBarIcon: ({ color }) => (<HealthIcon width={22} height={22} color={color} fill={color} stroke={color} strokeWidth={0.55}/>),
         }}/>
 
         <Tabs.Screen name="ai" options={{
-            title: "AI",
-            tabBarIcon: ({ color }) => (<AiIcon width={22} height={22} color={color} fill={color} stroke={color} strokeWidth={0.55}/>),
+            title: "Stats",
+            tabBarItemStyle: {
+                borderRightWidth: 0,
+            },
+            tabBarIcon: ({ color }) => (<StatsIcon width={22} height={22} color={color} fill={color} stroke={color} strokeWidth={0.55}/>),
         }}/>
       </Tabs>
 
       {/* Floating Add Button */}
-      <Pressable onPress={() => router.push("/modal/supplement")} style={[styles.fab, { bottom: insets.bottom + 8 }]}>
-        <LinearGradient colors={gradients.header} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.fabInner}>
+      <Pressable onPress={() => router.push("/modal/supplement")} style={[styles.fab, { bottom: insets.bottom + 58 }]}>
+        <LinearGradient colors={gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.fabInner}>
           <View style={styles.plus}/>
           <View style={[styles.plus, styles.plusVertical]}/>
         </LinearGradient>
@@ -67,21 +73,21 @@ const styles = StyleSheet.create({
         zIndex: 20,
     },
     fabInner: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
+        width: 58,
+        height: 58,
+        borderRadius: 29,
         justifyContent: "center",
         alignItems: "center",
-        shadowColor: "#000",
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 8,
+        shadowColor: colors.brand.dark,
+        shadowOpacity: 0.28,
+        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 8 },
+        elevation: 10,
     },
     plus: {
         position: "absolute",
-        width: 24,
-        height: 3,
+        width: 20,
+        height: 2.5,
         backgroundColor: colors.text.inverse,
         borderRadius: 2,
     },

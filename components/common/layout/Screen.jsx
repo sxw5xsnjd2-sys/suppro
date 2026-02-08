@@ -39,7 +39,7 @@ const styles = StyleSheet.create({
         zIndex: 10,
     },
     content: {
-        paddingHorizontal: spacing.xs,
-        paddingBottom: spacing.sm,
+        paddingHorizontal: spacing.md,
+        paddingBottom: spacing.lg,
     },
 });

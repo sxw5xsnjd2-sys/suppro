@@ -1,41 +1,40 @@
 export const colors = {
-    // Core brand
     brand: {
-        // primary: "#", // Match header blue for buttons + accents
-        primary: "#175c91",
-        dark: "#0B2C5F", // Deep header blue
+        primary: "#5E76A8",
+        dark: "#1F2E52",
+        soft: "#DFE6F5",
     },
-    // Backgrounds
     background: {
-        app: "#F6F8FC", // Main app background (very light grey)
-        header: "#175c91", // Top gradient start
-        headerAlt: "#163D7A", // Top gradient end
-        card: "#FFFFFF", // White cards
+        app: "#EEF1F8",
+        header: "#F7F8FC",
+        headerAlt: "#EDEFF7",
+        card: "#FFFFFF",
+        elevated: "#F8F9FD",
+        shell: "#E4E7F0",
     },
-    // Text
     text: {
-        primary: "#0F172A", // Almost black (titles)
-        secondary: "#475569", // Body / subtitles
-        muted: "#94A3B8", // Timestamps, hints
-        inverse: "#FFFFFF", // Text on dark blue
+        primary: "#1E2C4A",
+        secondary: "#506086",
+        muted: "#8E99B2",
+        inverse: "#FFFFFF",
     },
-    // Borders & dividers
     border: {
-        subtle: "#E5EAF3",
+        subtle: "#DCE1EC",
+        strong: "#C6CDDD",
     },
-    // Status / accents
     status: {
-        success: "#22C55E",
-        warning: "#FACC15",
-        info: "#3B82F6",
+        success: "#66B15E",
+        warning: "#EFC552",
+        info: "#7C8FB7",
+        danger: "#C95757",
     },
-    // Icons (soft, not harsh)
     icon: {
-        primary: "#1F4FD8",
-        muted: "#94A3B8",
+        primary: "#6073A1",
+        muted: "#9AA6C2",
         inverse: "#FFFFFF",
     },
 };
 export const gradients = {
     header: [colors.background.header, colors.background.headerAlt],
+    cta: ["#5F76A7", "#405A8F"],
 };

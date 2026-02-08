@@ -1,19 +1,19 @@
 // theme/typography.ts
 export const typography = {
     heading: {
-        fontSize: 22,
-        fontWeight: "600",
+        fontSize: 30,
+        fontWeight: "700",
     },
     title: {
-        fontSize: 16,
+        fontSize: 20,
         fontWeight: "600",
     },
     body: {
-        fontSize: 14,
+        fontSize: 16,
         fontWeight: "400",
     },
     caption: {
-        fontSize: 12,
+        fontSize: 13,
         fontWeight: "400",
     },
 };
