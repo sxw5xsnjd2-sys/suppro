@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useIsFocused } from "@react-navigation/native";
 import { Screen } from "@/components/common/layout/Screen";
 import { Header } from "@/components/common/layout/Header";
 import { colors, spacing, radius, shadows } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
 import { getSupplementRatings } from "@src/data/getSupplementRatings";
+import { getScopedSupabase } from "@src/lib/supabase";
 import {
   isNumericMetric,
   normalizeMetric,
@@ -45,6 +48,8 @@ const LOWER_IS_BETTER_KEYS = new Set([
   "cholesterol_support",
   "weight",
 ]);
+const AI_SUMMARY_CACHE_KEY = "suppro.stats.aiSummary.v1";
+const AI_SUMMARY_WINDOW_DAYS = 30;
 
 function toISODate(date) {
   const year = date.getFullYear();
@@ -122,6 +127,215 @@ function formatMetricValue(metric, value) {
   return base;
 }
 
+function computeMetricImprovement(healthMetrics, healthEntries, periodStart, today) {
+  const normalizedMetrics = (healthMetrics ?? [])
+    .map((metric) => normalizeMetric(metric))
+    .filter(Boolean)
+    .filter((metric) => metric.enabled !== false);
+
+  const items = normalizedMetrics
+    .map((metric) => {
+      const entries = (healthEntries ?? [])
+        .filter(
+          (entry) =>
+            entry.type === metric.key &&
+            typeof entry.date === "string" &&
+            entry.date >= periodStart &&
+            entry.date <= today
+        )
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      if (entries.length === 0) return null;
+
+      if (!isNumericMetric(metric)) {
+        return {
+          key: metric.key,
+          label: metric.label,
+          kind: "text",
+          entryCount: entries.length,
+          latestDate: entries[entries.length - 1].date,
+        };
+      }
+
+      const values = entries
+        .map((entry) => Number(entry.value))
+        .filter((value) => Number.isFinite(value));
+      if (values.length === 0) return null;
+      if (values.length === 1) {
+        return {
+          key: metric.key,
+          label: metric.label,
+          kind: "numeric",
+          metric,
+          sampleSize: 1,
+          earlyAverage: values[0],
+          recentAverage: values[0],
+          delta: 0,
+          trend: "stable",
+          directionDelta: 0,
+        };
+      }
+
+      const splitIndex = Math.max(1, Math.floor(values.length / 2));
+      const earlyValues = values.slice(0, splitIndex);
+      const recentValues = values.slice(splitIndex);
+      const earlyAverage = average(earlyValues);
+      const recentAverage = average(recentValues);
+      const delta = recentAverage - earlyAverage;
+
+      const configuredRange =
+        Number.isFinite(metric.min) && Number.isFinite(metric.max)
+          ? Math.abs(metric.max - metric.min)
+          : null;
+      const dynamicRange = Math.max(...values) - Math.min(...values);
+      const thresholdBase =
+        configuredRange && configuredRange > 0
+          ? configuredRange * 0.05
+          : dynamicRange * 0.2;
+      const threshold = Math.max(
+        thresholdBase || 0,
+        Math.abs(earlyAverage) * 0.03,
+        0.1
+      );
+
+      const directionDelta = LOWER_IS_BETTER_KEYS.has(metric.key) ? -delta : delta;
+      const trend =
+        directionDelta > threshold
+          ? "improved"
+          : directionDelta < -threshold
+          ? "declined"
+          : "stable";
+
+      return {
+        key: metric.key,
+        label: metric.label,
+        kind: "numeric",
+        metric,
+        sampleSize: values.length,
+        earlyAverage,
+        recentAverage,
+        delta,
+        trend,
+        directionDelta,
+      };
+    })
+    .filter(Boolean);
+
+  const improvedCount = items.filter(
+    (item) => item.kind === "numeric" && item.trend === "improved"
+  ).length;
+  const stableCount = items.filter(
+    (item) => item.kind === "numeric" && item.trend === "stable"
+  ).length;
+  const declinedCount = items.filter(
+    (item) => item.kind === "numeric" && item.trend === "declined"
+  ).length;
+  const textCount = items.filter((item) => item.kind === "text").length;
+
+  return {
+    items,
+    improvedCount,
+    stableCount,
+    declinedCount,
+    textCount,
+  };
+}
+
+function sanitizeRecommendations(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
+function normalizeAiSummaryPayload(payload) {
+  const summary =
+    typeof payload?.summary === "string" ? payload.summary.trim() : "";
+  if (!summary) {
+    throw new Error("AI summary response did not include summary text.");
+  }
+
+  return {
+    summary,
+    recommendations: sanitizeRecommendations(payload?.recommendations),
+  };
+}
+
+function parseAiSummaryCache(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (
+      typeof parsed.generatedForDate !== "string" ||
+      typeof parsed.summary !== "string"
+    ) {
+      return null;
+    }
+    return {
+      generatedForDate: parsed.generatedForDate,
+      generatedAt:
+        typeof parsed.generatedAt === "string" ? parsed.generatedAt : null,
+      source: parsed.source === "fallback" ? "fallback" : "openai",
+      summary: parsed.summary.trim(),
+      recommendations: sanitizeRecommendations(parsed.recommendations),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildFallbackAiSummary(input) {
+  const adherenceTone =
+    input.adherence.score >= 85
+      ? "Adherence is strong and supporting consistency."
+      : input.adherence.score >= 70
+      ? "Adherence is moderate with room for a steadier routine."
+      : "Adherence is currently low and likely limiting outcomes.";
+  const evidenceTone =
+    input.evidence.score >= 70
+      ? "Most taken doses are backed by moderate-to-high evidence."
+      : "A meaningful share of taken doses appears lower-evidence.";
+  const metricsTone =
+    input.metrics.declinedCount > input.metrics.improvedCount
+      ? "Recent metric trends show more declines than improvements."
+      : input.metrics.improvedCount > input.metrics.declinedCount
+      ? "Recent metric trends show more improvements than declines."
+      : "Recent metric trends are mostly stable.";
+
+  const recommendations = [];
+  if (input.adherence.score < 80) {
+    recommendations.push(
+      "Simplify your routine and tighten dose timing to improve adherence consistency."
+    );
+  }
+  if (input.evidence.score < 65) {
+    recommendations.push(
+      "Prioritize a higher share of supplements with stronger evidence backing."
+    );
+  }
+  if (input.metrics.topDecliningLabels.some((label) => /sleep/i.test(label))) {
+    recommendations.push(
+      "Focus on sleep-supportive choices and habits before adding complexity."
+    );
+  }
+  if (input.metrics.declinedCount > input.metrics.improvedCount) {
+    recommendations.push(
+      "Recenter on core foundations like sleep, stress, and recovery while tracking changes weekly."
+    );
+  }
+  if (!recommendations.length) {
+    recommendations.push(
+      "Maintain your current routine and keep prioritizing high-evidence options aligned to your main health goals."
+    );
+  }
+
+  return {
+    summary: `${adherenceTone} ${evidenceTone} ${metricsTone}`,
+    recommendations: recommendations.slice(0, 4),
+  };
+}
+
 function ProgressBar({ percent, tint }) {
   return (
     <View style={styles.progressTrack}>
@@ -139,6 +353,7 @@ function ProgressBar({ percent, tint }) {
 }
 
 export default function StatsScreen() {
+  const isFocused = useIsFocused();
   const supplements = useSupplementsStore((s) => s.supplements);
   const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
   const healthEntries = useHealthStore((s) => s.entries);
@@ -146,8 +361,19 @@ export default function StatsScreen() {
 
   const [period, setPeriod] = useState("weekly");
   const [ratingByCatalog, setRatingByCatalog] = useState({});
+  const [ratingsReady, setRatingsReady] = useState(false);
+  const [today, setToday] = useState(() => toISODate(new Date()));
+  const [aiSummaryText, setAiSummaryText] = useState("");
+  const [aiSummaryRecommendations, setAiSummaryRecommendations] = useState([]);
+  const [aiSummaryGeneratedAt, setAiSummaryGeneratedAt] = useState(null);
+  const [aiSummarySource, setAiSummarySource] = useState("openai");
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [aiSummaryError, setAiSummaryError] = useState(null);
 
-  const today = useMemo(() => toISODate(new Date()), []);
+  useEffect(() => {
+    if (!isFocused) return;
+    setToday(toISODate(new Date()));
+  }, [isFocused]);
 
   useEffect(() => {
     let active = true;
@@ -160,11 +386,21 @@ export default function StatsScreen() {
     );
     if (catalogIds.length === 0) {
       setRatingByCatalog({});
+      setRatingsReady(true);
       return undefined;
     }
-    getSupplementRatings(catalogIds).then((map) => {
-      if (active) setRatingByCatalog(map);
-    });
+    setRatingsReady(false);
+    getSupplementRatings(catalogIds)
+      .then((map) => {
+        if (!active) return;
+        setRatingByCatalog(map);
+        setRatingsReady(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        setRatingByCatalog({});
+        setRatingsReady(true);
+      });
     return () => {
       active = false;
     };
@@ -407,121 +643,294 @@ export default function StatsScreen() {
     unknown: currentSummary.evidence.unknown,
   };
 
-  const metricImprovement = useMemo(() => {
-    const periodStart = periodDates[0];
-    const normalizedMetrics = (healthMetrics ?? [])
-      .map((metric) => normalizeMetric(metric))
-      .filter(Boolean)
-      .filter((metric) => metric.enabled !== false);
+  const metricImprovement = useMemo(
+    () =>
+      computeMetricImprovement(
+        healthMetrics,
+        healthEntries,
+        periodDates[0] ?? today,
+        today
+      ),
+    [healthMetrics, healthEntries, periodDates, today]
+  );
 
-    const items = normalizedMetrics
-      .map((metric) => {
-        const entries = (healthEntries ?? [])
-          .filter(
-            (entry) =>
-              entry.type === metric.key &&
-              typeof entry.date === "string" &&
-              entry.date >= periodStart &&
-              entry.date <= today
+  const aiPeriodDates = useMemo(() => {
+    const start = addDays(today, -(AI_SUMMARY_WINDOW_DAYS - 1));
+    return listDatesBetween(start, today);
+  }, [today]);
+  const aiPreviousPeriodDates = useMemo(() => {
+    const end = addDays(today, -AI_SUMMARY_WINDOW_DAYS);
+    const start = addDays(end, -(AI_SUMMARY_WINDOW_DAYS - 1));
+    return listDatesBetween(start, end);
+  }, [today]);
+  const aiCurrentSummary = useMemo(
+    () => summarizeDates(aiPeriodDates),
+    [aiPeriodDates, summarizeDates]
+  );
+  const aiPreviousSummary = useMemo(
+    () => summarizeDates(aiPreviousPeriodDates),
+    [aiPreviousPeriodDates, summarizeDates]
+  );
+  const aiAdherenceScore = toPercent(
+    aiCurrentSummary.taken,
+    aiCurrentSummary.planned
+  );
+  const aiPreviousAdherenceScore = toPercent(
+    aiPreviousSummary.taken,
+    aiPreviousSummary.planned
+  );
+  const aiAdherenceDelta = aiAdherenceScore - aiPreviousAdherenceScore;
+  const aiConsistencyTrend =
+    aiAdherenceDelta >= 5
+      ? "Improving"
+      : aiAdherenceDelta <= -5
+      ? "Declining"
+      : "Stable";
+  const aiEvidenceKnownTotal =
+    aiCurrentSummary.evidence.high +
+    aiCurrentSummary.evidence.moderate +
+    aiCurrentSummary.evidence.low;
+  const aiEvidenceScore = aiCurrentSummary.evidence.knownCount
+    ? Math.round(
+        (aiCurrentSummary.evidence.points /
+          (aiCurrentSummary.evidence.knownCount * 3)) *
+          100
+      )
+    : 0;
+  const aiEvidenceDistribution = useMemo(
+    () => ({
+      high: aiEvidenceKnownTotal
+        ? Math.round((aiCurrentSummary.evidence.high / aiEvidenceKnownTotal) * 100)
+        : 0,
+      moderate: aiEvidenceKnownTotal
+        ? Math.round(
+            (aiCurrentSummary.evidence.moderate / aiEvidenceKnownTotal) * 100
           )
-          .sort((a, b) => a.date.localeCompare(b.date));
-
-        if (entries.length === 0) return null;
-
-        if (!isNumericMetric(metric)) {
-          return {
-            key: metric.key,
-            label: metric.label,
-            kind: "text",
-            entryCount: entries.length,
-            latestDate: entries[entries.length - 1].date,
-          };
-        }
-
-        const values = entries
-          .map((entry) => Number(entry.value))
-          .filter((value) => Number.isFinite(value));
-        if (values.length === 0) return null;
-        if (values.length === 1) {
-          return {
-            key: metric.key,
-            label: metric.label,
-            kind: "numeric",
-            metric,
-            sampleSize: 1,
-            earlyAverage: values[0],
-            recentAverage: values[0],
-            delta: 0,
-            trend: "stable",
-          };
-        }
-
-        const splitIndex = Math.max(1, Math.floor(values.length / 2));
-        const earlyValues = values.slice(0, splitIndex);
-        const recentValues = values.slice(splitIndex);
-        const earlyAverage = average(earlyValues);
-        const recentAverage = average(recentValues);
-        const delta = recentAverage - earlyAverage;
-
-        const configuredRange =
-          Number.isFinite(metric.min) && Number.isFinite(metric.max)
-            ? Math.abs(metric.max - metric.min)
-            : null;
-        const dynamicRange = Math.max(...values) - Math.min(...values);
-        const thresholdBase =
-          configuredRange && configuredRange > 0
-            ? configuredRange * 0.05
-            : dynamicRange * 0.2;
-        const threshold = Math.max(
-          thresholdBase || 0,
-          Math.abs(earlyAverage) * 0.03,
-          0.1
-        );
-
-        const directionDelta = LOWER_IS_BETTER_KEYS.has(metric.key)
-          ? -delta
-          : delta;
-        const trend =
-          directionDelta > threshold
-            ? "improved"
-            : directionDelta < -threshold
-            ? "declined"
-            : "stable";
-
-        return {
-          key: metric.key,
-          label: metric.label,
-          kind: "numeric",
-          metric,
-          sampleSize: values.length,
-          earlyAverage,
-          recentAverage,
-          delta,
-          trend,
-          directionDelta,
-        };
-      })
-      .filter(Boolean);
-
-    const improvedCount = items.filter(
-      (item) => item.kind === "numeric" && item.trend === "improved"
-    ).length;
-    const stableCount = items.filter(
-      (item) => item.kind === "numeric" && item.trend === "stable"
-    ).length;
-    const declinedCount = items.filter(
-      (item) => item.kind === "numeric" && item.trend === "declined"
-    ).length;
-    const textCount = items.filter((item) => item.kind === "text").length;
-
+        : 0,
+      low: aiEvidenceKnownTotal
+        ? Math.round((aiCurrentSummary.evidence.low / aiEvidenceKnownTotal) * 100)
+        : 0,
+      unknown: aiCurrentSummary.evidence.unknown,
+    }),
+    [aiCurrentSummary, aiEvidenceKnownTotal]
+  );
+  const aiMetricImprovement = useMemo(
+    () =>
+      computeMetricImprovement(
+        healthMetrics,
+        healthEntries,
+        aiPeriodDates[0] ?? today,
+        today
+      ),
+    [healthMetrics, healthEntries, aiPeriodDates, today]
+  );
+  const aiWeakestDay = useMemo(() => {
+    const byDay = DAY_LABELS.map((day) => {
+      const stat = aiCurrentSummary.byDayOfWeek[day.key];
+      return {
+        label: day.label,
+        adherence: toPercent(stat.taken, stat.planned),
+        planned: stat.planned,
+      };
+    }).filter((item) => item.planned > 0);
+    if (!byDay.length) return null;
+    return byDay.sort((a, b) => a.adherence - b.adherence)[0];
+  }, [aiCurrentSummary]);
+  const aiWeakestTimeOfDay = useMemo(() => {
+    const byTime = TIME_BUCKETS.map((bucket) => {
+      const stat = aiCurrentSummary.byTimeOfDay[bucket.key];
+      return {
+        label: bucket.label,
+        adherence: toPercent(stat.taken, stat.planned),
+        planned: stat.planned,
+      };
+    }).filter((item) => item.planned > 0);
+    if (!byTime.length) return null;
+    return byTime.sort((a, b) => a.adherence - b.adherence)[0];
+  }, [aiCurrentSummary]);
+  const aiTrendHighlights = useMemo(() => {
+    const numericItems = aiMetricImprovement.items.filter(
+      (item) => item.kind === "numeric"
+    );
     return {
-      items,
-      improvedCount,
-      stableCount,
-      declinedCount,
-      textCount,
+      topDeclining: numericItems
+        .filter((item) => item.trend === "declined")
+        .sort((a, b) => a.directionDelta - b.directionDelta)
+        .slice(0, 3)
+        .map((item) => ({
+          label: item.label,
+          delta: Number(formatNumber(item.delta)),
+          trend: item.trend,
+        })),
+      topImproving: numericItems
+        .filter((item) => item.trend === "improved")
+        .sort((a, b) => b.directionDelta - a.directionDelta)
+        .slice(0, 3)
+        .map((item) => ({
+          label: item.label,
+          delta: Number(formatNumber(item.delta)),
+          trend: item.trend,
+        })),
     };
-  }, [healthMetrics, healthEntries, periodDates, today]);
+  }, [aiMetricImprovement]);
+  const aiSummaryInput = useMemo(
+    () => ({
+      analysisWindowDays: AI_SUMMARY_WINDOW_DAYS,
+      adherence: {
+        score: aiAdherenceScore,
+        deltaVsPreviousWindow: aiAdherenceDelta,
+        trend: aiConsistencyTrend,
+        taken: aiCurrentSummary.taken,
+        planned: aiCurrentSummary.planned,
+        missed: aiCurrentSummary.missed,
+      },
+      evidence: {
+        score: aiEvidenceScore,
+        highPercent: aiEvidenceDistribution.high,
+        moderatePercent: aiEvidenceDistribution.moderate,
+        lowPercent: aiEvidenceDistribution.low,
+        unknownTakenDoses: aiEvidenceDistribution.unknown,
+      },
+      metrics: {
+        improvedCount: aiMetricImprovement.improvedCount,
+        stableCount: aiMetricImprovement.stableCount,
+        declinedCount: aiMetricImprovement.declinedCount,
+        textCount: aiMetricImprovement.textCount,
+        topDeclining: aiTrendHighlights.topDeclining,
+        topImproving: aiTrendHighlights.topImproving,
+      },
+      consistency: {
+        weakestDay: aiWeakestDay,
+        weakestTimeOfDay: aiWeakestTimeOfDay,
+      },
+    }),
+    [
+      aiAdherenceScore,
+      aiAdherenceDelta,
+      aiConsistencyTrend,
+      aiCurrentSummary,
+      aiEvidenceScore,
+      aiEvidenceDistribution,
+      aiMetricImprovement,
+      aiTrendHighlights,
+      aiWeakestDay,
+      aiWeakestTimeOfDay,
+    ]
+  );
+  const aiFallbackSummary = useMemo(
+    () => ({
+      ...buildFallbackAiSummary({
+        adherence: aiSummaryInput.adherence,
+        evidence: aiSummaryInput.evidence,
+        metrics: {
+          ...aiSummaryInput.metrics,
+          topDecliningLabels: aiSummaryInput.metrics.topDeclining.map(
+            (item) => item.label
+          ),
+        },
+      }),
+      source: "fallback",
+    }),
+    [aiSummaryInput]
+  );
+  const aiSummaryGeneratedLabel = useMemo(() => {
+    if (!aiSummaryGeneratedAt) return null;
+    const parsed = new Date(aiSummaryGeneratedAt);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }, [aiSummaryGeneratedAt]);
+
+  useEffect(() => {
+    if (!isFocused || !ratingsReady) return undefined;
+    let cancelled = false;
+
+    const hydrateOrGenerate = async () => {
+      setAiSummaryError(null);
+
+      const cachedRaw = await AsyncStorage.getItem(AI_SUMMARY_CACHE_KEY);
+      const cached = cachedRaw ? parseAiSummaryCache(cachedRaw) : null;
+      if (
+        cached &&
+        cached.generatedForDate === today &&
+        typeof cached.summary === "string" &&
+        cached.summary.trim()
+      ) {
+        if (!cancelled) {
+          setAiSummaryText(cached.summary);
+          setAiSummaryRecommendations(cached.recommendations);
+          setAiSummaryGeneratedAt(cached.generatedAt);
+          setAiSummarySource(cached.source);
+          setAiSummaryLoading(false);
+        }
+        return;
+      }
+
+      if (!cancelled) {
+        setAiSummaryText("");
+        setAiSummaryRecommendations([]);
+        setAiSummaryGeneratedAt(null);
+        setAiSummarySource("openai");
+        setAiSummaryLoading(true);
+      }
+
+      try {
+        const supabase = await getScopedSupabase();
+        const { data, error } = await supabase.functions.invoke("ai-supplement", {
+          body: {
+            generatedForDate: today,
+            stats: aiSummaryInput,
+          },
+        });
+        if (error) throw error;
+
+        const normalized = normalizeAiSummaryPayload(data);
+        const record = {
+          generatedForDate: today,
+          generatedAt: new Date().toISOString(),
+          source: "openai",
+          summary: normalized.summary,
+          recommendations:
+            normalized.recommendations.length > 0
+              ? normalized.recommendations
+              : aiFallbackSummary.recommendations,
+        };
+        if (!cancelled) {
+          setAiSummaryText(record.summary);
+          setAiSummaryRecommendations(record.recommendations);
+          setAiSummaryGeneratedAt(record.generatedAt);
+          setAiSummarySource(record.source);
+          setAiSummaryLoading(false);
+        }
+        await AsyncStorage.setItem(AI_SUMMARY_CACHE_KEY, JSON.stringify(record));
+      } catch (error) {
+        console.error("Failed to generate AI stats summary", error);
+        const fallbackRecord = {
+          generatedForDate: today,
+          generatedAt: new Date().toISOString(),
+          source: "fallback",
+          summary: aiFallbackSummary.summary,
+          recommendations: aiFallbackSummary.recommendations,
+        };
+        if (!cancelled) {
+          setAiSummaryText(fallbackRecord.summary);
+          setAiSummaryRecommendations(fallbackRecord.recommendations);
+          setAiSummaryGeneratedAt(fallbackRecord.generatedAt);
+          setAiSummarySource(fallbackRecord.source);
+          setAiSummaryError("Live AI summary unavailable. Showing local summary.");
+          setAiSummaryLoading(false);
+        }
+        await AsyncStorage.setItem(
+          AI_SUMMARY_CACHE_KEY,
+          JSON.stringify(fallbackRecord)
+        );
+      }
+    };
+
+    hydrateOrGenerate();
+    return () => {
+      cancelled = true;
+    };
+  }, [isFocused, ratingsReady, today, aiSummaryInput, aiFallbackSummary]);
 
   return (
     <Screen
@@ -537,6 +946,39 @@ export default function StatsScreen() {
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.aiSummaryCard}>
+          <View style={styles.aiSummaryHeader}>
+            <Text style={styles.aiSummaryTitle}>AI Daily Summary</Text>
+            <Text style={styles.aiSummaryMeta}>
+              Last {AI_SUMMARY_WINDOW_DAYS} days
+              {aiSummaryGeneratedLabel ? ` · Updated ${aiSummaryGeneratedLabel}` : ""}
+            </Text>
+          </View>
+          {aiSummaryLoading && !aiSummaryText ? (
+            <Text style={styles.aiSummaryBody}>Generating today&apos;s summary…</Text>
+          ) : (
+            <Text style={styles.aiSummaryBody}>
+              {aiSummaryText ||
+                "No summary yet. Open this tab again once more data is available."}
+            </Text>
+          )}
+          {aiSummaryRecommendations.length > 0 ? (
+            <View style={styles.aiSummaryRecommendations}>
+              {aiSummaryRecommendations.map((item, index) => (
+                <Text key={`${item}-${index}`} style={styles.aiSummaryRecommendationItem}>
+                  • {item}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+          {aiSummaryError ? (
+            <Text style={styles.aiSummaryError}>{aiSummaryError}</Text>
+          ) : null}
+          {aiSummarySource === "fallback" && !aiSummaryError ? (
+            <Text style={styles.aiSummaryMeta}>Using local fallback summary.</Text>
+          ) : null}
+        </View>
+
         <View style={styles.filterRow}>
           {PERIOD_FILTERS.map((filter) => {
             const active = period === filter.key;
@@ -809,6 +1251,49 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.xl * 2,
     gap: spacing.md,
+  },
+  aiSummaryCard: {
+    backgroundColor: colors.background.card,
+    borderRadius: radius.xl,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.brand.primary,
+    ...shadows.card,
+  },
+  aiSummaryHeader: {
+    marginBottom: spacing.xs,
+  },
+  aiSummaryTitle: {
+    fontSize: 18,
+    color: colors.text.primary,
+    fontWeight: "700",
+  },
+  aiSummaryMeta: {
+    marginTop: 2,
+    fontSize: 12,
+    color: colors.text.muted,
+    lineHeight: 16,
+  },
+  aiSummaryBody: {
+    marginTop: spacing.xs,
+    fontSize: 14,
+    color: colors.text.secondary,
+    lineHeight: 20,
+  },
+  aiSummaryRecommendations: {
+    marginTop: spacing.sm,
+    gap: 6,
+  },
+  aiSummaryRecommendationItem: {
+    fontSize: 13,
+    color: colors.text.primary,
+    lineHeight: 18,
+  },
+  aiSummaryError: {
+    marginTop: spacing.sm,
+    fontSize: 12,
+    color: colors.status.danger,
+    lineHeight: 16,
   },
   filterRow: {
     flexDirection: "row",
