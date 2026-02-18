@@ -4,14 +4,18 @@ import Slider from "@react-native-community/slider";
 import { colors, spacing, radius, shadows, typography } from "@/theme";
 import { useHealthStore } from "@/features/health/store";
 import {
+  BLOOD_PRESSURE_METRIC_KEY,
   CUSTOM_METRIC_KEY,
   CUSTOM_TRACKER_OPTIONS,
   PRESET_METRICS,
   PRESET_METRICS_BY_KEY,
   TRACKER_TYPES,
   defaultEntryValue,
+  isBloodPressureMetric,
+  isValidBloodPressureValue,
   makeCustomMetric,
   normalizeMetric,
+  normalizeBloodPressureValue,
   normalizeNumericValue,
   parseNumericText,
   toMetricKey,
@@ -27,6 +31,7 @@ function todayYYYYMMDD() {
 
 function trackerLabelFor(metric) {
   if (!metric) return "Value";
+  if (isBloodPressureMetric(metric)) return "Today's blood pressure";
   if (metric.trackerType === TRACKER_TYPES.SCALE) return "Today's score";
   if (metric.trackerType === TRACKER_TYPES.TEXT) return "Today's entry";
   return "Today's value";
@@ -61,6 +66,8 @@ export function AddMetricModal({ visible, onClose }) {
 
   const [scaleValue, setScaleValue] = useState(5);
   const [numericInput, setNumericInput] = useState("");
+  const [bpSystolicInput, setBpSystolicInput] = useState("");
+  const [bpDiastolicInput, setBpDiastolicInput] = useState("");
   const [textInput, setTextInput] = useState("");
   const [error, setError] = useState("");
 
@@ -109,6 +116,8 @@ export function AddMetricModal({ visible, onClose }) {
         ? String(defaultValue ?? "")
         : ""
     );
+    setBpSystolicInput("");
+    setBpDiastolicInput("");
     setTextInput("");
   }, [visible, firstAvailablePreset]);
 
@@ -118,13 +127,25 @@ export function AddMetricModal({ visible, onClose }) {
 
     if (selectedMetric.trackerType === TRACKER_TYPES.SCALE) {
       setScaleValue(typeof defaultValue === "number" ? defaultValue : 5);
+      setBpSystolicInput("");
+      setBpDiastolicInput("");
     } else if (
       selectedMetric.trackerType === TRACKER_TYPES.NUMBER ||
       selectedMetric.trackerType === TRACKER_TYPES.HOURS
     ) {
-      setNumericInput(String(defaultValue ?? ""));
+      if (isBloodPressureMetric(selectedMetric)) {
+        setBpSystolicInput(String(defaultValue ?? 120));
+        setBpDiastolicInput("80");
+        setNumericInput("");
+      } else {
+        setNumericInput(String(defaultValue ?? ""));
+        setBpSystolicInput("");
+        setBpDiastolicInput("");
+      }
     } else {
       setTextInput("");
+      setBpSystolicInput("");
+      setBpDiastolicInput("");
     }
   }, [visible, selectedMetricKey, customTrackerType]);
 
@@ -142,8 +163,14 @@ export function AddMetricModal({ visible, onClose }) {
     if (selectedMetric.trackerType === TRACKER_TYPES.SCALE) {
       return Number.isFinite(scaleValue);
     }
+    if (isBloodPressureMetric(selectedMetric)) {
+      return isValidBloodPressureValue({
+        systolic: bpSystolicInput,
+        diastolic: bpDiastolicInput,
+      });
+    }
     return parseNumericText(numericInput) != null;
-  }, [selectedMetric, isCustomMetric, metricName, customMetricKey, customNameConflict, textInput, scaleValue, numericInput]);
+  }, [selectedMetric, isCustomMetric, metricName, customMetricKey, customNameConflict, textInput, scaleValue, numericInput, bpSystolicInput, bpDiastolicInput]);
 
   const handleSave = () => {
     if (!selectedMetric) return;
@@ -182,6 +209,17 @@ export function AddMetricModal({ visible, onClose }) {
       }
       entryValue = nextValue;
     } else {
+      if (isBloodPressureMetric(metricToSave)) {
+        const bpValue = normalizeBloodPressureValue({
+          systolic: bpSystolicInput,
+          diastolic: bpDiastolicInput,
+        });
+        if (!isValidBloodPressureValue(bpValue)) {
+          setError("Enter valid systolic and diastolic values.");
+          return;
+        }
+        entryValue = bpValue;
+      } else {
       const parsed = parseNumericText(numericInput);
       if (parsed == null) {
         setError("Enter a numeric value.");
@@ -193,6 +231,7 @@ export function AddMetricModal({ visible, onClose }) {
         return;
       }
       entryValue = nextValue;
+      }
     }
 
     addMetric({
@@ -210,6 +249,8 @@ export function AddMetricModal({ visible, onClose }) {
     setCustomTrackerType(TRACKER_TYPES.SCALE);
     setScaleValue(5);
     setNumericInput("");
+    setBpSystolicInput("");
+    setBpDiastolicInput("");
     setTextInput("");
     setError("");
     onClose();
@@ -260,15 +301,22 @@ export function AddMetricModal({ visible, onClose }) {
                             alreadyAdded && styles.dropdownItemDisabled,
                           ]}
                         >
-                          <Text
-                            style={[
-                              styles.dropdownItemText,
-                              selectedMetricKey === metric.key && styles.dropdownItemTextSelected,
-                              alreadyAdded && styles.dropdownItemTextDisabled,
-                            ]}
-                          >
-                            {metric.label}
-                          </Text>
+                          <View style={styles.dropdownTextBlock}>
+                            <Text
+                              style={[
+                                styles.dropdownItemText,
+                                selectedMetricKey === metric.key && styles.dropdownItemTextSelected,
+                                alreadyAdded && styles.dropdownItemTextDisabled,
+                              ]}
+                            >
+                              {metric.label}
+                            </Text>
+                            {metric.description ? (
+                              <Text style={styles.dropdownItemDescription}>
+                                {metric.description}
+                              </Text>
+                            ) : null}
+                          </View>
                           {alreadyAdded ? <Text style={styles.dropdownMeta}>Added</Text> : null}
                         </Pressable>
                       );
@@ -393,7 +441,9 @@ export function AddMetricModal({ visible, onClose }) {
                   </>
                 ) : null}
 
-                {selectedMetric.trackerType === TRACKER_TYPES.NUMBER || selectedMetric.trackerType === TRACKER_TYPES.HOURS ? (
+                {(selectedMetric.trackerType === TRACKER_TYPES.NUMBER ||
+                  selectedMetric.trackerType === TRACKER_TYPES.HOURS) &&
+                !isBloodPressureMetric(selectedMetric) ? (
                   <View style={styles.numericRow}>
                     <TextInput
                       value={numericInput}
@@ -411,6 +461,36 @@ export function AddMetricModal({ visible, onClose }) {
                         <Text style={styles.unitText}>{selectedMetric.unit}</Text>
                       </View>
                     ) : null}
+                  </View>
+                ) : null}
+
+                {selectedMetric.key === BLOOD_PRESSURE_METRIC_KEY ? (
+                  <View style={styles.numericRow}>
+                    <TextInput
+                      value={bpSystolicInput}
+                      onChangeText={(value) => {
+                        setBpSystolicInput(value);
+                        setError("");
+                      }}
+                      placeholder="Systolic"
+                      placeholderTextColor={colors.text.muted}
+                      style={[styles.input, styles.bloodPressureInput]}
+                      keyboardType="decimal-pad"
+                    />
+                    <TextInput
+                      value={bpDiastolicInput}
+                      onChangeText={(value) => {
+                        setBpDiastolicInput(value);
+                        setError("");
+                      }}
+                      placeholder="Diastolic"
+                      placeholderTextColor={colors.text.muted}
+                      style={[styles.input, styles.bloodPressureInput]}
+                      keyboardType="decimal-pad"
+                    />
+                    <View style={styles.unitBadge}>
+                      <Text style={styles.unitText}>mmHg</Text>
+                    </View>
                   </View>
                 ) : null}
 
@@ -527,7 +607,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
     borderBottomWidth: 1,
     borderBottomColor: colors.border.subtle,
   },
@@ -541,11 +621,19 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border.subtle,
   },
+  dropdownTextBlock: {
+    flex: 1,
+    paddingRight: spacing.sm,
+  },
   dropdownItemText: {
     fontSize: 14,
     color: colors.text.primary,
-    flex: 1,
-    paddingRight: spacing.sm,
+  },
+  dropdownItemDescription: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.text.secondary,
   },
   dropdownItemTextSelected: {
     color: colors.brand.dark,
@@ -591,6 +679,10 @@ const styles = StyleSheet.create({
   },
   numericInput: {
     flex: 1,
+  },
+  bloodPressureInput: {
+    flex: 1,
+    minWidth: 0,
   },
   unitBadge: {
     paddingHorizontal: spacing.sm,

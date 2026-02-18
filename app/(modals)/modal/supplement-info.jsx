@@ -5,7 +5,10 @@ import { LinearGradient } from "expo-linear-gradient";
 import { colors, spacing, radius, shadows } from "@/theme";
 import { metalGradients } from "@/utils/metalStyles";
 import { getSupplementById } from "@src/data/getSupplement";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+    isSupplementHearted,
+    setSupplementHearted,
+} from "@/features/supplements/favouritesStorage";
 import MedalIcon from "@/assets/icons/supplements/medal.svg";
 import { getRatingStyle } from "@/utils/ratingStyles";
 import HappyIcon from "@/assets/icons/supplements/happy.svg";
@@ -87,7 +90,6 @@ const SOLID_METAL_COLORS = {
     silver: metalGradients.silver[1],
     bronze: metalGradients.bronze[1],
 };
-const HEART_STORE_KEY = "supplement-heart-flags";
 /* ---------------- Screen ---------------- */
 export default function SupplementInfoModal() {
     const { id, name: paramName } = useLocalSearchParams();
@@ -112,21 +114,12 @@ export default function SupplementInfoModal() {
         let isActive = true;
         if (!data?.id)
             return;
-        AsyncStorage.getItem(HEART_STORE_KEY)
-            .then((raw) => {
+        isSupplementHearted(data.id).then((value) => {
             if (!isActive)
                 return;
-            if (!raw)
-                return;
-            try {
-                const parsed = JSON.parse(raw);
-                setHearted(Boolean(parsed[data.id]));
-            }
-            catch (err) {
-                console.error("Failed to parse heart storage", err);
-            }
+            setHearted(value);
         })
-            .catch((err) => console.error("Failed to load heart state", err));
+            .catch(() => undefined);
         return () => {
             isActive = false;
         };
@@ -137,26 +130,7 @@ export default function SupplementInfoModal() {
             return;
         setHearted((prev) => {
             const next = !prev;
-            AsyncStorage.getItem(HEART_STORE_KEY)
-                .then((raw) => {
-                let parsed = {};
-                if (raw) {
-                    try {
-                        parsed = JSON.parse(raw);
-                    }
-                    catch (err) {
-                        console.error("Failed to parse heart storage", err);
-                    }
-                }
-                if (next) {
-                    parsed[data.id] = true;
-                }
-                else {
-                    delete parsed[data.id];
-                }
-                return AsyncStorage.setItem(HEART_STORE_KEY, JSON.stringify(parsed)).catch((err) => console.error("Failed to persist heart", err));
-            })
-                .catch((err) => console.error("Failed to load heart state", err));
+            setSupplementHearted(data.id, next);
             return next;
         });
     };

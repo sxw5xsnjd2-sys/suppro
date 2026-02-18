@@ -13,9 +13,13 @@ import Slider from "@react-native-community/slider";
 import { colors, spacing, radius, shadows, typography } from "@/theme";
 import { useHealthStore } from "@/features/health/store";
 import {
+  BLOOD_PRESSURE_METRIC_KEY,
+  isBloodPressureMetric,
+  isValidBloodPressureValue,
   TRACKER_TYPES,
   defaultEntryValue,
   normalizeMetric,
+  normalizeBloodPressureValue,
   normalizeNumericValue,
   parseNumericText,
 } from "@/features/health/metricDefinitions";
@@ -39,6 +43,7 @@ function humanizeMetricKey(metricKey) {
 
 function valueLabelFor(metric) {
   if (!metric) return "Value";
+  if (isBloodPressureMetric(metric)) return "Blood pressure";
   if (metric.trackerType === TRACKER_TYPES.SCALE) return "Score";
   if (metric.trackerType === TRACKER_TYPES.TEXT) return "Entry";
   return "Value";
@@ -75,6 +80,8 @@ export function HealthEntryModal({ visible, metric, onClose }) {
 
   const [scaleValue, setScaleValue] = useState(5);
   const [numericInput, setNumericInput] = useState("");
+  const [bpSystolicInput, setBpSystolicInput] = useState("");
+  const [bpDiastolicInput, setBpDiastolicInput] = useState("");
   const [textInput, setTextInput] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
@@ -86,25 +93,50 @@ export function HealthEntryModal({ visible, metric, onClose }) {
       if (selectedMetric.trackerType === TRACKER_TYPES.TEXT) {
         const nextText = typeof existingToday.value === "string" ? existingToday.value : String(existingToday.value ?? "");
         setTextInput(nextText);
+        setBpSystolicInput("");
+        setBpDiastolicInput("");
       } else if (selectedMetric.trackerType === TRACKER_TYPES.SCALE) {
         const nextScale = normalizeNumericValue(existingToday.value, selectedMetric);
         setScaleValue(Number.isFinite(nextScale) ? nextScale : Number(defaultEntryValue(selectedMetric) || 5));
+        setBpSystolicInput("");
+        setBpDiastolicInput("");
       } else {
-        const numeric = Number(existingToday.value);
-        const nextNumeric = Number.isFinite(numeric)
-          ? numeric
-          : Number(defaultEntryValue(selectedMetric) || 0);
-        setNumericInput(String(nextNumeric));
+        if (isBloodPressureMetric(selectedMetric)) {
+          const bpValue = normalizeBloodPressureValue(existingToday.value);
+          setBpSystolicInput(String(bpValue?.systolic ?? 120));
+          setBpDiastolicInput(String(bpValue?.diastolic ?? 80));
+          setNumericInput("");
+        } else {
+          const numeric = Number(existingToday.value);
+          const nextNumeric = Number.isFinite(numeric)
+            ? numeric
+            : Number(defaultEntryValue(selectedMetric) || 0);
+          setNumericInput(String(nextNumeric));
+          setBpSystolicInput("");
+          setBpDiastolicInput("");
+        }
       }
       setNote(existingToday.note ?? "");
     } else {
       const defaultValue = defaultEntryValue(selectedMetric);
       if (selectedMetric.trackerType === TRACKER_TYPES.TEXT) {
         setTextInput("");
+        setBpSystolicInput("");
+        setBpDiastolicInput("");
       } else if (selectedMetric.trackerType === TRACKER_TYPES.SCALE) {
         setScaleValue(typeof defaultValue === "number" ? defaultValue : 5);
+        setBpSystolicInput("");
+        setBpDiastolicInput("");
       } else {
-        setNumericInput(String(defaultValue ?? ""));
+        if (isBloodPressureMetric(selectedMetric)) {
+          setBpSystolicInput(String(defaultValue ?? 120));
+          setBpDiastolicInput("80");
+          setNumericInput("");
+        } else {
+          setNumericInput(String(defaultValue ?? ""));
+          setBpSystolicInput("");
+          setBpDiastolicInput("");
+        }
       }
       setNote("");
     }
@@ -132,6 +164,17 @@ export function HealthEntryModal({ visible, metric, onClose }) {
       }
       value = numericValue;
     } else {
+      if (isBloodPressureMetric(selectedMetric)) {
+        const bpValue = normalizeBloodPressureValue({
+          systolic: bpSystolicInput,
+          diastolic: bpDiastolicInput,
+        });
+        if (!isValidBloodPressureValue(bpValue)) {
+          setError("Please enter valid systolic and diastolic values.");
+          return;
+        }
+        value = bpValue;
+      } else {
       const parsed = parseNumericText(numericInput);
       if (parsed == null) {
         setError("Please enter a numeric value.");
@@ -143,6 +186,7 @@ export function HealthEntryModal({ visible, metric, onClose }) {
         return;
       }
       value = numericValue;
+      }
     }
 
     addEntry({
@@ -160,6 +204,11 @@ export function HealthEntryModal({ visible, metric, onClose }) {
       ? textInput.trim().length > 0
       : selectedMetric.trackerType === TRACKER_TYPES.SCALE
       ? Number.isFinite(scaleValue)
+      : isBloodPressureMetric(selectedMetric)
+      ? isValidBloodPressureValue({
+          systolic: bpSystolicInput,
+          diastolic: bpDiastolicInput,
+        })
       : parseNumericText(numericInput) != null;
 
   return (
@@ -178,6 +227,11 @@ export function HealthEntryModal({ visible, metric, onClose }) {
             </View>
 
             <Text style={styles.subtitle}>{date}</Text>
+            {selectedMetric.description ? (
+              <Text style={styles.metricDescription}>
+                {selectedMetric.description}
+              </Text>
+            ) : null}
 
             <View style={styles.field}>
               <View style={styles.sliderHeader}>
@@ -206,8 +260,9 @@ export function HealthEntryModal({ visible, metric, onClose }) {
                 </>
               ) : null}
 
-              {selectedMetric.trackerType === TRACKER_TYPES.NUMBER ||
-              selectedMetric.trackerType === TRACKER_TYPES.HOURS ? (
+              {(selectedMetric.trackerType === TRACKER_TYPES.NUMBER ||
+                selectedMetric.trackerType === TRACKER_TYPES.HOURS) &&
+              !isBloodPressureMetric(selectedMetric) ? (
                 <View style={styles.numericRow}>
                   <TextInput
                     value={numericInput}
@@ -225,6 +280,36 @@ export function HealthEntryModal({ visible, metric, onClose }) {
                       <Text style={styles.unitPillText}>{selectedMetric.unit}</Text>
                     </View>
                   ) : null}
+                </View>
+              ) : null}
+
+              {selectedMetric.key === BLOOD_PRESSURE_METRIC_KEY ? (
+                <View style={styles.numericRow}>
+                  <TextInput
+                    value={bpSystolicInput}
+                    onChangeText={(nextValue) => {
+                      setBpSystolicInput(nextValue);
+                      setError("");
+                    }}
+                    placeholder="Systolic"
+                    placeholderTextColor={colors.text.muted}
+                    style={[styles.input, styles.bloodPressureInput]}
+                    keyboardType="decimal-pad"
+                  />
+                  <TextInput
+                    value={bpDiastolicInput}
+                    onChangeText={(nextValue) => {
+                      setBpDiastolicInput(nextValue);
+                      setError("");
+                    }}
+                    placeholder="Diastolic"
+                    placeholderTextColor={colors.text.muted}
+                    style={[styles.input, styles.bloodPressureInput]}
+                    keyboardType="decimal-pad"
+                  />
+                  <View style={styles.unitPill}>
+                    <Text style={styles.unitPillText}>mmHg</Text>
+                  </View>
                 </View>
               ) : null}
 
@@ -308,6 +393,12 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.text.muted,
   },
+  metricDescription: {
+    marginTop: spacing.xs,
+    ...typography.caption,
+    color: colors.text.secondary,
+    lineHeight: 18,
+  },
   field: {
     marginTop: spacing.md,
   },
@@ -359,6 +450,10 @@ const styles = StyleSheet.create({
   },
   numericInput: {
     flex: 1,
+  },
+  bloodPressureInput: {
+    flex: 1,
+    minWidth: 0,
   },
   unitPill: {
     borderRadius: 999,

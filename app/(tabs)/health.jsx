@@ -90,7 +90,14 @@ export default function HealthScreen() {
           return (
             <View key={key} style={styles.card}>
               <View style={styles.cardHeader}>
-                <Text style={styles.label}>{label}</Text>
+                <View style={styles.metricTextBlock}>
+                  <Text style={styles.label}>{label}</Text>
+                  {metricConfig.description ? (
+                    <Text style={styles.metricDescription}>
+                      {metricConfig.description}
+                    </Text>
+                  ) : null}
+                </View>
                 <Pressable
                   onPress={() => {
                     setActiveMetric(key);
@@ -160,14 +167,24 @@ const styles = StyleSheet.create({
   },
   cardHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     marginBottom: spacing.sm,
+  },
+  metricTextBlock: {
+    flex: 1,
+    paddingRight: spacing.sm,
   },
   label: {
     fontSize: 18,
     fontWeight: "700",
     color: colors.text.primary,
+  },
+  metricDescription: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.text.secondary,
   },
   empty: {
     marginTop: spacing.sm,

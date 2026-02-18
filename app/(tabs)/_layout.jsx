@@ -1,15 +1,33 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { View, Pressable, StyleSheet } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Tabs, router } from "expo-router";
 import { colors, gradients, spacing } from "@/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { hasCompletedQuestionnaire } from "@src/lib/onboarding";
 import HomeIcon from "@/assets/icons/tab/home.svg";
 import SupplementsIcon from "@/assets/icons/tab/supplements.svg";
 import HealthIcon from "@/assets/icons/tab/health.svg";
-import StatsIcon from "@/assets/icons/tab/statistics.svg";
+import RobotIcon from "@/assets/icons/tab/robot.svg";
 export default function TabsLayout() {
     const insets = useSafeAreaInsets();
+    const hasCheckedOnboarding = useRef(false);
+    useEffect(() => {
+        if (hasCheckedOnboarding.current)
+            return;
+        hasCheckedOnboarding.current = true;
+        let mounted = true;
+        const runOnboardingGate = async () => {
+            const completed = await hasCompletedQuestionnaire();
+            if (!mounted || completed)
+                return;
+            router.push("/modal/questionnaire?flow=first_open");
+        };
+        runOnboardingGate();
+        return () => {
+            mounted = false;
+        };
+    }, []);
     return (<View style={{ flex: 1 }}>
       <Tabs screenOptions={{
             headerShown: false,
@@ -49,11 +67,18 @@ export default function TabsLayout() {
         }}/>
 
         <Tabs.Screen name="ai" options={{
-            title: "Stats",
+            title: "AI",
             tabBarItemStyle: {
                 borderRightWidth: 0,
             },
-            tabBarIcon: ({ color }) => (<StatsIcon width={22} height={22} color={color} fill={color} stroke={color} strokeWidth={0.55}/>),
+            tabBarIcon: ({ color }) => (<RobotIcon width={22} height={22} color={color} fill={color} stroke={color} strokeWidth={0.55}/>),
+        }}/>
+
+        <Tabs.Screen name="stats" options={{
+            href: null,
+        }}/>
+        <Tabs.Screen name="profile" options={{
+            href: null,
         }}/>
       </Tabs>
 

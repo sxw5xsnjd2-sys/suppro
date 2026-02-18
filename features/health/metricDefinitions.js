@@ -41,114 +41,242 @@ const textTracker = (overrides = {}) => ({
 });
 
 export const CUSTOM_METRIC_KEY = "__custom_metric__";
+export const BLOOD_PRESSURE_METRIC_KEY = "blood_pressure_control";
 
 export const PRESET_METRICS = [
   {
     key: "anti_aging",
-    label: "Healthy aging score",
+    label: "Healthy aging readiness",
+    description:
+      "Overall sense of aging well today across vitality, resilience, and recovery.",
     ...scaleTracker({ lowLabel: "Poor", highLabel: "Excellent" }),
   },
   {
     key: "anti_inflammatory",
-    label: "Inflammation symptoms",
+    label: "Inflammation symptoms score",
+    description:
+      "How intense inflammation-related symptoms feel today, such as soreness, stiffness, or swelling.",
     ...scaleTracker({ lowLabel: "Severe", highLabel: "Calm" }),
   },
   {
     key: "blood_pressure_control",
     label: "Blood pressure",
-    ...textTracker({ placeholder: "e.g. 120/80 mmHg" }),
+    description:
+      "Enter your latest blood pressure as systolic/diastolic, for example 120/80 mmHg.",
+    ...numberTracker({
+      unit: "mmHg",
+      min: 40,
+      max: 260,
+      defaultValue: 120,
+      placeholder: "Use systolic/diastolic fields",
+    }),
   },
   {
     key: "blood_sugar_control",
     label: "Blood glucose",
+    description:
+      "Your blood glucose value. Try to measure at the same time context (for example fasting) for consistency.",
     ...numberTracker({ unit: "mmol/L", min: 0, max: 35 }),
   },
-  { key: "bone_health", label: "Bone comfort", ...scaleTracker() },
+  {
+    key: "bone_health",
+    label: "Bone and skeletal comfort",
+    description:
+      "How comfortable and stable your bones and skeletal system feel during daily activity.",
+    ...scaleTracker({
+      lowLabel: "Very uncomfortable",
+      highLabel: "Very comfortable",
+    }),
+  },
   {
     key: "cardiovascular_health",
-    label: "Cardiovascular health",
+    label: "Steady-state cardio duration",
+    description:
+      "How many minutes you can run, swim, or cycle at a pace where you can hold a conversation but not sing.",
     ...numberTracker({ unit: "minutes", min: 0, max: 180, defaultValue: 30 }),
   },
   {
     key: "cholesterol_support",
     label: "LDL cholesterol",
+    description: "Your LDL cholesterol from a recent blood test.",
     ...numberTracker({ unit: "mg/dL", min: 50, max: 220, defaultValue: 130 }),
   },
-  { key: "cognitive_support", label: "Cognitive function", ...scaleTracker() },
-  { key: "concentration_enhancing", label: "Focus", ...scaleTracker() },
-  { key: "digestive_health", label: "Digestive comfort", ...scaleTracker() },
+  {
+    key: "cognitive_support",
+    label: "Cognitive clarity",
+    description:
+      "How clear and sharp your thinking feels for reasoning, planning, and decision-making.",
+    ...scaleTracker(),
+  },
+  {
+    key: "concentration_enhancing",
+    label: "Focus quality",
+    description:
+      "How well you can sustain attention on tasks without mental drift or distraction.",
+    ...scaleTracker(),
+  },
+  {
+    key: "digestive_health",
+    label: "Digestive comfort",
+    description:
+      "How comfortable your digestion feels today, including bloating, cramps, and regularity.",
+    ...scaleTracker(),
+  },
   {
     key: "endurance_enhancing",
-    label: "Endurance",
+    label: "Endurance duration",
+    description:
+      "How long you can sustain continuous aerobic effort at your target training intensity.",
     ...numberTracker({ unit: "minutes", min: 0, max: 240, defaultValue: 20 }),
   },
-  { key: "energy", label: "Energy levels", ...scaleTracker() },
+  {
+    key: "energy",
+    label: "Daily energy",
+    description: "Your overall physical and mental energy throughout the day.",
+    ...scaleTracker({ lowLabel: "Drained", highLabel: "Energized" }),
+  },
   {
     key: "exercise_recovery",
-    label: "Exercise recovery",
+    label: "Exercise recovery quality",
+    description:
+      "How recovered your body feels between training sessions, including soreness and readiness.",
     ...scaleTracker({ lowLabel: "Poor", highLabel: "Excellent" }),
   },
   {
     key: "female_fertility",
-    label: "Fertility signs score (female)",
-    ...scaleTracker(),
+    label: "Female fertility signs",
+    description:
+      "Self-rated fertility-related signs such as cycle quality and ovulation indicators.",
+    ...scaleTracker({ lowLabel: "Weak signs", highLabel: "Strong signs" }),
   },
   {
     key: "female_hormone_balance",
-    label: "Hormone balance (female)",
-    ...scaleTracker(),
+    label: "Female hormone balance",
+    description:
+      "How balanced hormone-related symptoms feel, including cycle stability and PMS intensity.",
+    ...scaleTracker({ lowLabel: "Unbalanced", highLabel: "Balanced" }),
   },
   {
     key: "female_sexual_arousal",
     label: "Sexual wellbeing (female)",
+    description:
+      "Self-rated female sexual wellbeing including desire, arousal, and comfort.",
+    ...scaleTracker({ lowLabel: "Low", highLabel: "High" }),
+  },
+  {
+    key: "hair_health",
+    label: "Hair health",
+    description:
+      "Perceived hair quality, including strength, breakage, and shedding trends.",
     ...scaleTracker(),
   },
-  { key: "hair_health", label: "Hair", ...scaleTracker() },
-  { key: "immune_health", label: "Immune resilience", ...scaleTracker() },
-  { key: "injury_recovery", label: "Injury recovery", ...scaleTracker() },
-  { key: "joint_health", label: "Joint comfort", ...scaleTracker() },
+  {
+    key: "immune_health",
+    label: "Immune resilience",
+    description:
+      "How resilient you feel against illness, including frequency and intensity of symptoms.",
+    ...scaleTracker(),
+  },
+  {
+    key: "injury_recovery",
+    label: "Injury recovery progress",
+    description:
+      "Progress of healing and functional return for a specific injury over time.",
+    ...scaleTracker({ lowLabel: "Early stage", highLabel: "Fully recovered" }),
+  },
+  {
+    key: "joint_health",
+    label: "Joint comfort and mobility",
+    description:
+      "How comfortable and mobile your joints feel during daily movement and exercise.",
+    ...scaleTracker(),
+  },
   {
     key: "lymphatic_swelling_support",
-    label: "Swelling relief",
+    label: "Swelling and fluid retention",
+    description:
+      "How noticeable swelling, puffiness, or fluid retention feels today.",
     ...scaleTracker({ lowLabel: "High swelling", highLabel: "No swelling" }),
   },
-  { key: "male_fertility", label: "Fertility signs(male)", ...scaleTracker() },
+  {
+    key: "male_fertility",
+    label: "Male fertility signs",
+    description:
+      "Self-rated male fertility-related signs and reproductive wellbeing.",
+    ...scaleTracker({ lowLabel: "Weak signs", highLabel: "Strong signs" }),
+  },
   {
     key: "male_sexual_arousal",
     label: "Sexual wellbeing (male)",
+    description:
+      "Self-rated male sexual wellbeing including desire, arousal, and confidence.",
+    ...scaleTracker({ lowLabel: "Low", highLabel: "High" }),
+  },
+  {
+    key: "memory_enhancing",
+    label: "Memory quality",
+    description:
+      "How reliably you recall recent information, names, and tasks.",
     ...scaleTracker(),
   },
-  { key: "memory_enhancing", label: "Memory", ...scaleTracker() },
   {
     key: "mood",
     label: "Mood",
+    description: "Your overall emotional state today.",
     ...scaleTracker({ lowLabel: "Very low", highLabel: "Great" }),
   },
-  { key: "skin_health", label: "Skin", ...scaleTracker() },
+  {
+    key: "skin_health",
+    label: "Skin health",
+    description:
+      "Perceived skin condition, including clarity, dryness, irritation, and texture.",
+    ...scaleTracker(),
+  },
   {
     key: "sleep",
     label: "Sleep duration",
+    description: "Total hours slept in your most recent sleep period.",
     ...hoursTracker({ lowLabel: "Too little", highLabel: "Well rested" }),
   },
   {
     key: "strength_enhancing",
-    label: "Strength session result",
-    ...textTracker({ placeholder: "e.g. Squat 5x5 @ 80kg" }),
+    label: "Estimated 1RM (main lift)",
+    description:
+      "Track estimated one-rep max for the same primary lift each time, such as squat, bench, or deadlift.",
+    ...numberTracker({
+      unit: "kg",
+      min: 0,
+      max: 400,
+      step: 0.5,
+      defaultValue: 40,
+      placeholder: "e.g. estimated 1RM in kg",
+    }),
   },
   {
     key: "stress",
-    label: "Stress levels",
+    label: "Stress level",
+    description:
+      "Your perceived stress level, where lower scores indicate high stress and higher scores indicate calm.",
     ...scaleTracker({ lowLabel: "High stress", highLabel: "Calm" }),
   },
   {
     key: "testosterone_enhancing",
-    label: "Testosterone level",
+    label: "Total testosterone",
+    description: "Lab-measured total testosterone level.",
     ...numberTracker({ unit: "ng/dL", min: 100, max: 1200, defaultValue: 500 }),
   },
-  { key: "urine_health", label: "Urinary comfort", ...scaleTracker() },
+  {
+    key: "urine_health",
+    label: "Urinary comfort",
+    description:
+      "Urinary comfort and symptom severity, including urgency, discomfort, and flow quality.",
+    ...scaleTracker(),
+  },
   {
     key: "weight",
     label: "Body weight",
+    description:
+      "Body weight measured under similar conditions each time, such as morning before food.",
     ...numberTracker({
       unit: "kg",
       min: 30,
@@ -209,14 +337,25 @@ export function normalizeMetric(metric) {
   if (!metric || typeof metric !== "object") return null;
   const preset = PRESET_METRICS_BY_KEY[metric.key];
   const base = preset ? { ...preset } : {};
+
+  // For preset metrics, keep the latest preset metadata authoritative so label,
+  // description, tracker rules, and defaults stay current across app updates.
+  const merged = preset
+    ? {
+        ...metric,
+        ...base,
+        key: base.key,
+        enabled: metric.enabled !== false,
+      }
+    : {
+        ...base,
+        ...metric,
+        enabled: metric.enabled !== false,
+      };
+
   const trackerType =
-    metric.trackerType ?? base.trackerType ?? TRACKER_TYPES.SCALE;
-  const merged = {
-    ...base,
-    ...metric,
-    trackerType,
-    enabled: metric.enabled !== false,
-  };
+    merged.trackerType ?? base.trackerType ?? TRACKER_TYPES.SCALE;
+  merged.trackerType = trackerType;
 
   if (trackerType === TRACKER_TYPES.SCALE) {
     merged.min = Number.isFinite(merged.min) ? merged.min : 1;
@@ -316,6 +455,10 @@ export function formatMetricValue(metric, value) {
   const normalized = normalizeMetric(metric);
   if (!normalized) return "—";
 
+  if (normalized.key === BLOOD_PRESSURE_METRIC_KEY) {
+    return formatBloodPressureValue(value);
+  }
+
   if (normalized.trackerType === TRACKER_TYPES.TEXT) {
     const textValue =
       typeof value === "string"
@@ -341,6 +484,57 @@ export function formatMetricValue(metric, value) {
 export function parseNumericText(input) {
   const parsed = Number(String(input || "").trim());
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function isBloodPressureMetric(metricOrKey) {
+  const key =
+    typeof metricOrKey === "string" ? metricOrKey : metricOrKey?.key || "";
+  return key === BLOOD_PRESSURE_METRIC_KEY;
+}
+
+export function normalizeBloodPressureValue(input) {
+  if (input && typeof input === "object") {
+    const systolic = parseNumericText(input.systolic);
+    const diastolic = parseNumericText(input.diastolic);
+    if (systolic == null || diastolic == null) return null;
+    return {
+      systolic: Math.round(systolic),
+      diastolic: Math.round(diastolic),
+    };
+  }
+
+  if (typeof input === "string") {
+    const cleaned = input.trim();
+    if (!cleaned) return null;
+    const match = cleaned.match(/(\d+(?:\.\d+)?)\s*[/\\]\s*(\d+(?:\.\d+)?)/);
+    if (!match) return null;
+    const systolic = parseNumericText(match[1]);
+    const diastolic = parseNumericText(match[2]);
+    if (systolic == null || diastolic == null) return null;
+    return {
+      systolic: Math.round(systolic),
+      diastolic: Math.round(diastolic),
+    };
+  }
+
+  return null;
+}
+
+export function isValidBloodPressureValue(value) {
+  const normalized = normalizeBloodPressureValue(value);
+  if (!normalized) return false;
+  return (
+    normalized.systolic >= 40 &&
+    normalized.systolic <= 260 &&
+    normalized.diastolic >= 30 &&
+    normalized.diastolic <= 160
+  );
+}
+
+export function formatBloodPressureValue(value) {
+  const normalized = normalizeBloodPressureValue(value);
+  if (!normalized) return "—";
+  return `${normalized.systolic}/${normalized.diastolic} mmHg`;
 }
 
 export { TRACKER_TYPES };

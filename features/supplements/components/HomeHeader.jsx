@@ -1,10 +1,11 @@
 import React, { useMemo, useRef, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { colors, spacing, gradients, radius, shadows } from "@/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSupplementsStore } from "@/features/supplements/store";
+import StatsIcon from "@/assets/icons/tab/statistics.svg";
 
 const ITEM_WIDTH = 74;
 const ITEM_GAP = spacing.sm;
@@ -34,7 +35,8 @@ const formatShort = (date) =>
     const rawMonth = parsed
       .toLocaleDateString("en-GB", { month: "short" })
       .replace(".", "");
-    const month = rawMonth.charAt(0).toUpperCase() + rawMonth.slice(1).toLowerCase();
+    const month =
+      rawMonth.charAt(0).toUpperCase() + rawMonth.slice(1).toLowerCase();
     return `${day} ${month}`;
   })();
 
@@ -97,15 +99,28 @@ export function HomeHeader({ searchSlot }) {
       style={[styles.container, { paddingTop: insets.top + spacing.xs }]}
     >
       <View style={styles.topRow}>
-        <Pressable style={styles.iconButton}>
-          <Ionicons name="notifications-outline" size={20} color={colors.icon.primary} />
+        <Pressable
+          style={styles.iconButton}
+          onPress={() => router.push("/stats")}
+        >
+          <StatsIcon
+            width={20}
+            height={20}
+            color={colors.icon.primary}
+            fill={colors.icon.primary}
+            stroke={colors.icon.primary}
+            strokeWidth={0.55}
+          />
         </Pressable>
 
         <Text style={styles.welcome}>Suppro</Text>
 
-        <View style={styles.avatar}>
+        <Pressable
+          style={({ pressed }) => [styles.avatar, pressed && styles.avatarPressed]}
+          onPress={() => router.push("/profile")}
+        >
           <Text style={styles.avatarText}>S</Text>
-        </View>
+        </Pressable>
       </View>
       <View style={styles.dateCard}>
         <View style={styles.dateCardHeader}>
@@ -197,6 +212,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  avatarPressed: {
+    opacity: 0.85,
+  },
   avatarText: {
     color: colors.brand.dark,
     fontSize: 16,
@@ -244,11 +262,11 @@ const styles = StyleSheet.create({
   },
   dayIdle: {
     width: "100%",
-    height: 64,
+    minHeight: 30,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border.subtle,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs + 2,
     paddingHorizontal: spacing.xs,
     alignItems: "center",
     justifyContent: "center",
@@ -256,9 +274,9 @@ const styles = StyleSheet.create({
   },
   dayActive: {
     width: "100%",
-    height: 64,
+    minHeight: 30,
     borderRadius: radius.lg,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs + 2,
     paddingHorizontal: spacing.xs,
     alignItems: "center",
     justifyContent: "center",
