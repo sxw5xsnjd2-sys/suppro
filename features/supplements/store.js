@@ -4,7 +4,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 /* ----------------------------------------
    Helpers
 ----------------------------------------- */
-const today = () => new Date().toISOString().split("T")[0];
+const today = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+};
 const timeToMinutes = (time) => {
     const [h, m] = time.split(":").map(Number);
     if (!Number.isFinite(h) || !Number.isFinite(m))

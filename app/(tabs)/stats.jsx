@@ -1,9 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useIsFocused } from "@react-navigation/native";
-import { Screen } from "@/components/common/layout/Screen";
-import { Header } from "@/components/common/layout/Header";
-import { colors, spacing, radius, shadows } from "@/theme";
+import { router } from "expo-router";
+import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
+import {
+  AppButton,
+  AppHeader,
+  EvidenceDots,
+  PrimaryCard,
+  SectionTitle,
+  StatusPill,
+} from "@/components/common/ui";
+import { appTheme, spacing, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
 import { getSupplementRatings } from "@src/data/getSupplementRatings";
@@ -76,7 +85,12 @@ function evidenceBucketForScore(score) {
   return "poor";
 }
 
-function computeMetricImprovement(healthMetrics, healthEntries, periodStart, today) {
+function computeMetricImprovement(
+  healthMetrics,
+  healthEntries,
+  periodStart,
+  today
+) {
   const normalizedMetrics = (healthMetrics ?? [])
     .map((metric) => normalizeMetric(metric))
     .filter(Boolean)
@@ -147,7 +161,9 @@ function computeMetricImprovement(healthMetrics, healthEntries, periodStart, tod
         0.1
       );
 
-      const directionDelta = LOWER_IS_BETTER_KEYS.has(metric.key) ? -delta : delta;
+      const directionDelta = LOWER_IS_BETTER_KEYS.has(metric.key)
+        ? -delta
+        : delta;
       const trend =
         directionDelta > threshold
           ? "improved"
@@ -188,6 +204,104 @@ function computeMetricImprovement(healthMetrics, healthEntries, periodStart, tod
     declinedCount,
     textCount,
   };
+}
+
+function PeriodSelector({ period, onChange }) {
+  return (
+    <View style={styles.filterRow}>
+      {PERIOD_FILTERS.map((filter) => {
+        const active = period === filter.key;
+
+        return (
+          <Pressable
+            key={filter.key}
+            accessibilityRole="button"
+            accessibilityState={active ? { selected: true } : {}}
+            accessibilityLabel={`Show ${filter.label.toLowerCase()} stats`}
+            onPress={() => onChange(filter.key)}
+            style={({ pressed }) => [
+              styles.filterChip,
+              active && styles.filterChipActive,
+              pressed && styles.filterChipPressed,
+            ]}
+          >
+            <Text
+              style={[styles.filterText, active && styles.filterTextActive]}
+            >
+              {filter.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function StatPanel({ label, value, meta, style, valueStyle }) {
+  return (
+    <View style={[styles.statPanel, style]}>
+      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={[styles.statValue, valueStyle]}>{value}</Text>
+      {meta ? <Text style={styles.statMeta}>{meta}</Text> : null}
+    </View>
+  );
+}
+
+function EvidenceGroupPanel({ title, count, items, tone }) {
+  return (
+    <View style={[styles.evidencePanel, evidencePanelToneStyles[tone]]}>
+      <View style={styles.evidencePanelHeader}>
+        <Text style={[styles.evidencePanelTitle, evidenceTitleToneStyles[tone]]}>
+          {title}
+        </Text>
+        <StatusPill
+          label={`${count} ${count === 1 ? "ITEM" : "ITEMS"}`}
+          tone="neutral"
+          style={styles.evidencePanelPill}
+          textStyle={styles.evidencePanelPillText}
+        />
+      </View>
+
+      {items.length ? (
+        items.map((item) => (
+          <View key={item.id} style={styles.evidenceItemRow}>
+            <View style={styles.evidenceItemCopy}>
+              <Text style={styles.evidenceItemName}>{item.name}</Text>
+              <Text style={styles.evidenceItemMeta}>
+                {Number.isFinite(item.score)
+                  ? `${Math.round(item.score)}/100`
+                  : "Unrated"}
+              </Text>
+            </View>
+            <EvidenceDots score={item.score} style={styles.evidenceDots} />
+          </View>
+        ))
+      ) : (
+        <Text style={styles.evidenceEmpty}>None right now</Text>
+      )}
+    </View>
+  );
+}
+
+function MetricInsightPanel({ title, items, emptyText, tone }) {
+  return (
+    <View style={[styles.metricInsightPanel, metricInsightToneStyles[tone]]}>
+      <Text style={[styles.metricInsightTitle, metricInsightTextToneStyles[tone]]}>
+        {title}
+      </Text>
+
+      {items.length ? (
+        items.map((item) => (
+          <View key={item.key} style={styles.metricInsightItem}>
+            <Text style={styles.metricInsightStrong}>{item.label}</Text>
+            <Text style={styles.metricInsightText}>{item.summary}</Text>
+          </View>
+        ))
+      ) : (
+        <Text style={styles.metricInsightText}>{emptyText}</Text>
+      )}
+    </View>
+  );
 }
 
 export default function StatsScreen() {
@@ -233,8 +347,8 @@ export default function StatsScreen() {
     };
   }, [supplements]);
 
-  const periodDays =
-    PERIOD_FILTERS.find((item) => item.key === period)?.days ?? 7;
+  const currentPeriod = PERIOD_FILTERS.find((item) => item.key === period);
+  const periodDays = currentPeriod?.days ?? 7;
 
   const analysisStart = useMemo(() => {
     const dateCandidates = [today];
@@ -247,8 +361,9 @@ export default function StatsScreen() {
       dateCandidates.push(date)
     );
     (healthEntries ?? []).forEach((entry) => {
-      if (typeof entry?.date === "string" && entry.date)
+      if (typeof entry?.date === "string" && entry.date) {
         dateCandidates.push(entry.date);
+      }
     });
     return dateCandidates.sort()[0] ?? today;
   }, [supplements, takenTimesByDate, healthEntries, today]);
@@ -445,435 +560,490 @@ export default function StatsScreen() {
   );
 
   return (
-    <Screen
+    <BackdropScreen
       header={
-        <Header
-          title="Stats"
-          subtitle="Supplement performance insights"
-          centered
+        <AppHeader
+          leftSlot={
+            <AppButton
+              label="Back"
+              onPress={() => router.back()}
+              variant="ghost"
+              size="sm"
+              textStyle={styles.headerBackText}
+              accessibilityLabel="Go back"
+            />
+          }
+          title="STATS"
+          titleStyle={styles.headerTitle}
+          titleAccessory={
+            <StatusPill
+              label={(currentPeriod?.label ?? "Weekly").toUpperCase()}
+              tone="neutral"
+              style={styles.headerPeriodPill}
+            />
+          }
+          bottomSlot={
+            <Text style={styles.headerSubtitle}>
+              Supplement performance insights
+            </Text>
+          }
+          bottomSlotStyle={styles.headerBottom}
         />
       }
+      scrollContentStyle={styles.scrollContent}
+      contentStyle={styles.content}
+      bottomInsetOffset={100}
+      minBottomPadding={120}
     >
-      <ScrollView
-        contentContainerStyle={styles.container}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.filterRow}>
-          {PERIOD_FILTERS.map((filter) => {
-            const active = period === filter.key;
-            return (
-              <Pressable
-                key={filter.key}
-                onPress={() => setPeriod(filter.key)}
-                style={[styles.filterChip, active && styles.filterChipActive]}
-              >
-                <Text
-                  style={[styles.filterText, active && styles.filterTextActive]}
-                >
-                  {filter.label}
-                </Text>
-              </Pressable>
-            );
-          })}
+      <PrimaryCard style={styles.filterCard}>
+        <SectionTitle
+          title="Time Window"
+          subtitle="Choose the period for these insights."
+          action={
+            <StatusPill
+              label={`${periodDays} ${periodDays === 1 ? "DAY" : "DAYS"}`}
+              tone="neutral"
+            />
+          }
+          style={styles.sectionHeader}
+        />
+        <PeriodSelector period={period} onChange={setPeriod} />
+      </PrimaryCard>
+
+      <PrimaryCard style={styles.heroCard}>
+        <View pointerEvents="none" style={styles.heroGradientWrap}>
+          <LinearGradient
+            colors={[...appTheme.tabBar.fabGradient, "#FFFFFF"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.heroGradient}
+          />
         </View>
 
-        <View style={styles.card}>
-          <Text style={[styles.cardTitle, styles.cardTitleStandalone]}>
-            Adherence Overview
+        <SectionTitle
+          title="Adherence Overview"
+          subtitle="How consistently you followed your routine in this period."
+          action={<StatusPill label={`${adherenceScore}%`} tone="highlight" />}
+          style={styles.sectionHeader}
+        />
+
+        <View style={styles.heroTopRow}>
+          <StatPanel
+            label="Adherence score"
+            value={`${adherenceScore}%`}
+            meta={`${currentSummary.taken}/${currentSummary.planned || 0} doses taken`}
+            style={[styles.statPanelLarge, styles.heroPrimaryPanel]}
+            valueStyle={styles.statValueLarge}
+          />
+          <StatPanel
+            label="Missed doses"
+            value={String(currentSummary.missed)}
+            meta={missedTrendText}
+            style={[styles.statPanelLarge, styles.heroSecondaryPanel]}
+          />
+        </View>
+
+        <View style={styles.heroBottomRow}>
+          <StatPanel
+            label="Current streak"
+            value={`${streakStats.currentStreak} days`}
+            style={styles.heroTertiaryPanel}
+          />
+          <StatPanel
+            label="Longest streak"
+            value={`${streakStats.longestStreak} days`}
+            style={styles.heroTertiaryPanel}
+          />
+        </View>
+      </PrimaryCard>
+
+      <PrimaryCard style={styles.sectionCard}>
+        <SectionTitle
+          title="Supplement Evidence"
+          subtitle="How much of your active stack is backed by stronger evidence."
+          action={
+            <StatusPill
+              label={`${activeSupplements.length} ACTIVE`}
+              tone="neutral"
+            />
+          }
+          style={styles.sectionHeader}
+        />
+
+        <View style={styles.sectionStack}>
+          <EvidenceGroupPanel
+            title="High Evidence"
+            count={evidenceGroups.high.length}
+            items={evidenceGroups.high}
+            tone="high"
+          />
+          <EvidenceGroupPanel
+            title="Good Evidence"
+            count={evidenceGroups.good.length}
+            items={evidenceGroups.good}
+            tone="good"
+          />
+          <EvidenceGroupPanel
+            title="Poor or Unrated"
+            count={evidenceGroups.poor.length}
+            items={evidenceGroups.poor}
+            tone="poor"
+          />
+        </View>
+      </PrimaryCard>
+
+      <PrimaryCard style={styles.sectionCard}>
+        <SectionTitle
+          title="Health Metrics"
+          subtitle="Trend direction across tracked metrics in this period."
+          action={
+            <StatusPill
+              label={`${metricImprovement.items.length} TRACKED`}
+              tone="neutral"
+            />
+          }
+          style={styles.sectionHeader}
+        />
+
+        <View style={styles.metricCountsRow}>
+          <StatPanel
+            label="Improved"
+            value={String(metricImprovement.improvedCount)}
+            style={styles.metricCountPanel}
+          />
+          <StatPanel
+            label="Stable"
+            value={String(metricImprovement.stableCount)}
+            style={styles.metricCountPanel}
+          />
+          <StatPanel
+            label="Declined"
+            value={String(metricImprovement.declinedCount)}
+            style={styles.metricCountPanel}
+          />
+        </View>
+
+        {metricImprovement.textCount > 0 ? (
+          <Text style={styles.helperText}>
+            {metricImprovement.textCount} text-based metric(s) were also
+            tracked.
           </Text>
+        ) : null}
 
-          <View style={styles.kpiRow}>
-            <View style={styles.kpiItem}>
-              <Text style={styles.kpiLabel}>Adherence score</Text>
-              <Text style={styles.kpiValue}>{adherenceScore}%</Text>
-              <Text style={styles.kpiMeta}>
-                {currentSummary.taken}/{currentSummary.planned || 0} doses
-              </Text>
-            </View>
-
-            <View style={styles.kpiItem}>
-              <Text style={styles.kpiLabel}>Missed doses</Text>
-              <Text style={styles.kpiValue}>{currentSummary.missed}</Text>
-              <Text style={styles.kpiMeta}>{missedTrendText}</Text>
-            </View>
-          </View>
-
-          <View style={styles.streakRow}>
-            <View style={styles.streakCard}>
-              <Text style={styles.streakLabel}>Current streak</Text>
-              <Text style={styles.streakValue}>
-                {streakStats.currentStreak} days
-              </Text>
-            </View>
-            <View style={styles.streakCard}>
-              <Text style={styles.streakLabel}>Longest streak</Text>
-              <Text style={styles.streakValue}>
-                {streakStats.longestStreak} days
-              </Text>
-            </View>
-          </View>
+        <View style={styles.sectionStack}>
+          <MetricInsightPanel
+            title="Improving"
+            items={topImprovingMetrics}
+            emptyText="No clear improving metrics yet in this period."
+            tone="positive"
+          />
+          <MetricInsightPanel
+            title="Needs attention"
+            items={topDecliningMetrics}
+            emptyText="No clear declining metrics in this period."
+            tone="negative"
+          />
         </View>
-
-        <View style={styles.card}>
-          <Text style={[styles.cardTitle, styles.cardTitleStandalone]}>
-            Supplement Evidence
-          </Text>
-
-          <View style={styles.evidenceGrid}>
-            <View style={[styles.evidenceBlock, styles.evidenceBlockHigh]}>
-              <Text style={[styles.evidenceTitle, styles.evidenceTitleHigh]}>
-                High Evidence (75+)
-              </Text>
-              <Text style={styles.evidenceCount}>
-                {evidenceGroups.high.length} supplement
-                {evidenceGroups.high.length === 1 ? "" : "s"}
-              </Text>
-              {evidenceGroups.high.length ? (
-                evidenceGroups.high.map((item) => (
-                  <Text key={item.id} style={styles.evidenceItem}>
-                    {item.name} ({Math.round(item.score ?? 0)}/100)
-                  </Text>
-                ))
-              ) : (
-                <Text style={styles.evidenceEmpty}>None right now</Text>
-              )}
-            </View>
-
-            <View style={[styles.evidenceBlock, styles.evidenceBlockGood]}>
-              <Text style={[styles.evidenceTitle, styles.evidenceTitleGood]}>
-                Good Evidence (50-74)
-              </Text>
-              <Text style={styles.evidenceCount}>
-                {evidenceGroups.good.length} supplement
-                {evidenceGroups.good.length === 1 ? "" : "s"}
-              </Text>
-              {evidenceGroups.good.length ? (
-                evidenceGroups.good.map((item) => (
-                  <Text key={item.id} style={styles.evidenceItem}>
-                    {item.name} ({Math.round(item.score ?? 0)}/100)
-                  </Text>
-                ))
-              ) : (
-                <Text style={styles.evidenceEmpty}>None right now</Text>
-              )}
-            </View>
-
-            <View style={[styles.evidenceBlock, styles.evidenceBlockPoor]}>
-              <Text style={[styles.evidenceTitle, styles.evidenceTitlePoor]}>
-                Poor Evidence (&lt;50)
-              </Text>
-              <Text style={styles.evidenceCount}>
-                {evidenceGroups.poor.length} supplement
-                {evidenceGroups.poor.length === 1 ? "" : "s"}
-              </Text>
-              {evidenceGroups.poor.length ? (
-                evidenceGroups.poor.map((item) => (
-                  <Text key={item.id} style={styles.evidenceItem}>
-                    {item.name}
-                    {Number.isFinite(item.score)
-                      ? ` (${Math.round(item.score)}/100)`
-                      : " (unrated)"}
-                  </Text>
-                ))
-              ) : (
-                <Text style={styles.evidenceEmpty}>None right now</Text>
-              )}
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={[styles.cardTitle, styles.cardTitleStandalone]}>
-            Health Metrics
-          </Text>
-
-          <View style={styles.kpiRow}>
-            <View style={styles.kpiItem}>
-              <Text style={styles.kpiLabel}>Improved</Text>
-              <Text style={styles.kpiValue}>
-                {metricImprovement.improvedCount}
-              </Text>
-            </View>
-            <View style={styles.kpiItem}>
-              <Text style={styles.kpiLabel}>Stable</Text>
-              <Text style={styles.kpiValue}>
-                {metricImprovement.stableCount}
-              </Text>
-            </View>
-            <View style={styles.kpiItem}>
-              <Text style={styles.kpiLabel}>Declined</Text>
-              <Text style={styles.kpiValue}>
-                {metricImprovement.declinedCount}
-              </Text>
-            </View>
-          </View>
-
-          {metricImprovement.textCount > 0 ? (
-            <Text style={styles.helperText}>
-              {metricImprovement.textCount} text-based metric(s) were also
-              tracked.
-            </Text>
-          ) : null}
-
-          <View
-            style={[
-              styles.metricsSummaryBlock,
-              styles.metricsSummaryBlockPositive,
-            ]}
-          >
-            <Text
-              style={[
-                styles.metricsSummaryLabel,
-                styles.metricsSummaryLabelPositive,
-              ]}
-            >
-              Improving
-            </Text>
-            {topImprovingMetrics.length ? (
-              topImprovingMetrics.map((item) => (
-                <View key={item.key} style={styles.metricsItem}>
-                  <Text style={styles.metricsSummaryTextStrong}>{item.label}</Text>
-                  <Text style={styles.metricsSummaryText}>{item.summary}</Text>
-                </View>
-              ))
-            ) : (
-              <Text style={styles.metricsSummaryText}>
-                No clear improving metrics yet in this period.
-              </Text>
-            )}
-          </View>
-          <View
-            style={[
-              styles.metricsSummaryBlock,
-              styles.metricsSummaryBlockNegative,
-            ]}
-          >
-            <Text
-              style={[
-                styles.metricsSummaryLabel,
-                styles.metricsSummaryLabelNegative,
-              ]}
-            >
-              Needs attention
-            </Text>
-            {topDecliningMetrics.length ? (
-              topDecliningMetrics.map((item) => (
-                <View key={item.key} style={styles.metricsItem}>
-                  <Text style={styles.metricsSummaryTextStrong}>{item.label}</Text>
-                  <Text style={styles.metricsSummaryText}>{item.summary}</Text>
-                </View>
-              ))
-            ) : (
-              <Text style={styles.metricsSummaryText}>
-                No clear declining metrics in this period.
-              </Text>
-            )}
-          </View>
-        </View>
-      </ScrollView>
-    </Screen>
+      </PrimaryCard>
+    </BackdropScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xl * 2,
+  scrollContent: {
+    paddingBottom: spacing.lg,
+  },
+  content: {
     gap: spacing.md,
+  },
+  headerBackText: {
+    fontSize: 15,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  headerTitle: {
+    color: appTheme.colors.textPrimary,
+    fontSize: 24,
+    lineHeight: 22,
+    letterSpacing: -0.43,
+    fontFamily: typography.fontFamily.headingBlack,
+    fontWeight: "900",
+  },
+  headerPeriodPill: {
+    backgroundColor: "rgba(255,255,255,0.42)",
+  },
+  headerBottom: {
+    marginTop: 6,
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
+  },
+  sectionHeader: {
+    marginBottom: spacing.md,
+  },
+  filterCard: {
+    paddingHorizontal: appTheme.card.paddingSpacious,
+    paddingVertical: appTheme.card.paddingSpacious,
   },
   filterRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     gap: spacing.sm,
   },
   filterChip: {
     flex: 1,
-    paddingVertical: spacing.sm,
+    minHeight: 44,
     borderRadius: 999,
+    backgroundColor: appTheme.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.card,
+    borderColor: appTheme.colors.borderSubtle,
     alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   filterChipActive: {
-    backgroundColor: colors.border.strong,
-    borderColor: colors.brand.primary,
+    backgroundColor: appTheme.colors.textStrong,
+    borderColor: appTheme.colors.textStrong,
+  },
+  filterChipPressed: {
+    opacity: 0.76,
   },
   filterText: {
-    fontSize: 13,
-    color: colors.text.secondary,
-    fontWeight: "600",
+    fontSize: 14,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
   },
   filterTextActive: {
-    color: colors.text.primary,
-    fontWeight: "700",
+    color: "#FFFFFF",
   },
-  card: {
-    backgroundColor: colors.background.card,
-    borderRadius: radius.xl,
-    padding: spacing.md,
-    ...shadows.card,
+  heroCard: {
+    overflow: "hidden",
+    paddingHorizontal: appTheme.card.paddingSpacious,
+    paddingVertical: appTheme.card.paddingSpacious,
   },
-  cardTitle: {
-    fontSize: 19,
-    fontWeight: "700",
-    color: colors.text.primary,
-    paddingBottom: 0,
+  heroGradientWrap: {
+    ...StyleSheet.absoluteFillObject,
   },
-  cardTitleStandalone: {
-    marginBottom: spacing.md,
+  heroGradient: {
+    flex: 1,
+    opacity: 0.84,
   },
-  evidenceGrid: {
-    gap: spacing.sm,
-  },
-  evidenceBlock: {
-    borderWidth: 1,
-    borderRadius: radius.lg,
-    padding: spacing.sm,
-    backgroundColor: colors.background.elevated,
-  },
-  evidenceBlockHigh: {
-    borderColor: "rgba(102, 177, 94, 0.35)",
-    backgroundColor: "rgba(102, 177, 94, 0.10)",
-  },
-  evidenceBlockGood: {
-    borderColor: "rgba(230, 170, 65, 0.35)",
-    backgroundColor: "rgba(230, 170, 65, 0.10)",
-  },
-  evidenceBlockPoor: {
-    borderColor: "rgba(201, 87, 87, 0.35)",
-    backgroundColor: "rgba(201, 87, 87, 0.10)",
-  },
-  evidenceTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  evidenceTitleHigh: {
-    color: colors.status.success,
-  },
-  evidenceTitleGood: {
-    color: colors.status.warning,
-  },
-  evidenceTitlePoor: {
-    color: colors.status.danger,
-  },
-  evidenceCount: {
-    marginTop: 4,
-    fontSize: 12,
-    color: colors.text.secondary,
-    fontWeight: "600",
-  },
-  evidenceItem: {
-    marginTop: spacing.xs,
-    fontSize: 12,
-    lineHeight: 17,
-    color: colors.text.primary,
-    fontWeight: "600",
-  },
-  evidenceEmpty: {
-    marginTop: spacing.xs,
-    fontSize: 12,
-    lineHeight: 17,
-    color: colors.text.secondary,
-  },
-  kpiRow: {
+  heroTopRow: {
     flexDirection: "row",
     gap: spacing.sm,
     marginBottom: spacing.sm,
   },
-  kpiItem: {
-    flex: 1,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
-    padding: spacing.sm,
-  },
-  kpiLabel: {
-    fontSize: 12,
-    color: colors.text.secondary,
-    fontWeight: "600",
-  },
-  kpiValue: {
-    marginTop: 4,
-    fontSize: 24,
-    fontWeight: "700",
-    color: colors.text.primary,
-  },
-  kpiMeta: {
-    marginTop: 2,
-    fontSize: 12,
-    color: colors.text.muted,
-    lineHeight: 16,
-  },
-  streakRow: {
+  heroBottomRow: {
     flexDirection: "row",
     gap: spacing.sm,
   },
-  streakCard: {
+  sectionCard: {
+    paddingHorizontal: appTheme.card.paddingSpacious,
+    paddingVertical: appTheme.card.paddingSpacious,
+  },
+  sectionStack: {
+    gap: spacing.sm,
+  },
+  statPanel: {
     flex: 1,
-    borderRadius: radius.lg,
+    borderRadius: 18,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    backgroundColor: "rgba(255,255,255,0.72)",
     borderWidth: 1,
-    borderColor: colors.border.subtle,
-    padding: spacing.sm,
-    backgroundColor: colors.background.card,
+    borderColor: appTheme.colors.borderSubtle,
   },
-  streakLabel: {
+  statPanelLarge: {
+    minHeight: 148,
+    justifyContent: "space-between",
+  },
+  heroPrimaryPanel: {
+    backgroundColor: "rgba(255,255,255,0.88)",
+  },
+  heroSecondaryPanel: {
+    backgroundColor: "rgba(248,241,231,0.9)",
+  },
+  heroTertiaryPanel: {
+    backgroundColor: "rgba(255,255,255,0.72)",
+  },
+  statLabel: {
     fontSize: 12,
-    color: colors.text.secondary,
-    fontWeight: "600",
-  },
-  streakValue: {
-    marginTop: 4,
-    fontSize: 18,
-    color: colors.text.primary,
-    fontWeight: "700",
-  },
-  helperText: {
-    marginTop: spacing.xs,
-    fontSize: 13,
-    color: colors.text.secondary,
     lineHeight: 18,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textTertiary,
+    letterSpacing: -0.2,
   },
-  metricsSummaryBlock: {
-    marginTop: spacing.sm,
-    padding: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radius.md,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
+  statValue: {
+    marginTop: 6,
+    fontSize: 24,
+    lineHeight: 28,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textHeading,
+    letterSpacing: -0.5,
   },
-  metricsSummaryBlockPositive: {
-    borderColor: "rgba(102, 177, 94, 0.35)",
-    backgroundColor: "rgba(102, 177, 94, 0.10)",
+  statValueLarge: {
+    fontSize: 34,
+    lineHeight: 36,
+    fontFamily: typography.fontFamily.headingBlack,
   },
-  metricsSummaryBlockNegative: {
-    borderColor: "rgba(201, 87, 87, 0.35)",
-    backgroundColor: "rgba(201, 87, 87, 0.10)",
-  },
-  metricsSummaryLabel: {
-    fontSize: 12,
-    color: colors.text.muted,
-    fontWeight: "700",
-  },
-  metricsSummaryLabelPositive: {
-    color: colors.status.success,
-  },
-  metricsSummaryLabelNegative: {
-    color: colors.status.danger,
-  },
-  metricsItem: {
-    marginTop: spacing.xs,
-  },
-  metricsSummaryTextStrong: {
+  statMeta: {
+    marginTop: 6,
     fontSize: 13,
-    color: colors.text.primary,
-    fontWeight: "700",
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
   },
-  metricsSummaryText: {
+  evidencePanel: {
+    borderRadius: 18,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderWidth: 1,
+  },
+  evidencePanelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  evidencePanelTitle: {
+    flex: 1,
+    fontSize: 17,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    letterSpacing: -0.3,
+  },
+  evidencePanelPill: {
+    backgroundColor: "rgba(255,255,255,0.58)",
+  },
+  evidencePanelPillText: {
+    color: appTheme.colors.textStrong,
+  },
+  evidenceItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+  },
+  evidenceItemCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  evidenceItemName: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textHeading,
+  },
+  evidenceItemMeta: {
     marginTop: 2,
     fontSize: 12,
-    color: colors.text.secondary,
     lineHeight: 17,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  evidenceDots: {
+    marginLeft: spacing.sm,
+  },
+  evidenceEmpty: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  metricCountsRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  metricCountPanel: {
+    backgroundColor: appTheme.colors.surfaceMuted,
+  },
+  helperText: {
+    marginBottom: spacing.sm,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  metricInsightPanel: {
+    borderRadius: 18,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderWidth: 1,
+  },
+  metricInsightTitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.heading,
+    letterSpacing: -0.2,
+  },
+  metricInsightItem: {
+    marginTop: spacing.sm,
+  },
+  metricInsightStrong: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textHeading,
+  },
+  metricInsightText: {
+    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+});
+
+const evidencePanelToneStyles = StyleSheet.create({
+  high: {
+    backgroundColor: "rgba(39,174,96,0.10)",
+    borderColor: "rgba(39,174,96,0.18)",
+  },
+  good: {
+    backgroundColor: "rgba(245,166,35,0.10)",
+    borderColor: "rgba(245,166,35,0.18)",
+  },
+  poor: {
+    backgroundColor: "rgba(201,87,87,0.10)",
+    borderColor: "rgba(201,87,87,0.18)",
+  },
+});
+
+const evidenceTitleToneStyles = StyleSheet.create({
+  high: {
+    color: appTheme.colors.evidenceStrong,
+  },
+  good: {
+    color: appTheme.colors.evidenceModerate,
+  },
+  poor: {
+    color: appTheme.colors.danger,
+  },
+});
+
+const metricInsightToneStyles = StyleSheet.create({
+  positive: {
+    backgroundColor: "rgba(39,174,96,0.10)",
+    borderColor: "rgba(39,174,96,0.18)",
+  },
+  negative: {
+    backgroundColor: "rgba(201,87,87,0.10)",
+    borderColor: "rgba(201,87,87,0.18)",
+  },
+});
+
+const metricInsightTextToneStyles = StyleSheet.create({
+  positive: {
+    color: appTheme.colors.evidenceStrong,
+  },
+  negative: {
+    color: appTheme.colors.danger,
   },
 });

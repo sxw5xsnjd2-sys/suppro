@@ -1,7 +1,7 @@
 import React from "react";
 import { View } from "react-native";
 import Svg, { Path, Line, Circle, Defs, ClipPath, Rect, G, } from "react-native-svg";
-import { colors } from "@/theme";
+import { appTheme } from "@/theme";
 export function MiniLineChart({ data, height = 120, min = 1, max = 10, }) {
     const [width, setWidth] = React.useState(0);
     const padding = 10;
@@ -26,7 +26,7 @@ export function MiniLineChart({ data, height = 120, min = 1, max = 10, }) {
         const hasNote = Boolean(datum?.hasNote ?? datum?.note);
         return { value: datum?.value ?? min, hasNote };
     };
-    const getPointColor = (hasNote) => hasNote ? colors.status.warning : colors.brand.primary;
+    const getPointColor = (hasNote) => hasNote ? appTheme.colors.evidenceModerate : appTheme.colors.textStrong;
     const valueToY = (value) => {
         const v = clamp(value, min, max);
         const t = (v - min) / (max - min); // 0..1
@@ -53,8 +53,8 @@ export function MiniLineChart({ data, height = 120, min = 1, max = 10, }) {
 
           <G clipPath="url(#clip)">
             {/* axes */}
-            <Line x1={x0} y1={top} x2={x0} y2={bottom} stroke={colors.border.subtle}/>
-            <Line x1={x0} y1={bottom} x2={x1} y2={bottom} stroke={colors.border.subtle}/>
+            <Line x1={x0} y1={top} x2={x0} y2={bottom} stroke={appTheme.colors.borderSubtle}/>
+            <Line x1={x0} y1={bottom} x2={x1} y2={bottom} stroke={appTheme.colors.borderSubtle}/>
 
             <Circle cx={cx} cy={cy} r={3.5} fill={getPointColor(datum.hasNote)} opacity={0.9}/>
           </G>
@@ -82,13 +82,13 @@ export function MiniLineChart({ data, height = 120, min = 1, max = 10, }) {
           </ClipPath>
         </Defs>
 
-        <G clipPath="url(#clip)">
-          {/* axes */}
-          <Line x1={x0} y1={top} x2={x0} y2={bottom} stroke={colors.border.subtle}/>
-          <Line x1={x0} y1={bottom} x2={x1} y2={bottom} stroke={colors.border.subtle}/>
+          <G clipPath="url(#clip)">
+            {/* axes */}
+          <Line x1={x0} y1={top} x2={x0} y2={bottom} stroke={appTheme.colors.borderSubtle}/>
+          <Line x1={x0} y1={bottom} x2={x1} y2={bottom} stroke={appTheme.colors.borderSubtle}/>
 
           {/* line */}
-          <Path d={d} stroke={colors.brand.primary} strokeWidth={2} fill="none"/>
+          <Path d={d} stroke={appTheme.colors.textStrong} strokeWidth={2} fill="none"/>
 
           {/* points */}
           {points.map((p, i) => (<Circle key={i} cx={p.x} cy={p.y} r={2.5} fill={getPointColor(p.hasNote)} opacity={0.9}/>))}

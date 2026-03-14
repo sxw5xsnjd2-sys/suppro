@@ -37,6 +37,11 @@ export default function ProfileScreen() {
         <Header
           title="Profile"
           subtitle="Personal settings and shortcuts"
+          leftSlot={
+            <Pressable onPress={() => router.back()} hitSlop={8}>
+              <Text style={styles.backButtonText}>Back</Text>
+            </Pressable>
+          }
           centered
         />
       }
@@ -85,6 +90,11 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  backButtonText: {
+    fontSize: 15,
+    color: colors.text.secondary,
+    fontWeight: "500",
+  },
   container: {
     marginTop: spacing.lg,
   },

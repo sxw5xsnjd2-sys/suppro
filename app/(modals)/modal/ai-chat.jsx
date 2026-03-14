@@ -6,21 +6,27 @@ import React, {
   useState,
 } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  ScrollView,
-  TextInput,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { colors, spacing, radius, shadows } from "@/theme";
+import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
+import {
+  AppButton,
+  AppHeader,
+  PrimaryCard,
+  StatusPill,
+} from "@/components/common/ui";
+import { appTheme, spacing, typography } from "@/theme";
 import { useChatStore } from "@/features/ai/store";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
@@ -234,6 +240,58 @@ function buildChatStatsInput(
   };
 }
 
+function IntroCard() {
+  return (
+    <PrimaryCard style={styles.introCard}>
+      <View pointerEvents="none" style={styles.introGradientWrap}>
+        <LinearGradient
+          colors={[...appTheme.tabBar.fabGradient, "#FFFFFF"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.introGradient}
+        />
+      </View>
+
+      <StatusPill
+        label="EDUCATIONAL ONLY"
+        tone="neutral"
+        style={styles.introPill}
+      />
+      <Text style={styles.introTitle}>Ask about your supplement data</Text>
+      <Text style={styles.introBody}>
+        Get quick answers using your saved schedule, adherence history, and
+        tracked health metrics.
+      </Text>
+      <Text style={styles.introDisclaimer}>
+        This information is educational only and not medical advice. Talk to a
+        qualified clinician before starting or changing supplements. AI can make
+        mistakes.
+      </Text>
+    </PrimaryCard>
+  );
+}
+
+function MessageBubble({ message }) {
+  const isUser = message.role === "user";
+
+  return (
+    <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
+      <PrimaryCard
+        variant={isUser ? "accent" : "default"}
+        style={[
+          styles.messageBubble,
+          isUser ? styles.messageBubbleUser : styles.messageBubbleAssistant,
+        ]}
+      >
+        <Text style={styles.messageEyebrow}>
+          {isUser ? "You" : "Suppro AI"}
+        </Text>
+        <Text style={styles.messageText}>{message.content}</Text>
+      </PrimaryCard>
+    </View>
+  );
+}
+
 export function AiChatScreen({ presentation = "modal" }) {
   const insets = useSafeAreaInsets();
   const isModal = presentation === "modal";
@@ -282,10 +340,13 @@ export function AiChatScreen({ presentation = "modal" }) {
       .from("supplements")
       .select("id, name, evidence_score, supplement_benefits(label)")
       .limit(500)
-      .then(({ data, error }) => {
+      .then(({ data, error: queryError }) => {
         if (!active) return;
-        if (error) {
-          console.error("Failed to load supplement evidence catalog", error);
+        if (queryError) {
+          console.error(
+            "Failed to load supplement evidence catalog",
+            queryError
+          );
           setEvidenceCatalog({
             topOverall: [],
             byBenefit: {},
@@ -379,24 +440,63 @@ export function AiChatScreen({ presentation = "modal" }) {
 
   const isLoading = status === "loading";
   const canSend = draft.trim().length > 0 && !isLoading;
-
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
-      <View style={styles.root}>
-        <View style={styles.header}>
-          {isModal ? (
-            <Pressable onPress={() => router.back()} hitSlop={8}>
-              <Text style={styles.headerAction}>Close</Text>
+    <BackdropScreen
+      scrollable={false}
+        bottomInsetOffset={0}
+        minBottomPadding={0}
+        contentStyle={styles.screenContent}
+        header={
+        <AppHeader
+          topInsetOffset={appTheme.modal.headerTopInsetOffset}
+          leftSlot={
+            isModal ? (
+              <AppButton
+                onPress={() => router.back()}
+                variant="overlay"
+                size="icon"
+                accessibilityLabel="Close AI chat"
+              >
+                <Ionicons
+                  name="close"
+                  size={20}
+                  color={appTheme.colors.textStrong}
+                />
+              </AppButton>
+            ) : null
+          }
+          rightSlot={
+            <Pressable
+              onPress={clearMessages}
+              accessibilityRole="button"
+              accessibilityLabel="Clear conversation"
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.headerAction,
+                pressed && styles.headerActionPressed,
+              ]}
+            >
+              <Text style={styles.headerActionText}>Clear</Text>
             </Pressable>
-          ) : (
-            <View style={styles.headerSpacer} />
-          )}
-          <Text style={styles.headerTitle}>Suppro AI Chat</Text>
-          <Pressable onPress={clearMessages} hitSlop={8}>
-            <Text style={styles.headerAction}>Clear</Text>
-          </Pressable>
-        </View>
-
+          }
+          title="SUPPRO AI"
+          titleStyle={styles.headerTitle}
+          bottomSlot={
+            <Text style={styles.headerSubtitle}>
+              Ask about your supplements and tracked data.
+            </Text>
+          }
+          bottomSlotStyle={styles.headerBottom}
+        />
+      }
+    >
+      <KeyboardAvoidingView
+        style={styles.chatShell}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={
+          Platform.OS === "ios" ? Math.max(insets.bottom, spacing.sm) : 0
+        }
+      >
         <ScrollView
           ref={scrollRef}
           style={styles.messagesScroll}
@@ -405,97 +505,56 @@ export function AiChatScreen({ presentation = "modal" }) {
           keyboardDismissMode={
             Platform.OS === "ios" ? "interactive" : "on-drag"
           }
+          showsVerticalScrollIndicator={false}
         >
-          {messages.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                Ask about your supplement data
-              </Text>
-              <Text style={styles.emptyBody}>
-                You can ask about adherence, schedules, missed doses, and
-                tracked health metrics.
-              </Text>
-              <Text style={styles.emptyDisclaimer}>
-                Disclaimer: This information is educational only and not medical
-                advice. Talk to a qualified clinician before starting or
-                changing supplements. AI can make mistakes.
-              </Text>
-            </View>
-          ) : null}
+          {messages.length === 0 ? <IntroCard /> : null}
 
-          {messages.map((message) => {
-            const isUser = message.role === "user";
-            return (
-              <View
-                key={message.id}
-                style={[styles.messageRow, isUser && styles.messageRowUser]}
-              >
-                <View
-                  style={[
-                    styles.messageBubble,
-                    isUser && styles.messageBubbleUser,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.messageText,
-                      isUser && styles.messageTextUser,
-                    ]}
-                  >
-                    {message.content}
-                  </Text>
-                </View>
-              </View>
-            );
-          })}
+          {messages.map((message) => (
+            <MessageBubble key={message.id} message={message} />
+          ))}
 
           {isLoading ? (
-            <View style={styles.messageRow}>
-              <View style={styles.messageBubble}>
-                <Text style={styles.messageText}>Thinking…</Text>
-              </View>
-            </View>
+            <MessageBubble
+              message={{
+                id: "thinking",
+                role: "assistant",
+                content: "Thinking...",
+              }}
+            />
           ) : null}
         </ScrollView>
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          keyboardVerticalOffset={Platform.OS === "ios" ? insets.top + 52 : 0}
-        >
-          <View
-            style={[
-              styles.inputWrap,
-              { paddingBottom: Math.max(insets.bottom, spacing.sm) },
-            ]}
-          >
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            <View style={styles.inputRow}>
+        <PrimaryCard style={styles.composerCard}>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          <View style={styles.composerRow}>
+            <View style={styles.inputShell}>
               <TextInput
                 value={draft}
                 onChangeText={setDraft}
-                placeholder="Ask about your supplements and tracked data"
-                placeholderTextColor={colors.text.muted}
+                placeholder="Ask a question..."
+                placeholderTextColor={appTheme.input.placeholder}
                 multiline
                 maxLength={700}
                 style={styles.input}
+                textAlignVertical="top"
               />
-              <Pressable
-                onPress={sendMessage}
-                disabled={!canSend}
-                style={[
-                  styles.sendButton,
-                  !canSend && styles.sendButtonDisabled,
-                ]}
-              >
-                <Text style={styles.sendText}>
-                  {isLoading ? "..." : "Send"}
-                </Text>
-              </Pressable>
             </View>
+
+            <AppButton
+              label={isLoading ? "..." : "Send"}
+              onPress={sendMessage}
+              disabled={!canSend}
+              variant="primary"
+              size="md"
+              accessibilityLabel="Send message"
+              style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+              textStyle={styles.sendButtonText}
+            />
           </View>
-        </KeyboardAvoidingView>
-      </View>
-    </SafeAreaView>
+        </PrimaryCard>
+      </KeyboardAvoidingView>
+    </BackdropScreen>
   );
 }
 
@@ -504,144 +563,163 @@ export default function AiChatModal() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  screenContent: {
     flex: 1,
-    backgroundColor: colors.background.app,
-  },
-  root: {
-    flex: 1,
-    backgroundColor: colors.background.app,
-  },
-  header: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border.subtle,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: colors.background.card,
   },
   headerTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: colors.text.primary,
+    color: appTheme.colors.textPrimary,
+    fontSize: 24,
+    lineHeight: 22,
+    letterSpacing: -0.43,
+    fontFamily: typography.fontFamily.headingBlack,
+    fontWeight: "900",
+  },
+  headerBottom: {
+    marginTop: 6,
+  },
+  headerPill: {
+    backgroundColor: "rgba(255,255,255,0.42)",
+  },
+  headerSubtitle: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
   },
   headerAction: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.brand.primary,
+    minHeight: 32,
+    justifyContent: "center",
+    paddingHorizontal: 4,
   },
-  headerSpacer: {
-    width: 44,
+  headerActionPressed: {
+    opacity: 0.72,
+  },
+  headerActionText: {
+    fontSize: 16,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  chatShell: {
+    flex: 1,
   },
   messagesScroll: {
     flex: 1,
   },
   messagesContent: {
-    padding: spacing.md,
-    gap: spacing.sm,
-    paddingBottom: spacing.lg,
+    paddingBottom: spacing.sm,
   },
-  emptyCard: {
-    backgroundColor: colors.background.card,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    ...shadows.card,
+  introCard: {
+    overflow: "hidden",
+    marginBottom: spacing.md,
   },
-  emptyTitle: {
+  introGradientWrap: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  introGradient: {
+    flex: 1,
+    opacity: 0.78,
+  },
+  introPill: {
+    backgroundColor: "rgba(255,255,255,0.62)",
+    marginBottom: spacing.md,
+  },
+  introTitle: {
+    fontSize: 22,
+    lineHeight: 26,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textHeading,
+    letterSpacing: -0.45,
+  },
+  introBody: {
+    marginTop: spacing.sm,
     fontSize: 15,
-    fontWeight: "700",
-    color: colors.text.primary,
+    lineHeight: 22,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
   },
-  emptyBody: {
-    marginTop: spacing.xs,
+  introDisclaimer: {
+    marginTop: spacing.md,
     fontSize: 13,
-    lineHeight: 18,
-    color: colors.text.secondary,
-  },
-  emptyDisclaimer: {
-    marginTop: spacing.lg,
-    fontSize: 13,
-    lineHeight: 18,
-    color: colors.text.secondary,
-    fontWeight: "600",
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.textSecondary,
   },
   messageRow: {
     flexDirection: "row",
     justifyContent: "flex-start",
+    marginBottom: spacing.sm,
   },
   messageRowUser: {
     justifyContent: "flex-end",
   },
   messageBubble: {
-    maxWidth: "86%",
-    backgroundColor: colors.background.card,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.lg,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
+    maxWidth: "88%",
+    paddingHorizontal: appTheme.card.paddingSpacious,
+    paddingVertical: appTheme.card.paddingSpacious,
+  },
+  messageBubbleAssistant: {
+    backgroundColor: appTheme.colors.surface,
   },
   messageBubbleUser: {
-    backgroundColor: colors.brand.primary,
-    borderColor: colors.brand.primary,
+    backgroundColor: appTheme.colors.surfaceAccent,
+  },
+  messageEyebrow: {
+    marginBottom: 6,
+    fontSize: 12,
+    fontFamily: typography.fontFamily.heading,
+    letterSpacing: -0.2,
+    color: appTheme.colors.textTertiary,
   },
   messageText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: colors.text.primary,
+    fontSize: 15,
+    lineHeight: 22,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textStrong,
   },
-  messageTextUser: {
-    color: colors.text.inverse,
-  },
-  inputWrap: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border.subtle,
-    backgroundColor: colors.background.card,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
+  composerCard: {
+    marginTop: spacing.sm,
+    paddingHorizontal: appTheme.card.paddingSpacious,
+    paddingVertical: appTheme.card.paddingSpacious,
   },
   errorText: {
-    marginBottom: spacing.xs,
-    fontSize: 12,
-    color: colors.status.danger,
+    marginBottom: spacing.sm,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.danger,
   },
-  inputRow: {
+  composerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
     gap: spacing.sm,
   },
-  input: {
+  inputShell: {
     flex: 1,
-    minHeight: 42,
-    maxHeight: 120,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    fontSize: 14,
-    color: colors.text.primary,
-    backgroundColor: colors.background.elevated,
+    minHeight: 54,
+    maxHeight: 132,
+    borderRadius: 18,
+    backgroundColor: appTheme.input.background,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+  },
+  input: {
+    minHeight: 30,
+    maxHeight: 108,
+    fontSize: 15,
+    lineHeight: 21,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.input.text,
   },
   sendButton: {
     alignSelf: "flex-end",
-    borderRadius: 999,
-    backgroundColor: colors.brand.primary,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 18,
   },
   sendButtonDisabled: {
     opacity: 0.5,
   },
-  sendText: {
-    color: colors.text.inverse,
-    fontSize: 13,
-    fontWeight: "700",
+  sendButtonText: {
+    fontSize: 15,
+    fontFamily: typography.fontFamily.headingSemiBold,
   },
 });

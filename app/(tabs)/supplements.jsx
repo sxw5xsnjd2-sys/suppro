@@ -1,20 +1,24 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { Text, StyleSheet } from "react-native";
 import { router } from "expo-router";
-import { Screen } from "@/components/common/layout/Screen";
-import { Header } from "@/components/common/layout/Header";
+import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
+import {
+  AppHeader,
+  EmptyStateCard,
+  StatusPill,
+} from "@/components/common/ui";
 import { SupplementCard } from "@/features/supplements/components/SupplementCard";
-import { colors, spacing, radius, shadows } from "@/theme";
+import { appTheme, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { getSupplementRatings } from "@src/data/getSupplementRatings";
 import { getRatingStyle } from "@/utils/ratingStyles";
 
 function EmptyState() {
   return (
-    <View style={styles.empty}>
-      <Text style={styles.emptyTitle}>No supplements added</Text>
-      <Text style={styles.emptyText}>Add your stack to manage dosage and schedule reminders.</Text>
-    </View>
+    <EmptyStateCard
+      title="No supplements added"
+      description="Add your stack to manage dosage and schedule reminders."
+    />
   );
 }
 
@@ -25,7 +29,9 @@ export default function SupplementsScreen() {
 
   useEffect(() => {
     let active = true;
-    const catalogIds = Array.from(new Set(sorted.map((s) => s.catalogId).filter(Boolean)));
+    const catalogIds = Array.from(
+      new Set(sorted.map((s) => s.catalogId).filter(Boolean))
+    );
     if (catalogIds.length === 0) {
       setRatingByCatalog({});
       return;
@@ -46,67 +52,68 @@ export default function SupplementsScreen() {
   };
 
   return (
-    <Screen header={<Header title="Supplements" subtitle="Your complete stack" centered />}>
-      <View style={styles.section}>
-        <View style={styles.panel}>
-          {sorted.length === 0 ? (
-            <EmptyState />
-          ) : (
-            sorted.map((s) => (
-              <SupplementCard
-                key={s.id}
-                name={s.name}
-                subtitle={s.dose ? `${s.dose} · ${s.time}` : s.time}
-                route={s.route}
-                iconBackgroundColor={iconColorFor(s.catalogId)}
-                showCheckbox={false}
-                onInfoPress={() =>
-                  router.push({
-                    pathname: "/modal/supplement-info",
-                    params: { id: s.catalogId, name: s.name },
-                  })
-                }
-                onPress={() =>
-                  router.push({
-                    pathname: "/modal/supplement",
-                    params: { id: s.id },
-                  })
-                }
-              />
-            ))
-          )}
-        </View>
-      </View>
-    </Screen>
+    <BackdropScreen
+      header={
+        <AppHeader
+          title="SUPPLEMENTS"
+          titleStyle={styles.headerTitle}
+          titleAccessory={
+            <StatusPill
+              label={`${sorted.length} TOTAL`}
+              tone="neutral"
+              style={styles.headerCount}
+            />
+          }
+          bottomSlot={
+            <Text style={styles.headerSubtitle}>Your complete stack</Text>
+          }
+          bottomSlotStyle={styles.headerBottom}
+        />
+      }
+    >
+      {sorted.length === 0 ? (
+        <EmptyState />
+      ) : (
+        sorted.map((s) => (
+          <SupplementCard
+            key={s.id}
+            name={s.name}
+            subtitle={s.dose ? `${s.dose} · ${s.time}` : s.time}
+            route={s.route}
+            iconBackgroundColor={iconColorFor(s.catalogId)}
+            showCheckbox={false}
+            onInfoPress={() =>
+              router.push({
+                pathname: "/modal/supplement-info",
+                params: { id: s.catalogId, name: s.name },
+              })
+            }
+            onPress={() =>
+              router.push({
+                pathname: "/modal/supplement",
+                params: { id: s.id },
+              })
+            }
+          />
+        ))
+      )}
+    </BackdropScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  section: {
-    marginTop: spacing.lg,
+  headerTitle: {
+    color: appTheme.colors.textPrimary,
   },
-  panel: {
-    backgroundColor: colors.background.card,
-    borderRadius: radius.xl,
-    padding: spacing.md,
-    ...shadows.card,
+  headerCount: {
+    backgroundColor: "rgba(255,255,255,0.42)",
   },
-  empty: {
-    padding: spacing.md,
-    backgroundColor: colors.background.elevated,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
+  headerBottom: {
+    marginTop: 6,
   },
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: colors.text.primary,
-    marginBottom: spacing.xs,
-  },
-  emptyText: {
+  headerSubtitle: {
     fontSize: 14,
-    lineHeight: 20,
-    color: colors.text.secondary,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
   },
 });

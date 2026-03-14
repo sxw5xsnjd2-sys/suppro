@@ -1,22 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
-import { Screen } from "@/components/common/layout/Screen";
+import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { HomeHeader } from "@/features/supplements/components/HomeHeader";
-import { colors, spacing, radius, shadows } from "@/theme";
+import {
+  EmptyStateCard,
+  EvidenceDots,
+  PrimaryCard,
+  SectionTitle,
+  StatusPill,
+  getEvidenceDisplay,
+} from "@/components/common/ui";
+import { appTheme, spacing, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
-import { searchSupplementCatalog } from "@src/data/searchSupplementCatalog";
 import { getSupplementRatings } from "@src/data/getSupplementRatings";
 import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
 import {
   isNumericMetric,
   normalizeMetric,
 } from "@/features/health/metricDefinitions";
-import { getRatingStyle } from "@/utils/ratingStyles";
+import { Icon } from "@/features/supplements/icons/Icon";
 
 const EVIDENCE_POINTS = {
   high: 3,
@@ -36,12 +43,10 @@ const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 
 function EmptyState() {
   return (
-    <View style={styles.empty}>
-      <Text style={styles.emptyTitle}>No supplements due</Text>
-      <Text style={styles.emptyText}>
-        You don’t have anything scheduled for this date.
-      </Text>
-    </View>
+    <EmptyStateCard
+      title="No supplements due"
+      description="You don’t have anything scheduled for this date."
+    />
   );
 }
 
@@ -309,10 +314,138 @@ function buildFallbackAiSummary(input) {
   };
 }
 
-function periodForMinutes(minutes) {
-  if (minutes < 12 * 60) return "Morning";
-  if (minutes < 17 * 60) return "Afternoon";
-  return "Evening";
+function isScheduledOnDate(supplement, date) {
+  if (supplement?.startDate && date < supplement.startDate) return false;
+  if (supplement?.endDate && date > supplement.endDate) return false;
+  const dayOfWeek = parseISODate(date).getDay();
+  if (
+    Array.isArray(supplement?.daysOfWeek) &&
+    supplement.daysOfWeek.length > 0
+  ) {
+    return supplement.daysOfWeek.includes(dayOfWeek);
+  }
+  return true;
+}
+
+function formatSelectedDateHeading(date) {
+  return parseISODate(date)
+    .toLocaleDateString("en-GB", { day: "numeric", month: "long" })
+    .toUpperCase();
+}
+
+function AISummaryCard({
+  summary,
+  loading,
+  expanded,
+  onToggleExpanded,
+  generatedLabel,
+  error,
+  source,
+}) {
+  return (
+    <PrimaryCard style={styles.aiSummaryCard}>
+      <View style={styles.aiSummaryHeader}>
+        <Text style={styles.aiSummaryTitle}>AI summary</Text>
+        <Text style={styles.aiSummaryMeta}>
+          {generatedLabel
+            ? `Updated ${generatedLabel}`
+            : `Last ${AI_SUMMARY_WINDOW_DAYS} days`}
+        </Text>
+      </View>
+
+      <Text
+        style={styles.aiSummaryBody}
+        numberOfLines={expanded ? undefined : 1}
+      >
+        {loading && !summary
+          ? "Generating today's summary..."
+          : summary ||
+            "No summary yet. Open this page again once more data is available."}
+      </Text>
+
+      {(!loading || summary) && (
+        <Pressable onPress={onToggleExpanded} style={styles.aiSummaryReadMore}>
+          <Text style={styles.aiSummaryReadMoreText}>
+            {expanded ? "Show less" : "...Read more"}
+          </Text>
+        </Pressable>
+      )}
+
+      {expanded && error ? (
+        <Text style={styles.aiSummaryError}>{error}</Text>
+      ) : null}
+      {expanded && source === "fallback" && !error ? (
+        <Text style={styles.aiSummaryFallback}>
+          Using local fallback summary.
+        </Text>
+      ) : null}
+    </PrimaryCard>
+  );
+}
+
+function SupplementRow({
+  supplement,
+  taken,
+  takenAt,
+  score,
+  onPress,
+  onLongPress,
+}) {
+  const evidence = getEvidenceDisplay(score);
+
+  return (
+    <PrimaryCard
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={[styles.supplementCard, taken && styles.supplementCardTaken]}
+      pressedStyle={!taken ? styles.supplementCardPressed : null}
+    >
+      {evidence.badgeLabel ? (
+        <StatusPill label={evidence.badgeLabel} style={styles.evidenceBadge} />
+      ) : null}
+
+      <View style={[styles.supplementRow, taken && styles.supplementRowTaken]}>
+        <View style={[styles.iconCircle, taken && styles.iconCircleTaken]}>
+          <Icon route={supplement.route || "tablet"} size={22} />
+        </View>
+
+        <View style={styles.supplementCopy}>
+          <View style={styles.supplementNameRow}>
+            <Text
+              style={[
+                styles.supplementName,
+                taken && styles.supplementNameTaken,
+              ]}
+              numberOfLines={1}
+            >
+              {supplement.name}
+            </Text>
+            <EvidenceDots score={score} muted={taken} />
+          </View>
+
+          <Text
+            style={[styles.supplementMeta, taken && styles.supplementMetaTaken]}
+            numberOfLines={1}
+          >
+            {taken && takenAt ? `Taken ${takenAt}` : supplement.time}
+          </Text>
+        </View>
+
+        <View style={styles.supplementActions}>
+          {supplement.dose ? (
+            <Text style={[styles.doseText, taken && styles.doseTextTaken]}>
+              {supplement.dose.trim()}
+            </Text>
+          ) : null}
+          <View style={[styles.checkCircle, taken && styles.checkCircleTaken]}>
+            {taken ? (
+              <Ionicons name="checkmark" size={18} color="#FFFFFF" />
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </PrimaryCard>
+  );
 }
 
 export default function HomeScreen() {
@@ -324,8 +457,6 @@ export default function HomeScreen() {
   const healthEntries = useHealthStore((s) => s.entries);
   const healthMetrics = useHealthStore((s) => s.metrics);
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [matches, setMatches] = useState([]);
   const [ratingByCatalog, setRatingByCatalog] = useState({});
   const [today, setToday] = useState(() => toISODate(new Date()));
   const [aiSummaryText, setAiSummaryText] = useState("");
@@ -334,45 +465,20 @@ export default function HomeScreen() {
   const [aiSummarySource, setAiSummarySource] = useState("openai");
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState(null);
+  const [aiSummaryExpanded, setAiSummaryExpanded] = useState(false);
 
-  const [year, month, day] = selectedDate.split("-").map(Number);
-  const selectedDay = new Date(year, (month || 1) - 1, day || 1).getDay();
   const dueSupplements = useMemo(
     () =>
       supplements
-        .filter(
-          (s) =>
-            Array.isArray(s.daysOfWeek) && s.daysOfWeek.includes(selectedDay)
-        )
+        .filter((supplement) => isScheduledOnDate(supplement, selectedDate))
         .sort((a, b) => a.timeMinutes - b.timeMinutes),
-    [supplements, selectedDay]
+    [supplements, selectedDate]
   );
-
-  const visibleSupplements = useMemo(() => {
-    if (!searchQuery.trim()) return dueSupplements;
-    const q = searchQuery.toLowerCase();
-    return dueSupplements.filter((s) => s.name.toLowerCase().includes(q));
-  }, [dueSupplements, searchQuery]);
 
   const takenTimes = useMemo(
     () => takenTimesByDate[selectedDate] ?? {},
     [takenTimesByDate, selectedDate]
   );
-
-  const groupedSchedule = useMemo(() => {
-    const groups = { Morning: [], Afternoon: [], Evening: [] };
-    visibleSupplements.forEach((s) => {
-      groups[periodForMinutes(s.timeMinutes)].push(s);
-    });
-    return groups;
-  }, [visibleSupplements]);
-
-  const ratingColorFor = (catalogId) => {
-    if (!catalogId) return colors.brand.primary;
-    const score = ratingByCatalog[catalogId];
-    if (typeof score !== "number") return colors.brand.primary;
-    return getRatingStyle(score).gradient[0];
-  };
 
   useEffect(() => {
     if (!isFocused) return;
@@ -435,7 +541,7 @@ export default function HomeScreen() {
         }
         return true;
       });
-      const takenCount = plannedSupplements.reduce(
+      const takenCountForDate = plannedSupplements.reduce(
         (count, supplement) => (dayTakenMap[supplement.id] ? count + 1 : count),
         0
       );
@@ -444,8 +550,8 @@ export default function HomeScreen() {
         dayOfWeek,
         plannedSupplements,
         plannedCount: plannedSupplements.length,
-        takenCount,
-        missedCount: Math.max(plannedSupplements.length - takenCount, 0),
+        takenCount: takenCountForDate,
+        missedCount: Math.max(plannedSupplements.length - takenCountForDate, 0),
         takenLookup: dayTakenMap,
       };
     });
@@ -867,394 +973,256 @@ export default function HomeScreen() {
   }, [isFocused, today, aiSummaryInput, aiFallbackSummary]);
 
   useEffect(() => {
-    let active = true;
-    if (!searchQuery.trim()) {
-      setMatches([]);
-      return;
-    }
-    searchSupplementCatalog(searchQuery).then((results) => {
-      if (active) setMatches(results);
-    });
-    return () => {
-      active = false;
-    };
-  }, [searchQuery]);
+    setAiSummaryExpanded(false);
+  }, [aiSummaryText, selectedDate]);
 
-  const isSearching = searchQuery.trim().length > 0;
+  const selectedDateHeading = useMemo(
+    () => formatSelectedDateHeading(selectedDate),
+    [selectedDate]
+  );
 
   return (
-    <Screen
-      header={
-        <HomeHeader
-          searchSlot={
-            <View style={styles.searchUtility}>
-              <Ionicons
-                name="search"
-                size={16}
-                color={colors.icon.primary}
-                style={styles.searchInlineIcon}
-              />
-              <TextInput
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder="Search supplements"
-                placeholderTextColor={colors.text.muted}
-                style={styles.searchInputUtility}
-                clearButtonMode="while-editing"
-              />
-            </View>
-          }
+    <BackdropScreen header={<HomeHeader />} contentStyle={styles.content}>
+      <SectionTitle
+        title={selectedDateHeading}
+        style={styles.dateHeadingSection}
+        titleStyle={styles.dateHeading}
+      />
+
+      <Pressable
+        onPress={() =>
+          router.push({
+            pathname: "/supplement-search",
+            params: { mode: "info" },
+          })
+        }
+        style={styles.searchField}
+      >
+        <Ionicons
+          name="search"
+          size={20}
+          color="#928780"
+          style={styles.searchFieldIcon}
         />
-      }
-    >
-      <View style={styles.content}>
-        {isSearching ? (
-          <View style={styles.searchResults}>
-            {matches.map((m) => (
-              <Pressable
-                key={m.id}
-                onPress={() => {
-                  setSearchQuery("");
-                  setMatches([]);
+        <Text style={styles.searchFieldPlaceholder}>Search supplements</Text>
+      </Pressable>
+
+      <AISummaryCard
+        summary={aiSummaryText}
+        loading={aiSummaryLoading}
+        expanded={aiSummaryExpanded}
+        onToggleExpanded={() => setAiSummaryExpanded((prev) => !prev)}
+        generatedLabel={aiSummaryGeneratedLabel}
+        error={aiSummaryError}
+        source={aiSummarySource}
+      />
+
+      {dueSupplements.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <View style={styles.scheduleList}>
+          {dueSupplements.map((supplement) => {
+            const taken = Boolean(takenTimes[supplement.id]);
+            const score = ratingByCatalog[supplement.catalogId];
+
+            return (
+              <SupplementRow
+                key={supplement.id}
+                supplement={supplement}
+                taken={taken}
+                takenAt={takenTimes[supplement.id]}
+                score={score}
+                onPress={() => toggleTaken(supplement.id)}
+                onLongPress={() =>
                   router.push({
-                    pathname: "/modal/supplement-info",
-                    params: { id: m.id, name: m.name },
-                  });
-                }}
-                style={styles.searchResultItem}
-              >
-                <Text style={styles.searchResultText}>{m.name}</Text>
-              </Pressable>
-            ))}
-
-            <Pressable
-              onPress={() => {
-                setSearchQuery("");
-                setMatches([]);
-                router.push("/(modals)/modal/add-supplement-catalog");
-              }}
-              style={[styles.searchResultItem, styles.searchResultAdd]}
-            >
-              <Text style={styles.searchResultText}>+ Add new supplement</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <>
-            <View style={styles.aiSummaryCard}>
-              <View style={styles.aiSummaryHeader}>
-                <View style={styles.aiSummaryHeaderRow}>
-                  <Text style={styles.aiSummaryTitle}>Suppro AI Summary</Text>
-                  <Pressable
-                    onPress={() => router.push("/stats")}
-                    style={styles.aiSummaryChatButton}
-                  >
-                    <Text style={styles.aiSummaryChatButtonText}>Stats</Text>
-                  </Pressable>
-                </View>
-                <Text style={styles.aiSummaryMeta}>
-                  Last {AI_SUMMARY_WINDOW_DAYS} days
-                  {aiSummaryGeneratedLabel
-                    ? ` · Updated ${aiSummaryGeneratedLabel}`
-                    : ""}
-                </Text>
-              </View>
-              {aiSummaryLoading && !aiSummaryText ? (
-                <Text style={styles.aiSummaryBody}>
-                  Generating today&apos;s summary…
-                </Text>
-              ) : (
-                <Text style={styles.aiSummaryBody}>
-                  {aiSummaryText ||
-                    "No summary yet. Open this page again once more data is available."}
-                </Text>
-              )}
-              {aiSummaryError ? (
-                <Text style={styles.aiSummaryError}>{aiSummaryError}</Text>
-              ) : null}
-              {aiSummarySource === "fallback" && !aiSummaryError ? (
-                <Text style={styles.aiSummaryMeta}>
-                  Using local fallback summary.
-                </Text>
-              ) : null}
-            </View>
-
-            <View style={styles.scheduleCard}>
-              <Text style={styles.cardTitle}>Today’s Schedule</Text>
-              {visibleSupplements.length === 0 ? (
-                <EmptyState />
-              ) : (
-                Object.entries(groupedSchedule).map(([period, items]) => {
-                  if (!items.length) return null;
-                  return (
-                    <View key={period} style={styles.periodBlock}>
-                      <Text style={styles.periodTitle}>{period}</Text>
-                      <View style={styles.periodList}>
-                        {items.map((s) => {
-                          const taken = Boolean(takenTimes[s.id]);
-                          const iconColor = ratingColorFor(s.catalogId);
-                          return (
-                            <Pressable
-                              key={s.id}
-                              onPress={() => toggleTaken(s.id)}
-                              onLongPress={() =>
-                                router.push({
-                                  pathname: "/modal/supplement",
-                                  params: { id: s.id },
-                                })
-                              }
-                              style={[
-                                styles.scheduleItem,
-                                taken && styles.scheduleItemTaken,
-                              ]}
-                            >
-                              <View
-                                style={[
-                                  styles.itemIconWrap,
-                                  { backgroundColor: `${iconColor}22` },
-                                ]}
-                              >
-                                <View
-                                  style={[
-                                    styles.itemIcon,
-                                    { backgroundColor: iconColor },
-                                  ]}
-                                />
-                              </View>
-
-                              <View style={styles.itemTextWrap}>
-                                <Text style={styles.itemTitle}>{s.name}</Text>
-                                <Text style={styles.itemSubtitle}>
-                                  {s.time}
-                                  {s.dose ? ` · ${s.dose}` : ""}
-                                </Text>
-                              </View>
-
-                              <View style={styles.trailingStatus}>
-                                <Ionicons
-                                  name={
-                                    taken
-                                      ? "checkmark-circle"
-                                      : "ellipse-outline"
-                                  }
-                                  size={22}
-                                  color={
-                                    taken
-                                      ? colors.status.success
-                                      : colors.border.strong
-                                  }
-                                />
-                                {taken && takenTimes[s.id] ? (
-                                  <Text style={styles.takenStamp}>
-                                    Taken at {takenTimes[s.id]}
-                                  </Text>
-                                ) : null}
-                              </View>
-                            </Pressable>
-                          );
-                        })}
-                      </View>
-                    </View>
-                  );
-                })
-              )}
-            </View>
-          </>
-        )}
-      </View>
-    </Screen>
+                    pathname: "/modal/supplement",
+                    params: { id: supplement.id },
+                  })
+                }
+              />
+            );
+          })}
+        </View>
+      )}
+    </BackdropScreen>
   );
 }
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xl * 2,
-    gap: spacing.lg,
+    paddingBottom: spacing.xl,
   },
-  searchUtility: {
+  dateHeadingSection: {
+    marginBottom: 12,
+  },
+  dateHeading: {
+    textTransform: "uppercase",
+  },
+  searchField: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.background.card,
-    borderRadius: 999,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    ...shadows.card,
+    height: appTheme.input.height,
+    borderRadius: appTheme.input.radius,
+    backgroundColor: appTheme.input.background,
+    paddingHorizontal: 14,
+    marginBottom: 18,
   },
-  searchInlineIcon: {
-    marginRight: spacing.sm,
+  searchFieldIcon: {
+    marginRight: 8,
   },
-  searchInputUtility: {
+  searchFieldPlaceholder: {
     flex: 1,
-    fontSize: 15,
-    color: colors.text.primary,
+    fontSize: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.input.placeholder,
   },
   aiSummaryCard: {
-    backgroundColor: colors.background.card,
-    borderRadius: radius.xl,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.brand.primary,
-    ...shadows.card,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    marginBottom: 16,
+    borderColor: "black",
+    borderWidth: 2,
   },
   aiSummaryHeader: {
-    marginBottom: spacing.xs,
-  },
-  aiSummaryHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 4,
     gap: spacing.sm,
   },
   aiSummaryTitle: {
-    fontSize: 18,
-    color: colors.text.primary,
-    fontWeight: "700",
-  },
-  aiSummaryChatButton: {
-    borderWidth: 1,
-    borderColor: colors.border.strong,
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: spacing.sm,
-    backgroundColor: colors.background.elevated,
-  },
-  aiSummaryChatButtonText: {
-    fontSize: 12,
-    color: colors.brand.primary,
-    fontWeight: "700",
+    fontSize: 13,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textPrimary,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
   aiSummaryMeta: {
-    marginTop: 2,
     fontSize: 12,
-    color: colors.text.muted,
-    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textTertiary,
+    flexShrink: 1,
   },
   aiSummaryBody: {
-    marginTop: spacing.xs,
     fontSize: 14,
-    color: colors.text.secondary,
-    lineHeight: 20,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
+  },
+  aiSummaryReadMore: {
+    alignSelf: "flex-start",
+    marginTop: 6,
+  },
+  aiSummaryReadMoreText: {
+    fontSize: 13,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
   },
   aiSummaryError: {
     marginTop: spacing.sm,
     fontSize: 12,
-    color: colors.status.danger,
-    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.danger,
   },
-  cardTitle: {
-    fontSize: 19,
-    fontWeight: "700",
-    color: colors.text.primary,
-    marginBottom: spacing.md,
+  aiSummaryFallback: {
+    marginTop: spacing.sm,
+    fontSize: 12,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textTertiary,
   },
-  scheduleCard: {
-    backgroundColor: colors.background.card,
-    borderRadius: radius.xl,
-    padding: spacing.md,
-    ...shadows.card,
+  scheduleList: {
+    marginBottom: 8,
   },
-  periodBlock: {
-    marginBottom: spacing.md,
+  supplementCard: {
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: 12,
   },
-  periodTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: colors.text.primary,
-    marginBottom: spacing.sm,
+  supplementCardPressed: {
+    opacity: 0.95,
   },
-  periodList: {
-    gap: spacing.sm,
+  supplementCardTaken: {
+    backgroundColor: appTheme.colors.surfaceMuted,
   },
-  scheduleItem: {
+  evidenceBadge: {
+    marginBottom: 12,
+  },
+  supplementRow: {
     flexDirection: "row",
     alignItems: "center",
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    backgroundColor: colors.background.elevated,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    gap: spacing.sm,
+    justifyContent: "space-between",
   },
-  scheduleItemTaken: {
-    opacity: 0.75,
+  supplementRowTaken: {
+    opacity: 0.88,
   },
-  itemIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: appTheme.colors.iconSurface,
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 14,
   },
-  itemIcon: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  iconCircleTaken: {
+    backgroundColor: appTheme.colors.iconSurfaceMuted,
   },
-  itemTextWrap: {
+  supplementCopy: {
     flex: 1,
+    minWidth: 0,
   },
-  itemTitle: {
+  supplementNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 0,
+    marginBottom: 4,
+  },
+  supplementName: {
+    fontSize: 17,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textPrimary,
+    flexShrink: 1,
+    marginRight: 10,
+  },
+  supplementNameTaken: {
+    color: appTheme.colors.textMuted,
+    textDecorationLine: "line-through",
+  },
+  supplementMeta: {
+    fontSize: 12,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  supplementMetaTaken: {
+    color: appTheme.colors.textMuted,
+    textDecorationLine: "line-through",
+  },
+  supplementActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginLeft: spacing.md,
+  },
+  doseText: {
     fontSize: 16,
-    fontWeight: "600",
-    color: colors.text.primary,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "#6D7782",
+    marginRight: 14,
   },
-  itemSubtitle: {
-    marginTop: 2,
-    fontSize: 13,
-    color: colors.text.secondary,
+  doseTextTaken: {
+    color: "#A0A0A0",
   },
-  trailingStatus: {
-    minWidth: 84,
+  checkCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: appTheme.colors.borderInactive,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: appTheme.colors.surface,
   },
-  takenStamp: {
-    marginTop: 4,
-    fontSize: 11,
-    fontWeight: "600",
-    color: colors.text.muted,
-    textAlign: "center",
-  },
-  searchResults: {
-    marginTop: spacing.sm,
-    backgroundColor: colors.background.card,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    overflow: "hidden",
-    ...shadows.card,
-  },
-  searchResultItem: {
-    padding: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border.subtle,
-  },
-  searchResultAdd: {
-    opacity: 0.8,
-  },
-  searchResultText: {
-    fontSize: 15,
-    color: colors.text.primary,
-  },
-  empty: {
-    marginTop: spacing.sm,
-    padding: spacing.md,
-    backgroundColor: colors.background.elevated,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-  },
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: "600",
-    color: colors.text.primary,
-    marginBottom: spacing.xs,
-  },
-  emptyText: {
-    fontSize: 14,
-    lineHeight: 19,
-    color: colors.text.secondary,
+  checkCircleTaken: {
+    borderColor: appTheme.colors.success,
+    backgroundColor: appTheme.colors.success,
   },
 });

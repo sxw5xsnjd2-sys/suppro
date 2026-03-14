@@ -4,7 +4,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, gradients } from "@/theme";
 export const HEADER_HEIGHT = 80;
-export function Header({ title, subtitle, rightSlot, centered }) {
+export function Header({ title, subtitle, leftSlot, rightSlot, centered }) {
     const insets = useSafeAreaInsets();
     return (<LinearGradient style={[
             styles.container,
@@ -14,6 +14,14 @@ export function Header({ title, subtitle, rightSlot, centered }) {
             },
         ]} colors={gradients.header} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
       <View style={[styles.row, centered && styles.rowCentered]}>
+        {leftSlot ? (<View style={[
+                styles.leftSlot,
+                centered && styles.sideSlotCentered,
+                centered && styles.leftSlotCentered,
+            ]}>
+            {leftSlot}
+          </View>) : null}
+
         <View style={[styles.textBlock, centered && styles.textBlockCentered]}>
           <Text style={[styles.title, centered && styles.textCentered]}>
             {title}
@@ -24,7 +32,13 @@ export function Header({ title, subtitle, rightSlot, centered }) {
             </Text>) : null}
         </View>
 
-        {rightSlot ? <View style={styles.rightSlot}>{rightSlot}</View> : null}
+        {rightSlot ? (<View style={[
+                styles.rightSlot,
+                centered && styles.sideSlotCentered,
+                centered && styles.rightSlotCentered,
+            ]}>
+            {rightSlot}
+          </View>) : null}
       </View>
     </LinearGradient>);
 }
@@ -41,6 +55,7 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "flex-end",
         justifyContent: "space-between",
+        position: "relative",
     },
     textBlock: {
         flexShrink: 1,
@@ -60,13 +75,27 @@ const styles = StyleSheet.create({
     rightSlot: {
         marginLeft: spacing.md,
     },
+    leftSlot: {
+        marginRight: spacing.md,
+    },
     rowCentered: {
         justifyContent: "center",
     },
     textBlockCentered: {
         alignItems: "center",
+        width: "100%",
     },
     textCentered: {
         textAlign: "center",
+    },
+    sideSlotCentered: {
+        position: "absolute",
+        bottom: 0,
+    },
+    leftSlotCentered: {
+        left: 0,
+    },
+    rightSlotCentered: {
+        right: 0,
     },
 });

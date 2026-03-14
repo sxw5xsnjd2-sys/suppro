@@ -26,6 +26,7 @@
 
 - Use JavaScript/JSX for app code (`.js` / `.jsx`) unless a file is already TypeScript (Edge Function).
 - Use functional React components with hooks.
+- Treat the homepage as the design reference for all screens; align new or updated UI with its visual system unless explicitly told otherwise.
 - Keep imports using configured aliases when possible:
   - `@/*` for app-root paths
   - `@src/*` for `src/*`
@@ -35,6 +36,10 @@
   - `StyleSheet.create` with styles at file bottom
 - Prefer theme tokens over hardcoded values:
   - `colors`, `spacing`, `radius`, `shadows`, `typography` from `theme/`
+- Prefer reusing shared components before introducing screen-specific primitives.
+- Extract repeated styles into shared tokens, theme values, or reusable components instead of duplicating them.
+- Keep icons unchanged unless explicitly instructed to replace them.
+- Preserve accessibility behavior and touch target sizing when updating UI.
 - Keep date keys in local ISO format (`YYYY-MM-DD`) across stores and analytics logic.
 
 ## Framework Details
@@ -59,6 +64,11 @@
 ## Build and Test Conventions
 
 - Required local quality gate before shipping changes: `npm run lint`.
+- Before redesigning remaining screens:
+  - inspect the homepage implementation first
+  - extract reusable homepage tokens into `theme/`
+  - create and extend shared UI primitives before screen-by-screen restyling
+  - preferred shared primitives include `AppHeader`, `GradientHeader`, `PrimaryCard`, `StatusPill`, `EvidenceDots`, `SectionTitle`, `AppButton`, and `EmptyStateCard`
 - Since there is no automated test suite yet, run focused manual checks for changed flows:
   - home schedule/toggle taken
   - add/edit/delete supplement
@@ -69,6 +79,8 @@
 
 ## Guardrails (Do Not Change Without Explicit Approval)
 
+- Preserve existing business logic and navigation flows when implementing UI changes.
+- Do not change data models, Zustand stores, API calls, or Supabase contracts unless explicitly instructed.
 - Do not break persisted store shape in AsyncStorage:
   - supplement fields (`id`, `catalogId`, `time`, `timeMinutes`, `daysOfWeek`, `startDate`, `endDate`, etc.)
   - `takenTimesByDate` keyed by `YYYY-MM-DD`

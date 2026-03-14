@@ -1,21 +1,26 @@
 import { useRef, useState } from "react";
 import {
-  View,
   Text,
   TextInput,
   Pressable,
+  View,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
 } from "react-native";
-import { router } from "expo-router";
-import { spacing, colors, radius, shadows } from "@/theme";
+import { router, useLocalSearchParams } from "expo-router";
+import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
+import { spacing, radius, shadows, appTheme } from "@/theme";
 import { getScopedSupabase } from "@src/lib/supabase";
 import { getClientId } from "@src/lib/clientId";
 
 export default function AddSupplementCatalogModal() {
-  const [name, setName] = useState("");
+  const params = useLocalSearchParams();
+  const initialName =
+    typeof params.initialName === "string" ? params.initialName : "";
+  const searchMode = typeof params.mode === "string" ? params.mode : "info";
+  const [name, setName] = useState(initialName);
   const [whatIsIt, setWhatIsIt] = useState("");
   const [whyUseIt, setWhyUseIt] = useState("");
   const [risks, setRisks] = useState("");
@@ -72,84 +77,101 @@ export default function AddSupplementCatalogModal() {
       return;
     }
 
-    router.back();
-    router.setParams({
-      newCatalogId: `user-${data.id}`,
-      newCatalogName: data.name,
+    router.navigate({
+      pathname: "/supplement-search",
+      params: {
+        mode: searchMode,
+        newCatalogId: `user-${data.id}`,
+        newCatalogName: data.name,
+      },
     });
 
     setSaving(false);
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 48 : 0}
+    <BackdropScreen
+      scrollable={false}
+      bottomInsetOffset={0}
+      minBottomPadding={0}
+      contentStyle={styles.screenContent}
     >
-      <ScrollView
-        ref={scrollRef}
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 48 : 0}
       >
-        <Text style={styles.title}>Add New Supplement</Text>
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scroll}
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.title}>Add New Supplement</Text>
 
-        <View style={styles.panel}>
-          <LabeledInput
-            id="name"
-            label="Name *"
-            value={name}
-            onChange={setName}
-            onFocus={() => scrollToField("name")}
-            onLayout={registerOffset("name")}
-          />
+          <View style={styles.panel}>
+            <LabeledInput
+              id="name"
+              label="Name *"
+              value={name}
+              onChange={setName}
+              onFocus={() => scrollToField("name")}
+              onLayout={registerOffset("name")}
+            />
 
-          <LabeledMultiline
-            id="whatIsIt"
-            label="What is it? (optional)"
-            value={whatIsIt}
-            onChange={setWhatIsIt}
-            onFocus={() => scrollToField("whatIsIt")}
-            onLayout={registerOffset("whatIsIt")}
-          />
+            <LabeledMultiline
+              id="whatIsIt"
+              label="What is it? (optional)"
+              value={whatIsIt}
+              onChange={setWhatIsIt}
+              onFocus={() => scrollToField("whatIsIt")}
+              onLayout={registerOffset("whatIsIt")}
+            />
 
-          <LabeledMultiline
-            id="whyUseIt"
-            label="Why use it? (optional)"
-            value={whyUseIt}
-            onChange={setWhyUseIt}
-            onFocus={() => scrollToField("whyUseIt")}
-            onLayout={registerOffset("whyUseIt")}
-          />
+            <LabeledMultiline
+              id="whyUseIt"
+              label="Why use it? (optional)"
+              value={whyUseIt}
+              onChange={setWhyUseIt}
+              onFocus={() => scrollToField("whyUseIt")}
+              onLayout={registerOffset("whyUseIt")}
+            />
 
-          <LabeledMultiline
-            id="risks"
-            label="Risks / interactions (optional)"
-            value={risks}
-            onChange={setRisks}
-            onFocus={() => scrollToField("risks")}
-            onLayout={registerOffset("risks")}
-          />
+            <LabeledMultiline
+              id="risks"
+              label="Risks / interactions (optional)"
+              value={risks}
+              onChange={setRisks}
+              onFocus={() => scrollToField("risks")}
+              onLayout={registerOffset("risks")}
+            />
 
-          <LabeledMultiline
-            id="evidence"
-            label="Evidence summary (optional)"
-            value={evidence}
-            onChange={setEvidence}
-            onFocus={() => scrollToField("evidence")}
-            onLayout={registerOffset("evidence")}
-          />
+            <LabeledMultiline
+              id="evidence"
+              label="Evidence summary (optional)"
+              value={evidence}
+              onChange={setEvidence}
+              onFocus={() => scrollToField("evidence")}
+              onLayout={registerOffset("evidence")}
+            />
 
-          <Pressable
-            onPress={save}
-            disabled={saving || !nameIsValid}
-            style={[styles.saveButton, (saving || !nameIsValid) && styles.saveButtonDisabled]}
-          >
-            <Text style={styles.saveText}>{saving ? "Saving..." : "Save supplement"}</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            <Pressable
+              onPress={save}
+              disabled={saving || !nameIsValid}
+              style={[
+                styles.saveButton,
+                (saving || !nameIsValid) && styles.saveButtonDisabled,
+              ]}
+            >
+              <Text style={styles.saveText}>
+                {saving ? "Saving..." : "Save supplement"}
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </BackdropScreen>
   );
 }
 
@@ -164,7 +186,7 @@ function LabeledInput({ id, label, value, onChange, keyboardType, onFocus, onLay
         keyboardType={keyboardType}
         onFocus={onFocus}
         style={styles.input}
-        placeholderTextColor={colors.text.muted}
+        placeholderTextColor={appTheme.colors.textMuted}
       />
     </View>
   );
@@ -181,31 +203,39 @@ function LabeledMultiline({ id, label, value, onChange, onFocus, onLayout }) {
         multiline
         onFocus={onFocus}
         style={[styles.input, styles.multiline]}
-        placeholderTextColor={colors.text.muted}
+        placeholderTextColor={appTheme.colors.textMuted}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
+  screenContent: {
     flex: 1,
-    backgroundColor: colors.background.app,
+    paddingTop: spacing.sm,
+  },
+  keyboard: {
+    flex: 1,
+  },
+  scroll: {
+    flex: 1,
   },
   container: {
-    padding: spacing.lg,
     paddingBottom: spacing.xl * 2,
+    paddingTop: spacing.xs,
+    gap: spacing.md,
   },
   title: {
     fontSize: 30,
     fontWeight: "700",
-    color: colors.text.primary,
-    marginBottom: spacing.md,
+    color: appTheme.colors.textStrong,
   },
   panel: {
-    backgroundColor: colors.background.card,
+    backgroundColor: "rgba(255,255,255,0.78)",
     borderRadius: radius.xl,
     padding: spacing.md,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
     ...shadows.card,
   },
   field: {
@@ -214,16 +244,16 @@ const styles = StyleSheet.create({
   label: {
     fontWeight: "600",
     marginBottom: 6,
-    color: colors.text.secondary,
+    color: appTheme.colors.textBody,
     fontSize: 13,
   },
   input: {
     borderWidth: 1,
-    borderColor: colors.border.subtle,
+    borderColor: appTheme.colors.borderSubtle,
     borderRadius: radius.md,
     padding: 12,
-    color: colors.text.primary,
-    backgroundColor: colors.background.elevated,
+    color: appTheme.colors.textInput,
+    backgroundColor: "rgba(255,255,255,0.72)",
     fontSize: 15,
   },
   multiline: {
@@ -234,14 +264,14 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     padding: spacing.md,
     borderRadius: radius.lg,
-    backgroundColor: colors.brand.primary,
+    backgroundColor: appTheme.colors.textStrong,
     alignItems: "center",
   },
   saveButtonDisabled: {
     opacity: 0.6,
   },
   saveText: {
-    color: colors.text.inverse,
+    color: "#FFFFFF",
     fontWeight: "700",
     fontSize: 15,
   },

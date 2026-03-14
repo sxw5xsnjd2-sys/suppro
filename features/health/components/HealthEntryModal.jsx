@@ -1,16 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Modal,
-  View,
-  Text,
+  ScrollView,
   StyleSheet,
-  Pressable,
+  Text,
   TextInput,
-  KeyboardAvoidingView,
-  Platform,
+  View,
 } from "react-native";
 import Slider from "@react-native-community/slider";
-import { colors, spacing, radius, shadows, typography } from "@/theme";
+import {
+  AppButton,
+  AppModalSurface,
+  SectionTitle,
+} from "@/components/common/ui";
+import { appTheme, spacing, typography } from "@/theme";
 import { useHealthStore } from "@/features/health/store";
 import {
   BLOOD_PRESSURE_METRIC_KEY,
@@ -30,6 +33,31 @@ function todayYYYYMMDD() {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function withOrdinal(day) {
+  if (day % 100 >= 11 && day % 100 <= 13) return `${day}th`;
+  switch (day % 10) {
+    case 1:
+      return `${day}st`;
+    case 2:
+      return `${day}nd`;
+    case 3:
+      return `${day}rd`;
+    default:
+      return `${day}th`;
+  }
+}
+
+function formatDisplayDate(isoDate) {
+  const [year, month, day] = String(isoDate || "")
+    .split("-")
+    .map(Number);
+  const parsed = new Date(year || 1970, (month || 1) - 1, day || 1);
+  const monthLabel = parsed.toLocaleDateString("en-GB", { month: "long" });
+  return `${withOrdinal(
+    parsed.getDate()
+  )} ${monthLabel} ${parsed.getFullYear()}`;
 }
 
 function humanizeMetricKey(metricKey) {
@@ -55,6 +83,7 @@ export function HealthEntryModal({ visible, metric, onClose }) {
   const metrics = useHealthStore((s) => s.metrics);
 
   const date = useMemo(() => todayYYYYMMDD(), []);
+  const displayDate = useMemo(() => formatDisplayDate(date), [date]);
 
   const selectedMetric = useMemo(() => {
     if (!metric) return null;
@@ -91,13 +120,23 @@ export function HealthEntryModal({ visible, metric, onClose }) {
 
     if (existingToday) {
       if (selectedMetric.trackerType === TRACKER_TYPES.TEXT) {
-        const nextText = typeof existingToday.value === "string" ? existingToday.value : String(existingToday.value ?? "");
+        const nextText =
+          typeof existingToday.value === "string"
+            ? existingToday.value
+            : String(existingToday.value ?? "");
         setTextInput(nextText);
         setBpSystolicInput("");
         setBpDiastolicInput("");
       } else if (selectedMetric.trackerType === TRACKER_TYPES.SCALE) {
-        const nextScale = normalizeNumericValue(existingToday.value, selectedMetric);
-        setScaleValue(Number.isFinite(nextScale) ? nextScale : Number(defaultEntryValue(selectedMetric) || 5));
+        const nextScale = normalizeNumericValue(
+          existingToday.value,
+          selectedMetric
+        );
+        setScaleValue(
+          Number.isFinite(nextScale)
+            ? nextScale
+            : Number(defaultEntryValue(selectedMetric) || 5)
+        );
         setBpSystolicInput("");
         setBpDiastolicInput("");
       } else {
@@ -175,17 +214,17 @@ export function HealthEntryModal({ visible, metric, onClose }) {
         }
         value = bpValue;
       } else {
-      const parsed = parseNumericText(numericInput);
-      if (parsed == null) {
-        setError("Please enter a numeric value.");
-        return;
-      }
-      const numericValue = normalizeNumericValue(parsed, selectedMetric);
-      if (!Number.isFinite(numericValue)) {
-        setError("Please enter a valid numeric value.");
-        return;
-      }
-      value = numericValue;
+        const parsed = parseNumericText(numericInput);
+        if (parsed == null) {
+          setError("Please enter a numeric value.");
+          return;
+        }
+        const numericValue = normalizeNumericValue(parsed, selectedMetric);
+        if (!Number.isFinite(numericValue)) {
+          setError("Please enter a valid numeric value.");
+          return;
+        }
+        value = numericValue;
       }
     }
 
@@ -212,51 +251,80 @@ export function HealthEntryModal({ visible, metric, onClose }) {
       : parseNumericText(numericInput) != null;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={{ width: "100%" }}
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <AppModalSurface cardStyle={styles.card}>
+        <View style={styles.header}>
+          <SectionTitle
+            title={selectedMetric.label || humanizeMetricKey(metric)}
+            subtitle={displayDate}
+            titleStyle={styles.title}
+            subtitleStyle={styles.subtitle}
+            action={
+              <AppButton
+                accessibilityLabel="Close health entry modal"
+                onPress={onClose}
+                size="icon"
+                variant="overlay"
+                style={styles.closeButton}
+              >
+                <Text style={styles.closeGlyph}>×</Text>
+              </AppButton>
+            }
+          />
+          {selectedMetric.description ? (
+            <Text style={styles.metricDescription}>
+              {selectedMetric.description}
+            </Text>
+          ) : null}
+        </View>
+
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.scrollContent}
         >
-          <View style={styles.card}>
-            <View style={styles.headerRow}>
-              <Text style={styles.title}>{selectedMetric.label || humanizeMetricKey(metric)}</Text>
-              <Pressable onPress={onClose} hitSlop={12}>
-                <Text style={styles.close}>Close</Text>
-              </Pressable>
-            </View>
-
-            <Text style={styles.subtitle}>{date}</Text>
-            {selectedMetric.description ? (
-              <Text style={styles.metricDescription}>
-                {selectedMetric.description}
-              </Text>
-            ) : null}
-
-            <View style={styles.field}>
+          <View style={styles.field}>
+            <View style={styles.valuePanel}>
               <View style={styles.sliderHeader}>
-                <Text style={styles.label}>{valueLabelFor(selectedMetric)}</Text>
+                <View style={styles.valueCopy}>
+                  <Text style={styles.label}>
+                    {valueLabelFor(selectedMetric)}
+                  </Text>
+                </View>
                 {selectedMetric.trackerType === TRACKER_TYPES.SCALE ? (
-                  <Text style={styles.valueBadge}>{Math.round(scaleValue)}</Text>
+                  <View style={styles.valueBadge}>
+                    <Text style={styles.valueBadgeText}>
+                      {Math.round(scaleValue)}
+                    </Text>
+                  </View>
                 ) : null}
               </View>
 
               {selectedMetric.trackerType === TRACKER_TYPES.SCALE ? (
                 <>
-                  <View style={styles.sliderLabels}>
-                    <Text style={styles.sliderLabel}>{selectedMetric.lowLabel ?? "Low"}</Text>
-                    <Text style={styles.sliderLabel}>{selectedMetric.highLabel ?? "High"}</Text>
-                  </View>
                   <Slider
                     minimumValue={selectedMetric.min ?? 1}
                     maximumValue={selectedMetric.max ?? 10}
                     step={selectedMetric.step ?? 1}
                     value={scaleValue}
                     onValueChange={setScaleValue}
-                    minimumTrackTintColor={colors.brand.primary}
-                    maximumTrackTintColor={colors.border.subtle}
-                    thumbTintColor={colors.brand.primary}
+                    minimumTrackTintColor={appTheme.colors.textStrong}
+                    maximumTrackTintColor={appTheme.colors.borderInactive}
+                    thumbTintColor={appTheme.colors.textStrong}
                   />
+                  <View style={styles.sliderLabels}>
+                    <Text style={styles.sliderLabel}>
+                      {selectedMetric.lowLabel ?? "Low"}
+                    </Text>
+                    <Text style={styles.sliderLabel}>
+                      {selectedMetric.highLabel ?? "High"}
+                    </Text>
+                  </View>
                 </>
               ) : null}
 
@@ -271,13 +339,15 @@ export function HealthEntryModal({ visible, metric, onClose }) {
                       setError("");
                     }}
                     placeholder={selectedMetric.placeholder ?? "Enter value"}
-                    placeholderTextColor={colors.text.muted}
+                    placeholderTextColor={appTheme.colors.textMuted}
                     style={[styles.input, styles.numericInput]}
                     keyboardType="decimal-pad"
                   />
                   {selectedMetric.unit ? (
                     <View style={styles.unitPill}>
-                      <Text style={styles.unitPillText}>{selectedMetric.unit}</Text>
+                      <Text style={styles.unitPillText}>
+                        {selectedMetric.unit}
+                      </Text>
                     </View>
                   ) : null}
                 </View>
@@ -292,7 +362,7 @@ export function HealthEntryModal({ visible, metric, onClose }) {
                       setError("");
                     }}
                     placeholder="Systolic"
-                    placeholderTextColor={colors.text.muted}
+                    placeholderTextColor={appTheme.colors.textMuted}
                     style={[styles.input, styles.bloodPressureInput]}
                     keyboardType="decimal-pad"
                   />
@@ -303,7 +373,7 @@ export function HealthEntryModal({ visible, metric, onClose }) {
                       setError("");
                     }}
                     placeholder="Diastolic"
-                    placeholderTextColor={colors.text.muted}
+                    placeholderTextColor={appTheme.colors.textMuted}
                     style={[styles.input, styles.bloodPressureInput]}
                     keyboardType="decimal-pad"
                   />
@@ -321,127 +391,154 @@ export function HealthEntryModal({ visible, metric, onClose }) {
                     setError("");
                   }}
                   placeholder={selectedMetric.placeholder ?? "Write your entry"}
-                  placeholderTextColor={colors.text.muted}
+                  placeholderTextColor={appTheme.colors.textMuted}
                   style={[styles.input, styles.textarea]}
                   multiline
                 />
               ) : null}
             </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Note (optional)</Text>
-              <TextInput
-                value={note}
-                onChangeText={setNote}
-                placeholder="Short context..."
-                placeholderTextColor={colors.text.muted}
-                style={[styles.input, styles.textarea]}
-                multiline
-              />
-            </View>
-
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-            <Pressable
-              onPress={handleSave}
-              disabled={!canSave}
-              style={({ pressed }) => [
-                styles.primaryBtn,
-                !canSave && styles.primaryBtnDisabled,
-                pressed && canSave && { opacity: 0.85 },
-              ]}
-            >
-              <Text style={styles.primaryBtnText}>{existingToday ? "Save (updates today)" : "Save"}</Text>
-            </Pressable>
           </View>
-        </KeyboardAvoidingView>
-      </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Note (optional)</Text>
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              placeholder="Add note..."
+              placeholderTextColor={appTheme.colors.textMuted}
+              style={[styles.input, styles.textarea]}
+              multiline
+            />
+          </View>
+
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          <AppButton
+            accessibilityLabel={existingToday ? "Save today's update" : "Save"}
+            disabled={!canSave}
+            label={existingToday ? "Save (updates today)" : "Save"}
+            onPress={handleSave}
+            size="md"
+            style={[styles.primaryBtn, !canSave && styles.primaryBtnDisabled]}
+            textStyle={styles.primaryBtnText}
+            variant="primary"
+          />
+        </ScrollView>
+      </AppModalSurface>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    justifyContent: "center",
-    padding: spacing.lg,
-  },
   card: {
-    backgroundColor: colors.background.card,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    ...shadows.card,
+    width: "100%",
+    minHeight: "72%",
   },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  header: {
+    marginBottom: spacing.sm,
   },
   title: {
-    ...typography.heading,
-    color: colors.text.primary,
-    flex: 1,
-    marginRight: spacing.sm,
+    fontSize: 26,
+    fontFamily: typography.fontFamily.heading,
+    letterSpacing: -0.7,
+    color: appTheme.colors.textPrimary,
   },
-  close: {
-    ...typography.body,
-    color: colors.text.secondary,
+  closeButton: {
+    width: 44,
+    height: 44,
+    minWidth: 44,
+    minHeight: 44,
+  },
+  closeGlyph: {
+    fontSize: 22,
+    lineHeight: 22,
+    color: appTheme.colors.textStrong,
+    fontFamily: typography.fontFamily.body,
   },
   subtitle: {
-    marginTop: spacing.xs,
-    ...typography.caption,
-    color: colors.text.muted,
+    marginTop: 4,
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
   },
   metricDescription: {
     marginTop: spacing.xs,
-    ...typography.caption,
-    color: colors.text.secondary,
+    fontSize: 13,
     lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  scrollContent: {
+    paddingBottom: spacing.xs,
   },
   field: {
     marginTop: spacing.md,
   },
+  valuePanel: {
+    borderRadius: appTheme.card.radius,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    backgroundColor: appTheme.colors.surfaceAccent,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+  },
   sliderHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  valueCopy: {
+    flex: 1,
   },
   valueBadge: {
-    minWidth: 32,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs / 2,
-    borderRadius: radius.sm,
-    backgroundColor: colors.background.card,
+    minWidth: 36,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: 999,
+    alignItems: "center",
+    backgroundColor: appTheme.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
-    textAlign: "center",
-    ...typography.caption,
-    color: colors.text.primary,
+    borderColor: appTheme.colors.borderSubtle,
+  },
+  valueBadgeText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
   },
   sliderLabels: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginTop: spacing.xs,
-    marginBottom: spacing.sm,
   },
   sliderLabel: {
-    ...typography.caption,
-    color: colors.text.secondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textTertiary,
   },
   label: {
-    ...typography.caption,
-    color: colors.text.secondary,
+    fontSize: 13,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textSecondary,
     marginBottom: spacing.xs,
+    letterSpacing: -0.1,
   },
   input: {
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.md,
+    minHeight: 52,
+    borderRadius: appTheme.card.radius,
     paddingHorizontal: spacing.md,
-    paddingVertical: Platform.OS === "ios" ? spacing.sm : spacing.xs,
-    color: colors.text.primary,
-    backgroundColor: colors.background.card,
+    paddingVertical: spacing.sm + 2,
+    backgroundColor: appTheme.colors.surfaceMuted,
+    color: appTheme.colors.textPrimary,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+    fontSize: 15,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.body,
   },
   numericRow: {
     flexDirection: "row",
@@ -456,40 +553,43 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   unitPill: {
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     borderRadius: 999,
+    justifyContent: "center",
+    backgroundColor: appTheme.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    borderColor: appTheme.colors.borderSubtle,
   },
   unitPillText: {
     fontSize: 12,
-    fontWeight: "600",
-    color: colors.text.secondary,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textSecondary,
   },
   textarea: {
-    minHeight: 84,
+    minHeight: 116,
     textAlignVertical: "top",
-    paddingTop: spacing.sm,
+    paddingTop: spacing.md,
   },
   errorText: {
     marginTop: spacing.sm,
-    fontSize: 12,
-    color: colors.status.danger,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.danger,
   },
   primaryBtn: {
+    width: "100%",
     marginTop: spacing.lg,
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    alignItems: "center",
-    backgroundColor: colors.brand.primary,
+    alignSelf: "stretch",
   },
   primaryBtnDisabled: {
-    backgroundColor: colors.border.subtle,
+    backgroundColor: appTheme.colors.borderInactive,
   },
   primaryBtnText: {
-    ...typography.body,
-    color: colors.text.inverse,
+    fontSize: 15,
+    fontFamily: typography.fontFamily.headingSemiBold,
   },
 });

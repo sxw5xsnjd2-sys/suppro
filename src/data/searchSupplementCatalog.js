@@ -8,13 +8,13 @@ export async function searchSupplementCatalog(query) {
             .select("id, name")
             .ilike("name", `%${query}%`)
             .order("name")
-            .limit(5),
+            .limit(12),
         (await getScopedSupabase())
             .from("user_supplements")
             .select("id, name")
             .ilike("name", `%${query}%`)
             .order("name")
-            .limit(5),
+            .limit(12),
     ]);
     if (official.error)
         console.error("supplements search failed", official.error);
