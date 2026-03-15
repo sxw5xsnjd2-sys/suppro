@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import { LinearGradient } from "expo-linear-gradient";
 import Svg, {
   Defs,
   G,
@@ -21,105 +20,18 @@ import {
 } from "@/components/common/ui";
 import { appTheme, spacing, typography } from "@/theme";
 import { getSupplementById } from "@src/data/getSupplement";
+import { supabase } from "@src/lib/supabase";
 import {
   isSupplementHearted,
   setSupplementHearted,
 } from "@/features/supplements/favouritesStorage";
-import MedalIcon from "@/assets/icons/supplements/medal.svg";
-import AntiAgingIcon from "@/assets/icons/supplements/anti-aging.svg";
-import AntiInflammatoryIcon from "@/assets/icons/supplements/anti-inflammatory.svg";
-import BloodPressureControlIcon from "@/assets/icons/supplements/blood-pressure-control.svg";
-import BloodSugarControlIcon from "@/assets/icons/supplements/blood-sugar-control.svg";
-import BoneHealthIcon from "@/assets/icons/supplements/bone-health.svg";
-import CardiovascularHealthIcon from "@/assets/icons/supplements/cardiovascular-health.svg";
-import CholesterolSupportIcon from "@/assets/icons/supplements/cholesterol-support.svg";
-import CognitiveSupportIcon from "@/assets/icons/supplements/cognitive-support.svg";
-import ConcentrationEnhancingIcon from "@/assets/icons/supplements/concentration-enhancing.svg";
-import DigestiveHealthIcon from "@/assets/icons/supplements/digestive-health.svg";
-import EnduranceEnhancingIcon from "@/assets/icons/supplements/endurance-enhancing.svg";
-import EnergyEnhancingIcon from "@/assets/icons/supplements/energy-enhancing.svg";
-import ExerciseRecoveryIcon from "@/assets/icons/supplements/exercise-recovery.svg";
-import FemaleFertilityIcon from "@/assets/icons/supplements/female-fertility.svg";
-import FemaleHormoneBalanceIcon from "@/assets/icons/supplements/female-hormone-balance.svg";
-import FemaleSexualArousalIcon from "@/assets/icons/supplements/female-sexual-arousal.svg";
-import HairHealthIcon from "@/assets/icons/supplements/hair-health.svg";
-import ImmuneHealthIcon from "@/assets/icons/supplements/immune-health.svg";
-import InjuryRecoveryIcon from "@/assets/icons/supplements/injury-recovery.svg";
-import JointHealthIcon from "@/assets/icons/supplements/joint-health.svg";
-import LymphaticSupportIcon from "@/assets/icons/supplements/lymphatic-support.svg";
-import MaleFertilityIcon from "@/assets/icons/supplements/male-fertility.svg";
-import MaleSexualPerformanceIcon from "@/assets/icons/supplements/male-sexual-performance.svg";
-import MemoryEnhancingIcon from "@/assets/icons/supplements/memory-enhancing.svg";
-import MoodSupportIcon from "@/assets/icons/supplements/mood-support.svg";
-import SkinHealthIcon from "@/assets/icons/supplements/skin-health.svg";
-import SleepSupportIcon from "@/assets/icons/supplements/sleep-support.svg";
-import StressReliefIcon from "@/assets/icons/supplements/stress-relief.svg";
-import TestosteroneEnhancementIcon from "@/assets/icons/supplements/testosterone-enhancement.svg";
-import UrineSystemHealthIcon from "@/assets/icons/supplements/urine-system-health.svg";
-import WeightManagementIcon from "@/assets/icons/supplements/weight-management.svg";
-import StrengthEnhancingIcon from "@/assets/icons/supplements/strength-enhancing.svg";
-
-const BENEFIT_ICON_MAP = {
-  "Weight management": WeightManagementIcon,
-  "Urine system health": UrineSystemHealthIcon,
-  "Testosterone boosting": TestosteroneEnhancementIcon,
-  "Stress relief": StressReliefIcon,
-  "Sleep support": SleepSupportIcon,
-  "Skin health": SkinHealthIcon,
-  "Mood support": MoodSupportIcon,
-  "Memory enhancing": MemoryEnhancingIcon,
-  "Male sexual performance": MaleSexualPerformanceIcon,
-  "Male fertility": MaleFertilityIcon,
-  "Lymphatic/swelling support": LymphaticSupportIcon,
-  "Joint health": JointHealthIcon,
-  "Injury recovery": InjuryRecoveryIcon,
-  "Immune health": ImmuneHealthIcon,
-  "Hair health": HairHealthIcon,
-  "Female sexual arousal": FemaleSexualArousalIcon,
-  "Female hormone balance": FemaleHormoneBalanceIcon,
-  "Female fertility": FemaleFertilityIcon,
-  "Exercise recovery": ExerciseRecoveryIcon,
-  "Energy enhancing": EnergyEnhancingIcon,
-  "Endurance enhancing": EnduranceEnhancingIcon,
-  "Digestive health": DigestiveHealthIcon,
-  "Concentration enhancing": ConcentrationEnhancingIcon,
-  "Cognitive support": CognitiveSupportIcon,
-  "Cholesterol support": CholesterolSupportIcon,
-  "Cardiovascular health": CardiovascularHealthIcon,
-  "Bone health": BoneHealthIcon,
-  "Blood sugar control": BloodSugarControlIcon,
-  "Blood pressure control": BloodPressureControlIcon,
-  "Anti-inflammatory": AntiInflammatoryIcon,
-  "Anti-aging": AntiAgingIcon,
-  "Strength enhancing": StrengthEnhancingIcon,
-};
-
-const BENEFIT_ICON_NUDGE = {
-  "Bone health": 2,
-  "Joint health": 4,
-  "Immune health": 2,
-};
-const SOLID_METAL_COLORS = {
-  gold: appTheme.colors.evidenceBadge,
-  silver: "#A9B4C7",
-  bronze: "#C96B27",
-};
-const GOLD_SHEEN_LOCATIONS = [0.30985, 0.47574, 0.63187, 0.7392, 0.81727];
-const METAL_BADGE_GRADIENTS = {
-  gold: appTheme.gradients.evidenceBadge,
-  silver: ["#DCE4EF", "#EEF3F9", "#F7FAFE", "#D7E0EB", "#B4C0D0"],
-  bronze: ["#D99B67", "#E7B88D", "#F3D8BE", "#C9844C", "#B06831"],
-};
-const BENEFIT_RANK = {
-  gold: 0,
-  silver: 1,
-  bronze: 2,
-};
-const METAL_BADGE_LOCATIONS = {
-  gold: GOLD_SHEEN_LOCATIONS,
-  silver: [0.18, 0.38, 0.52, 0.72, 0.92],
-  bronze: [0.18, 0.4, 0.54, 0.74, 0.92],
-};
+import { BenefitIconBadge } from "@/features/supplements/components/BenefitIconBadge";
+import {
+  buildBenefitRankings,
+  compareBenefits,
+  getBenefitColor,
+  getBenefitIconComponent,
+} from "@/features/supplements/benefits";
 const SCORE_ANIMATION_DURATION_MS = 1100;
 const EVIDENCE_GAUGE_WIDTH = 261;
 const EVIDENCE_GAUGE_FRAME_HEIGHT = 116;
@@ -183,21 +95,6 @@ function getRatingSummary(score) {
     borderColor: "rgba(231,76,60,0.16)",
     iconSurface: "rgba(255,255,255,0.48)",
   };
-}
-
-function compareBenefits(left, right) {
-  const leftRank = BENEFIT_RANK[left?.icon] ?? Number.MAX_SAFE_INTEGER;
-  const rightRank = BENEFIT_RANK[right?.icon] ?? Number.MAX_SAFE_INTEGER;
-
-  if (leftRank !== rightRank) {
-    return leftRank - rightRank;
-  }
-
-  return String(left?.label ?? "").localeCompare(String(right?.label ?? ""));
-}
-
-function getBenefitColor(icon) {
-  return SOLID_METAL_COLORS[icon] ?? appTheme.colors.iconSurfaceMuted;
 }
 
 function clampEvidenceScore(score) {
@@ -337,6 +234,7 @@ export default function SupplementInfoModal() {
   const [loaded, setLoaded] = useState(false);
   const [hearted, setHearted] = useState(false);
   const [displayedRating, setDisplayedRating] = useState(0);
+  const [benefitRankings, setBenefitRankings] = useState({});
 
   useEffect(() => {
     if (!id) return;
@@ -376,6 +274,43 @@ export default function SupplementInfoModal() {
   const canAddSupplement = Boolean(data?.id && data?.name);
   const headerSubtitle = loaded ? "" : "Loading supplement details";
   const visibleRating = hasRating ? displayedRating : null;
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadBenefitRankings = async () => {
+      const currentBenefits = data?.supplement_benefits ?? [];
+      const labels = [
+        ...new Set(currentBenefits.map((benefit) => benefit?.label).filter(Boolean)),
+      ];
+
+      if (!labels.length) {
+        if (isActive) setBenefitRankings({});
+        return;
+      }
+
+      const { data: rankingRows, error } = await supabase
+        .from("supplement_benefits")
+        .select("label, score")
+        .in("label", labels);
+
+      if (error) {
+        console.error("Failed to load benefit rankings", error);
+        if (isActive) setBenefitRankings({});
+        return;
+      }
+
+      if (isActive) {
+        setBenefitRankings(buildBenefitRankings(currentBenefits, rankingRows ?? []));
+      }
+    };
+
+    loadBenefitRankings();
+
+    return () => {
+      isActive = false;
+    };
+  }, [data?.supplement_benefits]);
 
   useEffect(() => {
     if (!loaded || !hasRating) {
@@ -537,7 +472,17 @@ export default function SupplementInfoModal() {
               contentContainerStyle={styles.benefitRow}
             >
               {benefits.map((benefit) => (
-                <BenefitChip key={benefit.id} benefit={benefit} />
+                <BenefitChip
+                  key={benefit.id}
+                  benefit={benefit}
+                  ranking={benefitRankings[benefit.id] ?? null}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/benefit-ranking",
+                      params: { label: benefit.label },
+                    })
+                  }
+                />
               ))}
             </ScrollView>
           </View>
@@ -588,67 +533,27 @@ export default function SupplementInfoModal() {
   );
 }
 
-function BenefitIconBadge({
-  label,
-  color,
-  tone,
-  Icon,
-  size = 20,
-  containerSize = 40,
-}) {
-  const nudge = BENEFIT_ICON_NUDGE[label] ?? 0;
-  const iconNode = (
-    <Icon
-      width={size}
-      height={size}
-      style={nudge ? { transform: [{ translateX: nudge }] } : undefined}
-    />
-  );
-
-  if (tone && METAL_BADGE_GRADIENTS[tone]) {
-    return (
-      <LinearGradient
-        colors={METAL_BADGE_GRADIENTS[tone]}
-        locations={METAL_BADGE_LOCATIONS[tone]}
-        start={{ x: 0, y: 0.5 }}
-        end={{ x: 1, y: 0.5 }}
-        style={[
-          styles.benefitBadge,
-          {
-            width: containerSize,
-            height: containerSize,
-            borderRadius: containerSize / 2,
-          },
-        ]}
-      >
-        {iconNode}
-      </LinearGradient>
-    );
-  }
+function BenefitChip({ benefit, ranking, onPress }) {
+  const Icon = getBenefitIconComponent(benefit.label);
+  const color = getBenefitColor(benefit.icon);
+  const rankSummary = ranking
+    ? `Rank #${ranking.rank} of ${ranking.total}`
+    : "View benefit ranking";
+  const message = ranking
+    ? `Open all supplements ranked for ${benefit.label}. This supplement is currently ranked #${ranking.rank} out of ${ranking.total}.`
+    : `Open all supplements ranked for ${benefit.label}.`;
 
   return (
-    <View
-      style={[
-        styles.benefitBadge,
-        {
-          width: containerSize,
-          height: containerSize,
-          borderRadius: containerSize / 2,
-          backgroundColor: color,
-        },
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={benefit.label}
+      accessibilityHint={message}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.benefitChip,
+        pressed && styles.benefitChipPressed,
       ]}
     >
-      {iconNode}
-    </View>
-  );
-}
-
-function BenefitChip({ benefit }) {
-  const Icon = BENEFIT_ICON_MAP[benefit.label] ?? MedalIcon;
-  const color = getBenefitColor(benefit.icon);
-
-  return (
-    <View style={styles.benefitChip}>
       <BenefitIconBadge
         label={benefit.label}
         color={color}
@@ -660,8 +565,9 @@ function BenefitChip({ benefit }) {
 
       <View style={styles.benefitChipCopy}>
         <Text style={styles.benefitChipLabel}>{benefit.label}</Text>
+        <Text style={styles.benefitChipMeta}>{rankSummary}</Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -697,7 +603,7 @@ function DetailRow({ label, value, hideBorder = false }) {
 
 function EvidenceRow({ benefit, evidenceText, showBorder }) {
   const [open, setOpen] = useState(false);
-  const Icon = BENEFIT_ICON_MAP[benefit.label] ?? MedalIcon;
+  const Icon = getBenefitIconComponent(benefit.label);
   const color = getBenefitColor(benefit.icon);
   const body = evidenceText?.trim()
     ? evidenceText.trim()
@@ -862,10 +768,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
     marginRight: spacing.sm,
+    position: "relative",
   },
-  benefitBadge: {
-    alignItems: "center",
-    justifyContent: "center",
+  benefitChipPressed: {
+    opacity: 0.94,
   },
   benefitChipCopy: {
     marginTop: 10,
@@ -875,6 +781,14 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textStrong,
+    textDecorationLine: "underline",
+  },
+  benefitChipMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
   },
   sectionCard: {
     marginBottom: spacing.md,

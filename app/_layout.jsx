@@ -64,6 +64,7 @@ export default function RootLayout() {
             name="(modals)"
             options={{ presentation: "modal", headerShown: false }}
           />
+          <Stack.Screen name="benefit-ranking" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style="dark" />
       </ThemeProvider>

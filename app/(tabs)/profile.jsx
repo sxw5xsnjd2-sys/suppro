@@ -1,10 +1,16 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
-import { Screen } from "@/components/common/layout/Screen";
-import { Header } from "@/components/common/layout/Header";
-import { colors, spacing, radius, shadows } from "@/theme";
+import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
+import {
+  AppButton,
+  AppHeader,
+  PrimaryCard,
+  SectionTitle,
+  StatusPill,
+} from "@/components/common/ui";
+import { appTheme, spacing, typography } from "@/theme";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
 import QuestionnaireIcon from "@/assets/icons/profile/questionnaire.svg";
@@ -30,110 +36,149 @@ const MENU_ITEMS = [
   },
 ];
 
+function ProfileMenuItem({ item, showBorder }) {
+  const IconComponent = item.Icon;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={item.label}
+      onPress={() => router.push(item.route)}
+      style={({ pressed }) => [
+        styles.menuItem,
+        showBorder && styles.menuItemBorder,
+        pressed && styles.menuItemPressed,
+      ]}
+    >
+      <View style={styles.menuLeft}>
+        <View style={styles.iconShell}>
+          <IconComponent
+            width={18}
+            height={18}
+            color={appTheme.colors.textStrong}
+            fill={appTheme.colors.textStrong}
+            stroke={appTheme.colors.textStrong}
+            strokeWidth={0.55}
+          />
+        </View>
+
+        <Text style={styles.menuLabel}>{item.label}</Text>
+      </View>
+
+      <Ionicons
+        name="chevron-forward"
+        size={18}
+        color={appTheme.colors.textSecondary}
+      />
+    </Pressable>
+  );
+}
+
 export default function ProfileScreen() {
   return (
-    <Screen
+    <BackdropScreen
       header={
-        <Header
-          title="Profile"
-          subtitle="Personal settings and shortcuts"
+        <AppHeader
           leftSlot={
-            <Pressable onPress={() => router.back()} hitSlop={8}>
-              <Text style={styles.backButtonText}>Back</Text>
-            </Pressable>
+            <AppButton
+              onPress={() => router.back()}
+              variant="overlay"
+              size="icon"
+              accessibilityLabel="Go back"
+            >
+              <Ionicons
+                name="chevron-back"
+                size={20}
+                color={appTheme.colors.textStrong}
+              />
+            </AppButton>
           }
-          centered
+          title="PROFILE"
+          titleStyle={styles.headerTitle}
+          bottomSlot={
+            <Text style={styles.headerSubtitle}>
+              Personal settings and shortcuts
+            </Text>
+          }
+          bottomSlotStyle={styles.headerBottom}
         />
       }
-      scrollable={false}
+      bottomInsetOffset={96}
+      minBottomPadding={120}
     >
-      <View style={styles.container}>
-        <View style={styles.menuCard}>
-          {MENU_ITEMS.map((item, index) => {
-            const showBorder = index < MENU_ITEMS.length - 1;
-            const IconComponent = item.Icon;
-            return (
-              <Pressable
-                key={item.key}
-                onPress={() => router.push(item.route)}
-                style={({ pressed }) => [
-                  styles.menuItem,
-                  showBorder && styles.menuItemBorder,
-                  pressed && styles.menuItemPressed,
-                ]}
-              >
-                <View style={styles.menuLeft}>
-                  <View style={styles.iconShell}>
-                    <IconComponent
-                      width={18}
-                      height={18}
-                      color={colors.icon.primary}
-                      fill={colors.icon.primary}
-                      stroke={colors.icon.primary}
-                      strokeWidth={0.55}
-                    />
-                  </View>
-                  <Text style={styles.menuLabel}>{item.label}</Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={18}
-                  color={colors.icon.muted}
-                />
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
-    </Screen>
+      <PrimaryCard style={styles.menuCard}>
+        {MENU_ITEMS.map((item, index) => (
+          <ProfileMenuItem
+            key={item.key}
+            item={item}
+            showBorder={index < MENU_ITEMS.length - 1}
+          />
+        ))}
+      </PrimaryCard>
+    </BackdropScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  backButtonText: {
-    fontSize: 15,
-    color: colors.text.secondary,
-    fontWeight: "500",
+  headerTitle: {
+    color: appTheme.colors.textPrimary,
   },
-  container: {
-    marginTop: spacing.lg,
+  headerCount: {
+    backgroundColor: "rgba(255,255,255,0.42)",
+  },
+  headerBottom: {
+    marginTop: 6,
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
+  },
+  sectionTitle: {
+    marginBottom: spacing.md,
+  },
+  sectionSubtitle: {
+    color: appTheme.colors.textSecondary,
   },
   menuCard: {
-    backgroundColor: colors.background.card,
-    borderRadius: radius.xl,
+    paddingVertical: 0,
     overflow: "hidden",
-    ...shadows.card,
   },
   menuItem: {
-    minHeight: 68,
-    paddingHorizontal: spacing.md,
+    minHeight: 72,
+    paddingHorizontal: appTheme.card.paddingSpacious,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: spacing.md,
   },
   menuItemBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: colors.border.subtle,
+    borderBottomColor: appTheme.colors.borderSubtle,
   },
   menuItemPressed: {
-    backgroundColor: colors.background.elevated,
+    backgroundColor: appTheme.colors.surfaceMuted,
   },
   menuLeft: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
   },
   iconShell: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: colors.brand.soft,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: appTheme.colors.surfaceMuted,
     alignItems: "center",
     justifyContent: "center",
   },
   menuLabel: {
+    flex: 1,
     fontSize: 16,
-    color: colors.text.primary,
-    fontWeight: "600",
+    lineHeight: 21,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
   },
 });

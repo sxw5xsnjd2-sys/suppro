@@ -45,9 +45,7 @@ export async function getSupplementById(supplementId) {
       evidence,
       evidence_score,
       supplement_benefits (
-        id,
-        label,
-        icon
+        *
       )
     `)
         .eq("id", cleanId)
