@@ -6,6 +6,7 @@ export async function searchSupplementCatalog(query) {
         publicSupabase
             .from("supplements")
             .select("id, name")
+            .eq("status", "approved")
             .ilike("name", `%${query}%`)
             .order("name")
             .limit(12),

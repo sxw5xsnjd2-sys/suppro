@@ -171,10 +171,18 @@ export function buildRankedBenefitSupplements(rows) {
       const benefit = Array.isArray(row?.supplement_benefits)
         ? row.supplement_benefits.find((item) => item?.label)
         : null;
+      const fallbackName =
+        typeof benefit?.supplement_name === "string"
+          ? benefit.supplement_name.trim()
+          : "";
+      const displayName =
+        typeof row?.name === "string" && row.name.trim()
+          ? row.name.trim()
+          : fallbackName || "Supplement";
 
       return {
         id: row?.id ?? null,
-        name: row?.name ?? "Supplement",
+        name: displayName,
         evidenceScore: Number.isFinite(row?.evidence_score)
           ? row.evidence_score
           : null,

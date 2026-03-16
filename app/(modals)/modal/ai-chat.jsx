@@ -24,7 +24,6 @@ import {
   AppButton,
   AppHeader,
   PrimaryCard,
-  StatusPill,
 } from "@/components/common/ui";
 import { appTheme, spacing, typography } from "@/theme";
 import { useChatStore } from "@/features/ai/store";
@@ -46,10 +45,24 @@ function buildEvidenceCatalog(rows) {
   const byBenefit = {};
   const bySupplement = {};
   const normalizedRows = (rows ?? [])
-    .filter((row) => row && typeof row.name === "string")
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
+    .filter((row) => row && row.id)
+    .map((row) => {
+      const fallbackBenefitName = Array.isArray(row.supplement_benefits)
+        ? row.supplement_benefits.find(
+            (item) => typeof item?.supplement_name === "string"
+          )?.supplement_name
+        : null;
+
+      const name =
+        typeof row.name === "string" && row.name.trim()
+          ? row.name.trim()
+          : typeof fallbackBenefitName === "string" && fallbackBenefitName.trim()
+            ? fallbackBenefitName.trim()
+            : null;
+
+      return {
+        id: row.id,
+        name,
       evidenceScore:
         typeof row.evidence_score === "number" &&
         Number.isFinite(row.evidence_score)
@@ -62,7 +75,9 @@ function buildEvidenceCatalog(rows) {
             )
             .filter(Boolean)
         : [],
-    }));
+      };
+    })
+    .filter((row) => typeof row.name === "string" && row.name);
 
   normalizedRows.forEach((row) => {
     bySupplement[row.id] = {
@@ -252,11 +267,6 @@ function IntroCard() {
         />
       </View>
 
-      <StatusPill
-        label="EDUCATIONAL ONLY"
-        tone="neutral"
-        style={styles.introPill}
-      />
       <Text style={styles.introTitle}>Ask about your supplement data</Text>
       <Text style={styles.introBody}>
         Get quick answers using your saved schedule, adherence history, and
@@ -338,7 +348,10 @@ export function AiChatScreen({ presentation = "modal" }) {
 
     publicSupabase
       .from("supplements")
-      .select("id, name, evidence_score, supplement_benefits(label)")
+      .select(
+        "id, name, evidence_score, supplement_benefits(label, supplement_name)"
+      )
+      .eq("status", "approved")
       .limit(500)
       .then(({ data, error: queryError }) => {
         if (!active) return;
@@ -619,10 +632,6 @@ const styles = StyleSheet.create({
   introGradient: {
     flex: 1,
     opacity: 0.78,
-  },
-  introPill: {
-    backgroundColor: "rgba(255,255,255,0.62)",
-    marginBottom: spacing.md,
   },
   introTitle: {
     fontSize: 22,

@@ -9,10 +9,12 @@ export function BackdropScreen({
   header,
   contentStyle,
   scrollContentStyle,
+  scrollViewRef,
   bottomInsetOffset = 120,
   minBottomPadding = 132,
   showsVerticalScrollIndicator = false,
   scrollable = true,
+  onHeaderHeightChange,
 }) {
   const insets = useSafeAreaInsets();
   const [headerHeight, setHeaderHeight] = useState(0);
@@ -28,7 +30,11 @@ export function BackdropScreen({
       {header ? (
         <View
           style={styles.fixedHeader}
-          onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}
+          onLayout={(event) => {
+            const nextHeight = event.nativeEvent.layout.height;
+            setHeaderHeight(nextHeight);
+            onHeaderHeightChange?.(nextHeight);
+          }}
         >
           <View pointerEvents="none" style={styles.headerBackdrop}>
             <AppBackdrop />
@@ -39,6 +45,7 @@ export function BackdropScreen({
 
       {scrollable ? (
         <ScrollView
+          ref={scrollViewRef}
           showsVerticalScrollIndicator={showsVerticalScrollIndicator}
           contentContainerStyle={[
             styles.scrollContent,

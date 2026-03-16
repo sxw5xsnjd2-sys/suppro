@@ -7,13 +7,12 @@ import {
   AppButton,
   AppHeader,
   PrimaryCard,
-  SectionTitle,
-  StatusPill,
 } from "@/components/common/ui";
 import { appTheme, spacing, typography } from "@/theme";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
 import QuestionnaireIcon from "@/assets/icons/profile/questionnaire.svg";
+import RankingsIcon from "@/assets/icons/supplements/medal.svg";
 
 const MENU_ITEMS = [
   {
@@ -27,6 +26,12 @@ const MENU_ITEMS = [
     label: "Favourites",
     route: "/modal/favourites",
     Icon: FavouriteIcon,
+  },
+  {
+    key: "supplement-rankings",
+    label: "Supplement Rankings",
+    route: "/supplement-rankings",
+    Icon: RankingsIcon,
   },
   {
     key: "questionnaire",
@@ -123,9 +128,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: appTheme.colors.textPrimary,
   },
-  headerCount: {
-    backgroundColor: "rgba(255,255,255,0.42)",
-  },
   headerBottom: {
     marginTop: 6,
   },
@@ -133,12 +135,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
-  },
-  sectionTitle: {
-    marginBottom: spacing.md,
-  },
-  sectionSubtitle: {
-    color: appTheme.colors.textSecondary,
   },
   menuCard: {
     paddingVertical: 0,

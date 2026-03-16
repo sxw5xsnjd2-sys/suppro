@@ -49,8 +49,9 @@ export default function BenefitRankingScreen() {
       const { data, error } = await supabase
         .from("supplements")
         .select(
-          "id, name, evidence_score, supplement_benefits!inner(id, label, icon, score)"
+          "id, name, evidence_score, supplement_benefits!inner(id, supplement_name, label, icon, score)"
         )
+        .eq("status", "approved")
         .eq("supplement_benefits.label", benefitLabel);
 
       if (!active) return;

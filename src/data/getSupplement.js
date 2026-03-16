@@ -12,6 +12,7 @@ export async function getSupplementById(supplementId) {
         id,
         name,
         what_is_it,
+        how_to_use,
         why_use_it,
         risks_and_interactions,
         evidence_summary
@@ -40,6 +41,7 @@ export async function getSupplementById(supplementId) {
       name,
       description,
       what_is_it,
+      how_to_use,
       why_use_it,
       risks_and_interactions,
       evidence,

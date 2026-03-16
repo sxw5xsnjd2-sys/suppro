@@ -44,11 +44,7 @@ export const appTheme = {
       "rgba(255,200,0,0.18)",
     ],
     auraLocations: [0, 0.32, 0.64, 1],
-    fadeColors: [
-      "rgba(245,241,238,0)",
-      "rgba(245,241,238,0.88)",
-      "#F5F1EE",
-    ],
+    fadeColors: ["rgba(245,241,238,0)", "rgba(245,241,238,0.88)", "#F5F1EE"],
     fadeLocations: [0, 0.58, 1],
   },
   card: {
@@ -62,7 +58,7 @@ export const appTheme = {
     sidePadding: spacing.md,
     maxWidth: 560,
     cardMaxHeight: "92%",
-    headerTopInsetOffset: -18,
+    headerTopInsetOffset: -7,
   },
   input: {
     height: 44,
@@ -105,12 +101,6 @@ export const appTheme = {
     evidenceBadgeText: "#1E1A24",
   },
   gradients: {
-    evidenceBadge: [
-      "#FFC800",
-      "#FFD438",
-      "#FFF2C2",
-      "#FFDB58",
-      "#FFDF69",
-    ],
+    evidenceBadge: ["#FFC800", "#FFD438", "#FFF2C2", "#FFDB58", "#FFDF69"],
   },
 };

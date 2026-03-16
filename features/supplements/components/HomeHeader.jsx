@@ -17,6 +17,8 @@ import AccountIcon from "@/assets/icons/profile/account.svg";
 
 const PAGE_SIDE_PADDING = appTheme.screen.sidePadding;
 const PILL_HEIGHT = appTheme.header.progressPillHeight;
+const DATE_ITEM_GAP = 10;
+const DATE_ITEM_SPAN = appTheme.header.dayItemWidth + DATE_ITEM_GAP;
 
 const toLocalISODate = (date) => {
   const year = date.getFullYear();
@@ -70,14 +72,6 @@ const buildWeekDates = (anchorDate, weeksBefore = 8, weeksAfter = 8) => {
   }
 
   return dates;
-};
-
-const groupWeeks = (dates) => {
-  const weeks = [];
-  for (let index = 0; index < dates.length; index += 7) {
-    weeks.push(dates.slice(index, index + 7));
-  }
-  return weeks;
 };
 
 const formatDayLabel = (date) =>
@@ -163,8 +157,19 @@ export function HomeHeader({ onLayout }) {
     () => buildWeekDates(rangeAnchorDate, 8, 8),
     [rangeAnchorDate]
   );
-  const weeks = useMemo(() => groupWeeks(weekDates), [weekDates]);
-  const pageWidth = Math.max(width - PAGE_SIDE_PADDING * 2, 1);
+  const listWidth = Math.max(width - PAGE_SIDE_PADDING * 2, 1);
+  const listSideInset = Math.max(
+    0,
+    (listWidth - appTheme.header.dayItemWidth) / 2
+  );
+  const selectedDateIndex = useMemo(
+    () => Math.max(weekDates.indexOf(selectedDate || today), 0),
+    [selectedDate, today, weekDates]
+  );
+  const todayIndex = useMemo(
+    () => Math.max(weekDates.indexOf(today), 0),
+    [today, weekDates]
+  );
 
   const progressByDate = useMemo(
     () =>
@@ -187,24 +192,29 @@ export function HomeHeader({ onLayout }) {
     [supplements, takenTimesByDate, weekDates]
   );
 
-  const selectedWeekIndex = useMemo(
-    () =>
-      Math.max(
-        weeks.findIndex((week) => week.includes(selectedDate || today)),
-        0
-      ),
-    [selectedDate, today, weeks]
-  );
-
   useEffect(() => {
-    if (!weeks.length) return;
+    if (!weekDates.length) return;
     requestAnimationFrame(() => {
-      listRef.current?.scrollToIndex({
-        index: selectedWeekIndex,
-        animated: false,
+      listRef.current?.scrollToOffset({
+        offset: DATE_ITEM_SPAN * selectedDateIndex,
+        animated: true,
       });
     });
-  }, [selectedWeekIndex, weeks.length]);
+  }, [selectedDateIndex, weekDates.length]);
+
+  const scrollToDateIndex = (index, animated = true) => {
+    listRef.current?.scrollToOffset({
+      offset: DATE_ITEM_SPAN * index,
+      animated,
+    });
+  };
+
+  const handleTodayPress = () => {
+    setSelectedDate(today);
+    requestAnimationFrame(() => {
+      scrollToDateIndex(todayIndex, true);
+    });
+  };
 
   return (
     <View style={styles.wrapper} onLayout={onLayout}>
@@ -249,7 +259,7 @@ export function HomeHeader({ onLayout }) {
         titleAccessory={
           <AppButton
             label="Today"
-            onPress={() => setSelectedDate(today)}
+            onPress={handleTodayPress}
             variant="ghost"
             size="sm"
             textStyle={styles.todayText}
@@ -261,58 +271,59 @@ export function HomeHeader({ onLayout }) {
           <FlatList
             ref={listRef}
             horizontal
-            pagingEnabled
-            data={weeks}
-            keyExtractor={(item) => item[0]}
+            data={weekDates}
+            keyExtractor={(item) => item}
             showsHorizontalScrollIndicator={false}
-            onScrollToIndexFailed={() => {}}
+            snapToInterval={DATE_ITEM_SPAN}
+            decelerationRate="fast"
             getItemLayout={(_, index) => ({
-              length: pageWidth,
-              offset: pageWidth * index,
+              length: DATE_ITEM_SPAN,
+              offset: DATE_ITEM_SPAN * index,
               index,
             })}
-            renderItem={({ item: week }) => (
-              <View style={[styles.weekPage, { width: pageWidth }]}>
-                {week.map((date) => {
-                  const active = date === selectedDate;
-                  return (
-                    <Pressable
-                      key={date}
-                      onPress={() => setSelectedDate(date)}
-                      style={styles.dayItem}
+            contentContainerStyle={[
+              styles.dateListContent,
+              { paddingHorizontal: listSideInset },
+            ]}
+            ItemSeparatorComponent={() => <View style={styles.dateItemGap} />}
+            renderItem={({ item: date }) => {
+              const active = date === selectedDate;
+              return (
+                <Pressable
+                  key={date}
+                  onPress={() => setSelectedDate(date)}
+                  style={styles.dayItem}
+                >
+                  <Text
+                    style={[
+                      styles.dayLabel,
+                      active && styles.dayLabelActive,
+                    ]}
+                  >
+                    {formatDayLabel(date)}
+                  </Text>
+                  <View
+                    style={[
+                      styles.dayHighlight,
+                      active && styles.dayHighlightActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.dayNumber,
+                        active && styles.dayNumberActive,
+                      ]}
                     >
-                      <Text
-                        style={[
-                          styles.dayLabel,
-                          active && styles.dayLabelActive,
-                        ]}
-                      >
-                        {formatDayLabel(date)}
-                      </Text>
-                      <View
-                        style={[
-                          styles.dayHighlight,
-                          active && styles.dayHighlightActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.dayNumber,
-                            active && styles.dayNumberActive,
-                          ]}
-                        >
-                          {formatDayNumber(date)}
-                        </Text>
-                        <ProgressPill
-                          active={active}
-                          progress={progressByDate[date] ?? 0}
-                        />
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            )}
+                      {formatDayNumber(date)}
+                    </Text>
+                    <ProgressPill
+                      active={active}
+                      progress={progressByDate[date] ?? 0}
+                    />
+                  </View>
+                </Pressable>
+              );
+            }}
           />
         }
       />
@@ -347,9 +358,11 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.headingSemiBold,
     color: appTheme.colors.textStrong,
   },
-  weekPage: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  dateListContent: {
+    alignItems: "flex-start",
+  },
+  dateItemGap: {
+    width: DATE_ITEM_GAP,
   },
   dayItem: {
     width: appTheme.header.dayItemWidth,

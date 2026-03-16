@@ -390,6 +390,7 @@ function SupplementRow({
   score,
   onPress,
   onLongPress,
+  onEditPress,
 }) {
   const evidence = getEvidenceDisplay(score);
 
@@ -400,9 +401,30 @@ function SupplementRow({
       style={[styles.supplementCard, taken && styles.supplementCardTaken]}
       pressedStyle={!taken ? styles.supplementCardPressed : null}
     >
-      {evidence.badgeLabel ? (
-        <StatusPill label={evidence.badgeLabel} style={styles.evidenceBadge} />
-      ) : null}
+      <View style={styles.supplementCardTopRow}>
+        {evidence.badgeLabel ? (
+          <StatusPill label={evidence.badgeLabel} style={styles.evidenceBadge} />
+        ) : (
+          <View />
+        )}
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${supplement.name}`}
+          hitSlop={6}
+          onPress={(event) => {
+            event.stopPropagation?.();
+            onEditPress?.();
+          }}
+          onPressIn={(event) => event.stopPropagation?.()}
+          style={({ pressed }) => [
+            styles.editPill,
+            pressed && styles.editPillPressed,
+          ]}
+        >
+          <Text style={styles.editPillText}>Edit</Text>
+        </Pressable>
+      </View>
 
       <View style={[styles.supplementRow, taken && styles.supplementRowTaken]}>
         <View style={[styles.iconCircle, taken && styles.iconCircleTaken]}>
@@ -1034,6 +1056,17 @@ export default function HomeScreen() {
                 score={score}
                 onPress={() => toggleTaken(supplement.id)}
                 onLongPress={() =>
+                  supplement.catalogId
+                    ? router.push({
+                        pathname: "/modal/supplement-info",
+                        params: {
+                          id: supplement.catalogId,
+                          name: supplement.name,
+                        },
+                      })
+                    : undefined
+                }
+                onEditPress={() =>
                   router.push({
                     pathname: "/modal/supplement",
                     params: { id: supplement.id },
@@ -1144,8 +1177,15 @@ const styles = StyleSheet.create({
   supplementCardTaken: {
     backgroundColor: appTheme.colors.surfaceMuted,
   },
-  evidenceBadge: {
+  supplementCardTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     marginBottom: 12,
+    gap: spacing.sm,
+  },
+  evidenceBadge: {
+    alignSelf: "flex-start",
   },
   supplementRow: {
     flexDirection: "row",
@@ -1210,6 +1250,24 @@ const styles = StyleSheet.create({
   },
   doseTextTaken: {
     color: "#A0A0A0",
+  },
+  editPill: {
+    minHeight: 24,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: appTheme.colors.textStrong,
+  },
+  editPillPressed: {
+    opacity: 0.8,
+  },
+  editPillText: {
+    fontSize: 11,
+    lineHeight: 13,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.surface,
+    letterSpacing: -0.1,
   },
   checkCircle: {
     width: 24,

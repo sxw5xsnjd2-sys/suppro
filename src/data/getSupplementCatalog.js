@@ -3,6 +3,7 @@ export async function getSupplementCatalog() {
     const { data, error } = await supabase
         .from("supplements")
         .select("id, name")
+        .eq("status", "approved")
         .order("name", { ascending: true });
     if (error) {
         console.error(error);

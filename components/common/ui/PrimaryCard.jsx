@@ -10,6 +10,7 @@ export function PrimaryCard({
   pressedStyle,
   variant = "default",
   accessibilityRole,
+  ...rest
 }) {
   const cardStyles = [styles.card, variantStyles[variant], style];
 
@@ -20,6 +21,7 @@ export function PrimaryCard({
         onPress={onPress}
         onLongPress={onLongPress}
         delayLongPress={400}
+        {...rest}
         style={({ pressed }) => [
           ...cardStyles,
           pressed && styles.pressed,
@@ -31,7 +33,11 @@ export function PrimaryCard({
     );
   }
 
-  return <View style={cardStyles}>{children}</View>;
+  return (
+    <View {...rest} style={cardStyles}>
+      {children}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
