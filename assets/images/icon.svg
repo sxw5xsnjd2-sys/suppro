@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100" fill="none">
+  <defs>
+    <linearGradient id="iconGradient" x1="50" y1="0" x2="50" y2="100" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E5E1F9"/>
+      <stop offset="1" stop-color="#F6E2E1"/>
+    </linearGradient>
+    <style>
+      @font-face {
+        font-family: "Exo2Black";
+        src: url("../../node_modules/@expo-google-fonts/exo-2/900Black/Exo2_900Black.ttf") format("truetype");
+      }
+
+      .wordmark {
+        fill: #1E1A24;
+        font-family: "Exo2Black", sans-serif;
+        font-size: 32px;
+        font-weight: 900;
+        letter-spacing: -0.43px;
+      }
+    </style>
+  </defs>
+  <rect width="100" height="100" fill="#FFFFFF"/>
+  <rect width="100" height="100" rx="27" fill="url(#iconGradient)"/>
+  <text class="wordmark" x="13" y="44">SUP</text>
+  <text class="wordmark" x="13" y="72">PRO</text>
+</svg>

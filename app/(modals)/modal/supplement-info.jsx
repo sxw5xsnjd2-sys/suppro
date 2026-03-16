@@ -158,7 +158,7 @@ function EvidenceRatingGauge({ value, toneScore }) {
     EVIDENCE_GAUGE_CENTER_X + EVIDENCE_GAUGE_RADIUS * Math.cos(theta);
   const indicatorY =
     EVIDENCE_GAUGE_CENTER_Y - EVIDENCE_GAUGE_RADIUS * Math.sin(theta);
-  const indicatorRotation = (90 - (theta * 180) / Math.PI) * 0.55;
+  const indicatorRotation = 90 - (theta * 180) / Math.PI;
 
   return (
     <View style={styles.scorePanel}>
@@ -559,13 +559,14 @@ export default function SupplementInfoModal() {
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.benefitRow}
+                style={styles.benefitScroll}
               >
-                {benefits.map((benefit) => (
+                {benefits.map((benefit, index) => (
                   <BenefitChip
                     key={benefit.id}
                     benefit={benefit}
                     ranking={benefitRankings[benefit.id] ?? null}
+                    isLast={index === benefits.length - 1}
                     onViewEvidencePress={() =>
                       handleViewEvidencePress(benefit.id)
                     }
@@ -663,7 +664,13 @@ export default function SupplementInfoModal() {
   );
 }
 
-function BenefitChip({ benefit, ranking, onPress, onViewEvidencePress }) {
+function BenefitChip({
+  benefit,
+  ranking,
+  isLast,
+  onPress,
+  onViewEvidencePress,
+}) {
   const Icon = getBenefitIconComponent(benefit.label);
   const color = getBenefitColor(benefit.icon);
   const rankSummary = ranking
@@ -674,7 +681,7 @@ function BenefitChip({ benefit, ranking, onPress, onViewEvidencePress }) {
     : `Open all supplements ranked for ${benefit.label}.`;
 
   return (
-    <View style={styles.benefitChip}>
+    <View style={[styles.benefitChip, isLast && styles.benefitChipLast]}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={benefit.label}
@@ -917,8 +924,8 @@ const styles = StyleSheet.create({
   sectionSubtitleText: {
     color: appTheme.colors.textSecondary,
   },
-  benefitRow: {
-    paddingRight: spacing.xs,
+  benefitScroll: {
+    marginHorizontal: -appTheme.card.paddingSpacious,
   },
   benefitChip: {
     width: 152,
@@ -928,6 +935,9 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
     position: "relative",
     overflow: "hidden",
+  },
+  benefitChipLast: {
+    marginRight: 0,
   },
   benefitChipMain: {
     minHeight: 94,
