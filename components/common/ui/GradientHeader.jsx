@@ -9,11 +9,18 @@ export function GradientHeader({
   colors = appTheme.header.gradient,
   start = { x: 0, y: 0 },
   end = { x: 1, y: 1 },
-  topInsetOffset = appTheme.header.topInsetOffset,
+  insetPreset = "screen",
+  topInsetOffset,
   bottomPadding = appTheme.header.bottomPadding,
   style,
 }) {
   const insets = useSafeAreaInsets();
+  const resolvedTopInsetOffset =
+    typeof topInsetOffset === "number"
+      ? topInsetOffset
+      : insetPreset === "modal"
+      ? appTheme.modal.headerTopInsetOffset
+      : appTheme.header.topInsetOffset;
 
   return (
     <LinearGradient
@@ -23,7 +30,7 @@ export function GradientHeader({
       style={[
         styles.root,
         {
-          paddingTop: insets.top + topInsetOffset,
+          paddingTop: insets.top + resolvedTopInsetOffset,
           paddingBottom: bottomPadding,
         },
         style,

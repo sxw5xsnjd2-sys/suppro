@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { reconcileSupplementCatalogIds } from "@src/data/reconcileSupplementCatalogIds";
 /* ----------------------------------------
    Helpers
 ----------------------------------------- */
@@ -126,8 +127,18 @@ export const useSupplementsStore = create()(persist((set, get) => ({
             }
             return updated;
         });
+        const nextSupplements = didMigrate ? migrated : state.supplements;
         if (didMigrate) {
-            useSupplementsStore.setState({ supplements: migrated });
+            useSupplementsStore.setState({ supplements: nextSupplements });
         }
+        reconcileSupplementCatalogIds(nextSupplements)
+            .then((reconciled) => {
+            if (reconciled) {
+                useSupplementsStore.setState({ supplements: reconciled });
+            }
+        })
+            .catch((error) => {
+            console.error("Failed to reconcile supplement catalog IDs", error);
+        });
     },
 }));

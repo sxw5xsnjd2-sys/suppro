@@ -9,6 +9,7 @@ export function AppHeader({
   title,
   titleAccessory,
   bottomSlot,
+  insetPreset,
   topInsetOffset,
   bottomPadding,
   style,
@@ -21,6 +22,7 @@ export function AppHeader({
   return (
     <GradientHeader
       style={style}
+      insetPreset={insetPreset}
       topInsetOffset={topInsetOffset}
       bottomPadding={bottomPadding}
     >

@@ -2,9 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
-  Pressable,
   StyleSheet,
-  TextInput,
   KeyboardAvoidingView,
   Platform,
   Alert,
@@ -12,9 +10,17 @@ import {
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { Screen } from "@/components/common/layout/Screen";
-import { Header } from "@/components/common/layout/Header";
-import { colors, spacing, radius, shadows } from "@/theme";
+import { LinearGradient } from "expo-linear-gradient";
+import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
+import {
+  AppButton,
+  AppFormField,
+  AppHeader,
+  AppTextInput,
+  PrimaryCard,
+  StatusPill,
+} from "@/components/common/ui";
+import { appTheme, radius, spacing, typography } from "@/theme";
 import { supabase } from "@src/lib/supabase";
 import {
   SIGNUP_COMPLETED_STORAGE_KEY,
@@ -184,171 +190,235 @@ export default function SignUpModal() {
   };
 
   return (
-    <Screen
+    <BackdropScreen
       header={
-        <Header
-          title="Create Account"
-          subtitle="Sign up once to secure your profile"
+        <AppHeader
+          insetPreset="modal"
+          title="Create account"
+          titleStyle={styles.headerTitle}
+          titleRowStyle={styles.headerTitleRow}
+          bottomSlot={
+            <View style={styles.headerBottom}>
+              <StatusPill label="ONBOARDING" style={styles.headerPill} />
+              <Text style={styles.headerSubtitle}>
+                Sign up once to secure your profile.
+              </Text>
+            </View>
+          }
           rightSlot={
-            <Pressable onPress={() => router.back()} style={styles.closeButton}>
-              <Ionicons name="close" size={20} color={colors.icon.primary} />
-            </Pressable>
+            <AppButton
+              onPress={() => router.back()}
+              variant="overlay"
+              size="icon"
+              accessibilityLabel="Close create account"
+            >
+              <Ionicons
+                name="close"
+                size={20}
+                color={appTheme.colors.textStrong}
+              />
+            </AppButton>
           }
         />
       }
       scrollable={false}
     >
       <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 48 : 0}
       >
-        <View style={styles.card}>
-          <Text style={styles.title}>Finish account setup</Text>
-          <Text style={styles.subtitle}>
-            You only need to do this once after onboarding.
-          </Text>
+        <View style={styles.container}>
+          <PrimaryCard style={styles.card}>
+            <View style={styles.heroCard}>
+              <View style={styles.heroGradientWrap}>
+                <LinearGradient
+                  colors={appTheme.gradients.accent}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.heroGradient}
+                />
+              </View>
+              <Text style={styles.eyebrow}>Finish account setup</Text>
+              <Text style={styles.title}>One account. Your profile stays with you.</Text>
+              <Text style={styles.subtitle}>
+                You only need to do this once after onboarding. Your questionnaire
+                answers will stay linked to this account.
+              </Text>
+            </View>
 
-          <View style={styles.form}>
-            <Text style={styles.label}>Name (optional)</Text>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="Your name"
-              placeholderTextColor={colors.text.muted}
-              style={styles.input}
-              autoCapitalize="words"
+            <View style={styles.form}>
+              <AppFormField label="Name (optional)" style={styles.field}>
+                <AppTextInput
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Your name"
+                  autoCapitalize="words"
+                  accessibilityLabel="Name"
+                />
+              </AppFormField>
+
+              <AppFormField label="Email" style={styles.field}>
+                <AppTextInput
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder="you@example.com"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textContentType="emailAddress"
+                  autoComplete="email"
+                  accessibilityLabel="Email"
+                />
+              </AppFormField>
+
+              <AppFormField label="Password" style={styles.field}>
+                <AppTextInput
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="At least 6 characters"
+                  secureTextEntry
+                  autoCapitalize="none"
+                  textContentType="newPassword"
+                  autoComplete="password-new"
+                  accessibilityLabel="Password"
+                />
+              </AppFormField>
+
+              <AppFormField label="Confirm password" style={styles.field}>
+                <AppTextInput
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  placeholder="Repeat password"
+                  secureTextEntry
+                  autoCapitalize="none"
+                  textContentType="password"
+                  autoComplete="password-new"
+                  accessibilityLabel="Confirm password"
+                />
+              </AppFormField>
+            </View>
+
+            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+
+            <AppButton
+              label={saving ? "Creating account..." : "Create account"}
+              onPress={handleSignUp}
+              disabled={!canSubmit}
+              variant="primary"
+              size="md"
+              accessibilityLabel="Create account"
+              style={[
+                styles.submitButton,
+                !canSubmit && styles.submitButtonDisabled,
+              ]}
+              textStyle={styles.submitButtonText}
             />
-
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@example.com"
-              placeholderTextColor={colors.text.muted}
-              style={styles.input}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="At least 6 characters"
-              placeholderTextColor={colors.text.muted}
-              style={styles.input}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-
-            <Text style={styles.label}>Confirm password</Text>
-            <TextInput
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              placeholder="Repeat password"
-              placeholderTextColor={colors.text.muted}
-              style={styles.input}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-          </View>
-
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-
-          <Pressable
-            onPress={handleSignUp}
-            disabled={!canSubmit}
-            style={[
-              styles.submitButton,
-              !canSubmit && styles.submitButtonDisabled,
-            ]}
-          >
-            <Text style={styles.submitButtonText}>
-              {saving ? "Creating account..." : "Create account"}
-            </Text>
-          </Pressable>
+          </PrimaryCard>
         </View>
       </KeyboardAvoidingView>
-    </Screen>
+    </BackdropScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingBottom: spacing.sm,
+  headerTitle: {
+    color: appTheme.colors.textPrimary,
+    fontSize: 24,
+    lineHeight: 24,
+    letterSpacing: -0.45,
+    fontFamily: typography.fontFamily.headingBlack,
   },
-  closeButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.background.elevated,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
+  headerTitleRow: {
+    alignItems: "flex-start",
   },
-  card: {
-    marginTop: spacing.lg,
-    backgroundColor: colors.background.card,
-    borderRadius: radius.xl,
-    padding: spacing.md,
-    ...shadows.card,
+  headerBottom: {
+    marginTop: 8,
   },
-  title: {
-    fontSize: 22,
-    lineHeight: 30,
-    fontWeight: "700",
-    color: colors.text.primary,
+  headerPill: {
+    alignSelf: "flex-start",
   },
-  subtitle: {
-    marginTop: spacing.xs,
+  headerSubtitle: {
+    marginTop: spacing.sm,
     fontSize: 14,
     lineHeight: 20,
-    color: colors.text.secondary,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
+  },
+  keyboard: {
+    flex: 1,
+  },
+  container: {
+    flex: 1,
+    width: "100%",
+    maxWidth: appTheme.modal.maxWidth,
+    alignSelf: "center",
+    paddingTop: spacing.sm,
+  },
+  card: {
+    paddingHorizontal: appTheme.card.paddingSpacious,
+    paddingVertical: appTheme.card.paddingSpacious,
+  },
+  heroCard: {
+    overflow: "hidden",
+    borderRadius: radius.md,
+    backgroundColor: appTheme.colors.surfaceAccent,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  heroGradientWrap: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  heroGradient: {
+    flex: 1,
+    opacity: 0.68,
+  },
+  eyebrow: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textStrong,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  title: {
+    marginTop: spacing.xs,
+    fontSize: 22,
+    lineHeight: 26,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textHeading,
+    letterSpacing: -0.45,
+  },
+  subtitle: {
+    marginTop: spacing.sm,
+    fontSize: 15,
+    lineHeight: 22,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
   },
   form: {
-    marginTop: spacing.md,
-    gap: spacing.xs,
+    marginTop: spacing.lg,
   },
-  label: {
-    marginTop: spacing.xs,
-    fontSize: 13,
-    fontWeight: "600",
-    color: colors.text.secondary,
-  },
-  input: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
-    color: colors.text.primary,
-    fontSize: 16,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+  field: {
+    marginBottom: spacing.md,
   },
   errorText: {
     marginTop: spacing.sm,
-    color: colors.status.danger,
+    color: appTheme.colors.danger,
     fontSize: 13,
     lineHeight: 18,
-    fontWeight: "600",
+    fontFamily: typography.fontFamily.bodyMedium,
   },
   submitButton: {
+    width: "100%",
     marginTop: spacing.md,
-    minHeight: 52,
-    borderRadius: radius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.brand.primary,
+    minHeight: 54,
   },
   submitButtonDisabled: {
     opacity: 0.5,
   },
   submitButtonText: {
-    color: colors.text.inverse,
     fontSize: 16,
-    fontWeight: "700",
+    fontFamily: typography.fontFamily.headingSemiBold,
   },
 });

@@ -1,8 +1,18 @@
 import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getClientId } from "./clientId";
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+import {
+    assertSupabaseConfig,
+    logSupabaseRuntimeDiagnostics,
+    SUPABASE_ANON_KEY,
+    SUPABASE_URL
+} from "./runtimeConfig";
+if (__DEV__) {
+    logSupabaseRuntimeDiagnostics();
+}
+assertSupabaseConfig();
+const supabaseUrl = SUPABASE_URL;
+const supabaseAnonKey = SUPABASE_ANON_KEY;
 // Default client (no per-user header); keep for legacy usage.
 const authConfig = {
     auth: {

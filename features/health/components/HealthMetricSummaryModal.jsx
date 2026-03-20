@@ -29,6 +29,7 @@ import {
 import { appTheme, spacing, typography } from "@/theme";
 import { DeleteMetricModal } from "./DeleteMetricModal";
 import {
+  APPLE_HEALTH_ENTRY_SOURCE,
   BLOOD_PRESSURE_METRIC_KEY,
   TRACKER_TYPES,
   formatMetricValue,
@@ -69,10 +70,59 @@ function TimelineEntryRow({
   entry,
   valueLabel,
   isTextMetric,
+  canDelete,
+  sourceLabel,
   onDeletePress,
   onSelect,
 }) {
   const [headerHeight, setHeaderHeight] = useState(null);
+
+  const content = (
+    <View style={styles.timelineCard}>
+      <View style={styles.timelineDot} />
+
+      <Pressable
+        accessibilityRole="button"
+        style={({ pressed }) => [
+          styles.timelineContent,
+          pressed && styles.timelineContentPressed,
+        ]}
+        onPress={() => onSelect(entry)}
+      >
+        <View
+          style={styles.timelineHeader}
+          onLayout={({ nativeEvent }) => {
+            const nextHeight = nativeEvent.layout.height;
+            setHeaderHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+          }}
+        >
+          <View style={styles.timelineHeaderCopy}>
+            <Text style={styles.timelineDate}>{formatEntryDate(entry.date)}</Text>
+            {sourceLabel ? (
+              <View style={styles.timelineSourcePill}>
+                <Text style={styles.timelineSourceText}>{sourceLabel}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {!isTextMetric ? (
+            <View style={styles.scorePill}>
+              <Text style={styles.scoreText}>{valueLabel}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {isTextMetric ? (
+          <Text style={styles.timelineValueText}>{valueLabel}</Text>
+        ) : null}
+        {entry.note ? <Text style={styles.timelineNote}>{entry.note}</Text> : null}
+      </Pressable>
+    </View>
+  );
+
+  if (!canDelete) {
+    return content;
+  }
 
   return (
     <Swipeable
@@ -112,39 +162,7 @@ function TimelineEntryRow({
         );
       }}
     >
-      <View style={styles.timelineCard}>
-        <View style={styles.timelineDot} />
-
-        <Pressable
-          accessibilityRole="button"
-          style={({ pressed }) => [
-            styles.timelineContent,
-            pressed && styles.timelineContentPressed,
-          ]}
-          onPress={() => onSelect(entry)}
-        >
-          <View
-            style={styles.timelineHeader}
-            onLayout={({ nativeEvent }) => {
-              const nextHeight = nativeEvent.layout.height;
-              setHeaderHeight((prev) => (prev === nextHeight ? prev : nextHeight));
-            }}
-          >
-            <Text style={styles.timelineDate}>{formatEntryDate(entry.date)}</Text>
-
-            {!isTextMetric ? (
-              <View style={styles.scorePill}>
-                <Text style={styles.scoreText}>{valueLabel}</Text>
-              </View>
-            ) : null}
-          </View>
-
-          {isTextMetric ? (
-            <Text style={styles.timelineValueText}>{valueLabel}</Text>
-          ) : null}
-          {entry.note ? <Text style={styles.timelineNote}>{entry.note}</Text> : null}
-        </Pressable>
-      </View>
+      {content}
     </Swipeable>
   );
 }
@@ -158,6 +176,9 @@ export function HealthMetricSummaryModal({
   onClose,
   onDeleteMetric,
   onDeleteEntry,
+  onRefresh,
+  isRefreshing = false,
+  isReadOnlyAppleMetric = false,
   supplementMarkers,
 }) {
   const safeEntries = entries ?? [];
@@ -361,6 +382,7 @@ export function HealthMetricSummaryModal({
   const [selectedEntryId, setSelectedEntryId] = useState(null);
 
   const handleDelete = () => {
+    if (isReadOnlyAppleMetric) return;
     if (!metricKey) return;
     setShowMetricDeleteModal(true);
   };
@@ -404,13 +426,24 @@ export function HealthMetricSummaryModal({
                 subtitleStyle={styles.headerSubtitle}
                 action={
                   <View style={styles.headerActions}>
-                    <AppButton
-                      label="Delete"
-                      variant="danger"
-                      size="sm"
-                      onPress={handleDelete}
-                      textStyle={styles.deleteButtonText}
-                    />
+                    {isReadOnlyAppleMetric ? (
+                      <AppButton
+                        label={isRefreshing ? "Refreshing..." : "Refresh"}
+                        variant="accent"
+                        size="sm"
+                        onPress={onRefresh}
+                        disabled={isRefreshing}
+                        textStyle={styles.refreshButtonText}
+                      />
+                    ) : (
+                      <AppButton
+                        label="Delete"
+                        variant="danger"
+                        size="sm"
+                        onPress={handleDelete}
+                        textStyle={styles.deleteButtonText}
+                      />
+                    )}
                     <AppButton
                       accessibilityLabel="Close summary"
                       onPress={onClose}
@@ -641,7 +674,11 @@ export function HealthMetricSummaryModal({
               <PrimaryCard style={styles.timelineSection}>
                 <SectionTitle
                   title="Timeline"
-                  subtitle="Swipe left on an entry to delete it."
+                  subtitle={
+                    isReadOnlyAppleMetric
+                      ? "Apple Health entries are read-only in Suppro."
+                      : "Swipe left on an entry to delete it."
+                  }
                   titleStyle={styles.cardTitle}
                   subtitleStyle={styles.cardSubtitle}
                   style={styles.timelineHeaderBlock}
@@ -668,6 +705,12 @@ export function HealthMetricSummaryModal({
                         entry={entry}
                         valueLabel={formatMetricValue(normalizedMetric, entry.value)}
                         isTextMetric={isTextMetric}
+                        canDelete={entry.source !== APPLE_HEALTH_ENTRY_SOURCE}
+                        sourceLabel={
+                          entry.source === APPLE_HEALTH_ENTRY_SOURCE
+                            ? "Apple Health"
+                            : "Manual"
+                        }
                         onDeletePress={handleEntryDeletePress}
                         onSelect={handleEntrySelect}
                       />
@@ -751,6 +794,11 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     fontSize: 13,
     fontFamily: typography.fontFamily.headingSemiBold,
+  },
+  refreshButtonText: {
+    fontSize: 13,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
   },
   close: {
     fontSize: 22,
@@ -870,11 +918,32 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     gap: spacing.sm,
   },
+  timelineHeaderCopy: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    flex: 1,
+    flexWrap: "wrap",
+  },
   timelineDate: {
     fontSize: 13,
     lineHeight: 18,
     fontFamily: typography.fontFamily.headingSemiBold,
     color: appTheme.colors.textPrimary,
+  },
+  timelineSourcePill: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: appTheme.colors.surfaceMuted,
+  },
+  timelineSourceText: {
+    fontSize: 10,
+    lineHeight: 12,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
   scorePill: {
     backgroundColor: appTheme.colors.surfaceAccent,

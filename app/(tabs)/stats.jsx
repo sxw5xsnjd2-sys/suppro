@@ -15,6 +15,7 @@ import {
 import { appTheme, spacing, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
+import { getEffectiveEntries } from "@/features/health/selectors";
 import { getSupplementRatings } from "@src/data/getSupplementRatings";
 import {
   isNumericMetric,
@@ -308,7 +309,7 @@ export default function StatsScreen() {
   const isFocused = useIsFocused();
   const supplements = useSupplementsStore((s) => s.supplements);
   const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
-  const healthEntries = useHealthStore((s) => s.entries);
+  const healthEntries = useHealthStore((s) => getEffectiveEntries(s));
   const healthMetrics = useHealthStore((s) => s.metrics);
 
   const [period, setPeriod] = useState("weekly");

@@ -13,6 +13,7 @@ import { AppButton, AppModalSurface, SectionTitle } from "@/components/common/ui
 import { appTheme, spacing, typography } from "@/theme";
 import { useHealthStore } from "@/features/health/store";
 import {
+  MANUAL_ENTRY_SOURCE,
   BLOOD_PRESSURE_METRIC_KEY,
   CUSTOM_METRIC_KEY,
   CUSTOM_TRACKER_OPTIONS,
@@ -282,6 +283,7 @@ export function AddMetricModal({ visible, onClose }) {
       type: metricToSave.key,
       value: entryValue,
       date: todayYYYYMMDD(),
+      source: MANUAL_ENTRY_SOURCE,
     });
 
     setMetricName("");

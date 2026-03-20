@@ -458,7 +458,7 @@ export default function SupplementModal() {
         minBottomPadding={96}
         header={
           <AppHeader
-            topInsetOffset={appTheme.modal.headerTopInsetOffset}
+            insetPreset="modal"
             bottomPadding={8}
             leftSlot={
               <AppButton

@@ -3,6 +3,7 @@ import {
   View,
   Text,
   Pressable,
+  FlatList,
   StyleSheet,
   TextInput,
   KeyboardAvoidingView,
@@ -11,11 +12,17 @@ import {
   Alert,
   Modal,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { Screen } from "@/components/common/layout/Screen";
-import { Header } from "@/components/common/layout/Header";
+import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
+import {
+  AppButton,
+  AppHeader,
+  PrimaryCard,
+  SelectableCard,
+} from "@/components/common/ui";
 import {
   isBloodPressureMetric,
   isValidBloodPressureValue,
@@ -30,7 +37,22 @@ import {
   SIGNUP_COMPLETED_STORAGE_KEY,
   SIGNUP_PROMPTED_STORAGE_KEY,
 } from "@src/lib/onboarding";
-import { colors, spacing, radius, shadows } from "@/theme";
+import { appTheme, shadows, spacing, typography } from "@/theme";
+
+const colors = {
+  brand: {
+    dark: appTheme.colors.textStrong,
+  },
+  text: {
+    muted: appTheme.input.placeholder,
+  },
+  status: {
+    danger: appTheme.colors.danger,
+  },
+  icon: {
+    primary: appTheme.input.icon,
+  },
+};
 
 const SEX_OPTIONS = [
   { value: "female", label: "Female" },
@@ -138,27 +160,71 @@ const SUPPLEMENT_FREQUENCY_OPTIONS = [
   { value: "3", label: "3 times per day" },
   { value: "4_plus", label: "4+ times per day" },
 ];
+const MIN_DATE_PICKER_DATE = new Date(1900, 0, 1, 12, 0, 0, 0);
+const DATE_WHEEL_ITEM_HEIGHT = 44;
+const DATE_WHEEL_VISIBLE_ROWS = 5;
+const DATE_WHEEL_HEIGHT = DATE_WHEEL_ITEM_HEIGHT * DATE_WHEEL_VISIBLE_ROWS;
+const DATE_WHEEL_SPACER_HEIGHT =
+  (DATE_WHEEL_HEIGHT - DATE_WHEEL_ITEM_HEIGHT) / 2;
+const MONTH_OPTIONS = [
+  { label: "Jan", value: 0 },
+  { label: "Feb", value: 1 },
+  { label: "Mar", value: 2 },
+  { label: "Apr", value: 3 },
+  { label: "May", value: 4 },
+  { label: "Jun", value: 5 },
+  { label: "Jul", value: 6 },
+  { label: "Aug", value: 7 },
+  { label: "Sep", value: 8 },
+  { label: "Oct", value: 9 },
+  { label: "Nov", value: 10 },
+  { label: "Dec", value: 11 },
+];
+
+function parseLocalISODate(value) {
+  if (!value || typeof value !== "string") return null;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+
+  const parsed = new Date(year, month - 1, day, 12, 0, 0, 0);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return parsed;
+}
 
 function isValidISODate(value) {
-  if (!value || typeof value !== "string") return false;
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return false;
-  const parsed = new Date(`${value}T00:00:00`);
-  return (
-    !Number.isNaN(parsed.getTime()) &&
-    parsed.getUTCFullYear() === year &&
-    parsed.getUTCMonth() + 1 === month &&
-    parsed.getUTCDate() === day
-  );
+  return Boolean(parseLocalISODate(value));
 }
 
 function formatDate(value) {
   if (!isValidISODate(value)) return "Select date";
-  const [year, month, day] = value.split("-").map(Number);
-  const monthLabel = new Date(year, month - 1, day).toLocaleString("en-US", {
+  const parsed = parseLocalISODate(value);
+  const year = parsed.getFullYear();
+  const day = parsed.getDate();
+  const monthLabel = parsed.toLocaleString("en-US", {
     month: "short",
   });
   return `${monthLabel} ${day}, ${year}`;
+}
+
+function toISODate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDatePickerInitialDate(initialDate) {
+  return parseLocalISODate(initialDate) ?? new Date();
 }
 
 function daysInMonth(year, monthIndex) {
@@ -205,48 +271,144 @@ function DatePickerModal({
   onClose,
   title = "Select date",
 }) {
-  const parsed = isValidISODate(initialDate)
-    ? new Date(`${initialDate}T00:00:00`)
-    : new Date();
-  const [year, setYear] = useState(parsed.getFullYear());
-  const [month, setMonth] = useState(parsed.getMonth());
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const [pickerDate, setPickerDate] = useState(() =>
+    getDatePickerInitialDate(initialDate)
+  );
+  const monthListRef = useRef(null);
+  const dayListRef = useRef(null);
+  const yearListRef = useRef(null);
+  const selectedYear = pickerDate.getFullYear();
+  const selectedMonth = pickerDate.getMonth();
+  const selectedDay = pickerDate.getDate();
+  const yearOptions = useMemo(
+    () =>
+      Array.from(
+        { length: currentYear - MIN_DATE_PICKER_DATE.getFullYear() + 1 },
+        (_, index) => currentYear - index
+      ),
+    [currentYear]
+  );
+  const dayOptions = useMemo(
+    () =>
+      Array.from(
+        { length: daysInMonth(selectedYear, selectedMonth) },
+        (_, index) => index + 1
+      ),
+    [selectedMonth, selectedYear]
+  );
+  const selectedMonthIndex = MONTH_OPTIONS.findIndex(
+    (option) => option.value === selectedMonth
+  );
+  const selectedDayIndex = dayOptions.findIndex((option) => option === selectedDay);
+  const selectedYearIndex = yearOptions.findIndex(
+    (option) => option === selectedYear
+  );
 
   useEffect(() => {
     if (!visible) return;
-    const nextParsed = isValidISODate(initialDate)
-      ? new Date(`${initialDate}T00:00:00`)
-      : new Date();
-    setYear(nextParsed.getFullYear());
-    setMonth(nextParsed.getMonth());
+    setPickerDate(getDatePickerInitialDate(initialDate));
   }, [initialDate, visible]);
 
-  const handleMonthChange = (delta) => {
-    setMonth((prev) => {
-      const next = prev + delta;
-      if (next < 0) {
-        setYear((currentYear) => currentYear - 1);
-        return 11;
-      }
-      if (next > 11) {
-        setYear((currentYear) => currentYear + 1);
-        return 0;
-      }
-      return next;
+  const scrollWheelToIndex = (ref, index, animated = false) => {
+    if (!ref?.current || index < 0) return;
+    try {
+      ref.current.scrollToOffset({
+        offset: index * DATE_WHEEL_ITEM_HEIGHT,
+        animated,
+      });
+    } catch {
+      return;
+    }
+  };
+
+  useEffect(() => {
+    if (!visible) return;
+    const timeoutId = setTimeout(() => {
+      scrollWheelToIndex(monthListRef, selectedMonthIndex);
+      scrollWheelToIndex(dayListRef, selectedDayIndex);
+      scrollWheelToIndex(yearListRef, selectedYearIndex);
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
+  }, [selectedDayIndex, selectedMonthIndex, selectedYearIndex, visible]);
+
+  const updatePickerDate = ({ year, month, day }) => {
+    setPickerDate((previous) => {
+      const nextYear = year ?? previous.getFullYear();
+      const nextMonth = month ?? previous.getMonth();
+      const nextDay = day ?? previous.getDate();
+      const clampedDay = Math.min(nextDay, daysInMonth(nextYear, nextMonth));
+      return new Date(nextYear, nextMonth, clampedDay, 12, 0, 0, 0);
     });
   };
 
-  const dayCells = (() => {
-    const firstDay = new Date(year, month, 1).getDay();
-    const totalDays = daysInMonth(year, month);
-    const blanks = Array.from({ length: firstDay }, () => null);
-    const days = Array.from({ length: totalDays }, (_, index) => index + 1);
-    return [...blanks, ...days];
-  })();
+  const buildScrollHandler = (options, onValueChange) => (event) => {
+    const offsetY = event.nativeEvent.contentOffset.y;
+    const index = Math.round(offsetY / DATE_WHEEL_ITEM_HEIGHT);
+    const value = options[index];
+    if (value === undefined) return;
+    onValueChange(value, index);
+  };
 
-  const monthLabel = new Date(year, month, 1).toLocaleString("en-US", {
-    month: "short",
-    year: "numeric",
-  });
+  const renderWheel = ({
+    label,
+    data,
+    selectedValue,
+    listRef,
+    onValueChange,
+    getItemLabel,
+  }) => (
+    <View style={styles.dateWheelColumn}>
+      <Text style={styles.dateWheelLabel}>{label}</Text>
+      <View style={styles.dateWheelFrame}>
+        <View pointerEvents="none" style={styles.dateWheelSelectionOverlay} />
+        <FlatList
+          ref={listRef}
+          data={data}
+          keyExtractor={(item) =>
+            typeof item === "object" && item !== null
+              ? String(item.value ?? item.label)
+              : String(item)
+          }
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+          snapToInterval={DATE_WHEEL_ITEM_HEIGHT}
+          decelerationRate="fast"
+          getItemLayout={(_, index) => ({
+            length: DATE_WHEEL_ITEM_HEIGHT,
+            offset: DATE_WHEEL_ITEM_HEIGHT * index,
+            index,
+          })}
+          ListHeaderComponent={<View style={styles.dateWheelSpacer} />}
+          ListFooterComponent={<View style={styles.dateWheelSpacer} />}
+          onMomentumScrollEnd={buildScrollHandler(data, onValueChange)}
+          renderItem={({ item, index }) => {
+            const selected = item === selectedValue;
+            return (
+              <Pressable
+                onPress={() => {
+                  onValueChange(item, index);
+                  scrollWheelToIndex(listRef, index, true);
+                }}
+                style={styles.dateWheelItem}
+              >
+                <Text
+                  style={[
+                    styles.dateWheelItemText,
+                    selected && styles.dateWheelItemTextSelected,
+                  ]}
+                >
+                  {getItemLabel(item)}
+                </Text>
+              </Pressable>
+            );
+          }}
+        />
+      </View>
+    </View>
+  );
 
   return (
     <Modal
@@ -257,70 +419,63 @@ function DatePickerModal({
     >
       <View style={styles.dateModalBackdrop}>
         <View style={styles.dateModalCard}>
-          <View style={styles.dateModalHeader}>
-            <Pressable onPress={() => handleMonthChange(-1)} hitSlop={8}>
-              <Text style={styles.dateNavArrow}>{"<"}</Text>
-            </Pressable>
-            <View style={styles.dateModalHeaderText}>
-              <Text style={styles.dateModalTitle}>{title}</Text>
-              <Text style={styles.dateModalMonth}>{monthLabel}</Text>
-            </View>
-            <Pressable onPress={() => handleMonthChange(1)} hitSlop={8}>
-              <Text style={styles.dateNavArrow}>{">"}</Text>
-            </Pressable>
+          <View style={styles.dateModalHeaderText}>
+            <Text style={styles.dateModalTitle}>{title}</Text>
+            <Text style={styles.dateModalMonth}>
+              {formatDate(toISODate(pickerDate))}
+            </Text>
           </View>
 
-          <View style={styles.weekdayRow}>
-            {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => (
-              <Text key={`${label}-${index}`} style={styles.weekdayLabel}>
-                {label}
-              </Text>
-            ))}
-          </View>
-
-          <View style={styles.calendarGrid}>
-            {dayCells.map((day, index) => {
-              const isoDate = day
-                ? `${year}-${String(month + 1).padStart(2, "0")}-${String(
-                    day
-                  ).padStart(2, "0")}`
-                : "";
-              const isSelected = isoDate && isoDate === initialDate;
-              const isFuture =
-                isoDate && new Date(`${isoDate}T00:00:00`) > new Date();
-
-              return (
-                <Pressable
-                  key={`${day ?? "blank"}-${index}`}
-                  style={[
-                    styles.dayCell,
-                    isSelected && styles.dayCellSelected,
-                    (!day || isFuture) && styles.dayCellDisabled,
-                  ]}
-                  disabled={!day || isFuture}
-                  onPress={() => {
-                    if (!isoDate) return;
-                    onSelect(isoDate);
-                    onClose();
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.dayLabel,
-                      isSelected && styles.dayLabelSelected,
-                      (!day || isFuture) && styles.dayLabelDisabled,
-                    ]}
-                  >
-                    {day ?? ""}
-                  </Text>
-                </Pressable>
-              );
+          <View style={styles.dateWheelRow}>
+            {renderWheel({
+              label: "Day",
+              data: dayOptions,
+              selectedValue: selectedDay,
+              listRef: dayListRef,
+              onValueChange: (value) => updatePickerDate({ day: value }),
+              getItemLabel: (value) => String(value),
+            })}
+            {renderWheel({
+              label: "Month",
+              data: MONTH_OPTIONS,
+              selectedValue:
+                MONTH_OPTIONS.find((option) => option.value === selectedMonth) ??
+                null,
+              listRef: monthListRef,
+              onValueChange: (option) => updatePickerDate({ month: option.value }),
+              getItemLabel: (option) => option.label,
+            })}
+            {renderWheel({
+              label: "Year",
+              data: yearOptions,
+              selectedValue: selectedYear,
+              listRef: yearListRef,
+              onValueChange: (value) => updatePickerDate({ year: value }),
+              getItemLabel: (value) => String(value),
             })}
           </View>
 
-          <Pressable onPress={onClose} style={styles.dateModalCloseButton}>
-            <Text style={styles.dateModalCloseText}>Cancel</Text>
-          </Pressable>
+          <View style={styles.dateModalActionRow}>
+            <Pressable onPress={onClose} style={styles.dateModalActionButton}>
+              <Text style={styles.dateModalCloseText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => onSelect(toISODate(pickerDate))}
+              style={[
+                styles.dateModalActionButton,
+                styles.dateModalActionButtonPrimary,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.dateModalCloseText,
+                  styles.dateModalActionButtonPrimaryText,
+                ]}
+              >
+                Done
+              </Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     </Modal>
@@ -575,34 +730,40 @@ function toggleInArray(current, value) {
   return [...current, value];
 }
 
-function OptionRow({ label, description, selected, onPress }) {
+function OptionRow({ label, description, selected, disabled, onPress }) {
   return (
-    <Pressable
+    <SelectableCard
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.optionRow,
-        selected && styles.optionRowSelected,
-        pressed && styles.optionRowPressed,
-      ]}
+      selected={selected}
+      disabled={disabled}
+      accessibilityRole="checkbox"
+      trailing={
+        selected ? (
+          <Ionicons
+            name="checkmark-circle"
+            size={20}
+            color={appTheme.colors.textStrong}
+          />
+        ) : (
+          <Ionicons
+            name="ellipse-outline"
+            size={20}
+            color={appTheme.colors.textTertiary}
+          />
+        )
+      }
+      style={styles.optionRow}
+      contentStyle={styles.optionContent}
     >
       <View style={styles.optionTextBlock}>
-        <Text
-          style={[styles.optionLabel, selected && styles.optionLabelSelected]}
-        >
+        <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>
           {label}
         </Text>
-        {description ? <Text style={styles.optionDescription}>{description}</Text> : null}
+        {description ? (
+          <Text style={styles.optionDescription}>{description}</Text>
+        ) : null}
       </View>
-      {selected ? (
-        <Ionicons name="checkmark-circle" size={20} color={colors.brand.dark} />
-      ) : (
-        <Ionicons
-          name="ellipse-outline"
-          size={20}
-          color={colors.border.strong}
-        />
-      )}
-    </Pressable>
+    </SelectableCard>
   );
 }
 
@@ -761,7 +922,8 @@ export default function QuestionnaireScreen() {
 
     if (currentQuestion.type === "date") {
       if (!isValidISODate(form[currentQuestion.field])) return false;
-      return new Date(`${form[currentQuestion.field]}T00:00:00`) <= new Date();
+      const parsed = parseLocalISODate(form[currentQuestion.field]);
+      return Boolean(parsed) && parsed <= new Date();
     }
 
     if (currentQuestion.type === "number") {
@@ -1066,8 +1228,12 @@ export default function QuestionnaireScreen() {
           const isSelected = selected.includes(option.value);
           const disabled = atLimit && !isSelected;
           return (
-            <Pressable
+            <OptionRow
               key={option.value}
+              label={option.label}
+              description={option.description}
+              selected={isSelected}
+              disabled={disabled}
               onPress={() => {
                 if (disabled) return;
                 const next = toggleInArray(selected, option.value);
@@ -1090,41 +1256,7 @@ export default function QuestionnaireScreen() {
 
                 updateField(question.field, next);
               }}
-              style={({ pressed }) => [
-                styles.optionRow,
-                isSelected && styles.optionRowSelected,
-                disabled && styles.optionRowDisabled,
-                pressed && !disabled && styles.optionRowPressed,
-              ]}
-            >
-              <View style={styles.optionTextBlock}>
-                <Text
-                  style={[
-                    styles.optionLabel,
-                    isSelected && styles.optionLabelSelected,
-                    disabled && styles.optionLabelDisabled,
-                  ]}
-                >
-                  {option.label}
-                </Text>
-                {option.description ? (
-                  <Text style={styles.optionDescription}>{option.description}</Text>
-                ) : null}
-              </View>
-              {isSelected ? (
-                <Ionicons
-                  name="checkmark-circle"
-                  size={20}
-                  color={colors.brand.dark}
-                />
-              ) : (
-                <Ionicons
-                  name="ellipse-outline"
-                  size={20}
-                  color={colors.border.strong}
-                />
-              )}
-            </Pressable>
+            />
           );
         })}
         {Number.isFinite(question.maxSelect) ? (
@@ -1259,7 +1391,10 @@ export default function QuestionnaireScreen() {
         visible={datePickerOpen}
         initialDate={form[question.field]}
         title={question.title}
-        onSelect={(dateValue) => updateField(question.field, dateValue)}
+        onSelect={(dateValue) => {
+          updateField(question.field, dateValue);
+          setDatePickerOpen(false);
+        }}
         onClose={() => setDatePickerOpen(false)}
       />
     </>
@@ -1410,7 +1545,7 @@ export default function QuestionnaireScreen() {
             );
             const isExpanded = expandedFrequencyRowId === row.id;
             return (
-              <View key={row.id} style={styles.supplementCard}>
+              <PrimaryCard key={row.id} style={styles.supplementCard}>
                 <View style={styles.supplementCardHeader}>
                   <Text style={styles.supplementCardTitle}>
                     Supplement {index + 1}
@@ -1494,7 +1629,7 @@ export default function QuestionnaireScreen() {
                     </View>
                   ) : null}
                 </View>
-              </View>
+              </PrimaryCard>
             );
           })}
           <Pressable onPress={addSupplementRow} style={styles.addSupplementButton}>
@@ -1767,20 +1902,28 @@ export default function QuestionnaireScreen() {
 
     if (currentQuestion.type === "consent") {
       return (
-        <Pressable
+        <SelectableCard
           onPress={() => updateField("consentAccepted", !form.consentAccepted)}
-          style={[
-            styles.consentBox,
-            form.consentAccepted && styles.consentBoxSelected,
-          ]}
+          selected={form.consentAccepted}
+          accessibilityRole="checkbox"
+          style={styles.consentBox}
+          contentStyle={styles.optionContent}
+          trailing={
+            <Ionicons
+              name={
+                form.consentAccepted ? "checkbox-outline" : "square-outline"
+              }
+              size={22}
+              color={
+                form.consentAccepted
+                  ? appTheme.colors.textStrong
+                  : appTheme.colors.textTertiary
+              }
+            />
+          }
         >
-          <Ionicons
-            name={form.consentAccepted ? "checkbox-outline" : "square-outline"}
-            size={22}
-            color={form.consentAccepted ? colors.brand.dark : colors.icon.muted}
-          />
           <Text style={styles.consentText}>Agree (required to continue)</Text>
-        </Pressable>
+        </SelectableCard>
       );
     }
 
@@ -1788,62 +1931,103 @@ export default function QuestionnaireScreen() {
   };
 
   return (
-    <Screen
+    <BackdropScreen
       header={
-        <Header
+        <AppHeader
+          insetPreset="modal"
           title="Questionnaire"
-          subtitle="Help us make the best supplement plan for you "
+          titleStyle={styles.headerTitle}
+          bottomSlot={
+            <Text style={styles.headerSubtitle}>
+              Tailor your supplement plan to your goals, baseline, and routine.
+            </Text>
+          }
           rightSlot={
-            <Pressable onPress={() => router.back()} style={styles.closeButton}>
-              <Ionicons name="close" size={20} color={colors.icon.primary} />
-            </Pressable>
+            <AppButton
+              onPress={() => router.back()}
+              variant="overlay"
+              size="icon"
+              accessibilityLabel="Close questionnaire"
+            >
+              <Ionicons
+                name="close"
+                size={20}
+                color={appTheme.colors.textStrong}
+              />
+            </AppButton>
           }
         />
       }
       scrollable={false}
+      contentStyle={styles.screenContent}
+      bottomInsetOffset={32}
+      minBottomPadding={32}
     >
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <View style={styles.progressCard}>
+        <PrimaryCard style={styles.progressCard}>
           <View style={styles.progressRow}>
-            <Text style={styles.progressLabel}>
-              Question {currentIndex + 1} of {questions.length}
-            </Text>
-            <Text style={styles.progressPercent}>
-              {Math.round(progressValue * 100)}%
-            </Text>
+            <View style={styles.progressMeta}>
+              <View style={styles.progressEyebrow}>
+                <Text style={styles.progressEyebrowText}>Progress</Text>
+              </View>
+              <Text style={styles.progressLabel}>
+                Question {currentIndex + 1} of {questions.length}
+              </Text>
+            </View>
+            <View style={styles.progressPercentBadge}>
+              <Text style={styles.progressPercent}>
+                {Math.round(progressValue * 100)}%
+              </Text>
+            </View>
           </View>
           <View style={styles.progressTrack}>
-            <View
+            <LinearGradient
+              colors={appTheme.gradients.accent}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
               style={[
                 styles.progressFill,
                 { width: `${Math.max(8, progressValue * 100)}%` },
               ]}
             />
           </View>
-        </View>
+        </PrimaryCard>
 
-        <View style={styles.card}>
-          <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false}>
-            <Text style={styles.sectionLabel}>{currentQuestion?.section}</Text>
+        <PrimaryCard style={styles.card}>
+          <ScrollView
+            ref={scrollRef}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.cardScrollContent}
+          >
+            <LinearGradient
+              colors={appTheme.gradients.accent}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.sectionPill}
+            >
+              <Text style={styles.sectionLabel}>{currentQuestion?.section}</Text>
+            </LinearGradient>
             <Text style={styles.cardTitle}>{currentQuestion?.title}</Text>
             {currentQuestion?.description ? (
               <Text style={styles.cardBody}>{currentQuestion.description}</Text>
             ) : null}
             <View style={styles.questionBody}>{renderCurrentQuestion()}</View>
           </ScrollView>
-        </View>
+        </PrimaryCard>
 
         <View style={styles.footer}>
           <Pressable
             onPress={handleBack}
             disabled={currentIndex === 0}
-            style={[
+            style={({ pressed }) => [
               styles.footerButton,
               styles.backButton,
               currentIndex === 0 && styles.footerButtonDisabled,
+              pressed && currentIndex !== 0 && styles.footerButtonPressed,
             ]}
           >
             <Text
@@ -1859,125 +2043,176 @@ export default function QuestionnaireScreen() {
           <Pressable
             onPress={handleNext}
             disabled={!isCurrentComplete || submitting}
-            style={[
+            style={({ pressed }) => [
               styles.footerButton,
               styles.nextButton,
               (!isCurrentComplete || submitting) && styles.footerButtonDisabled,
+              pressed &&
+                isCurrentComplete &&
+                !submitting &&
+                styles.footerButtonPressed,
             ]}
           >
-            <Text
-              style={[
-                styles.footerButtonText,
-                (!isCurrentComplete || submitting) &&
-                  styles.footerButtonTextDisabled,
-              ]}
+            <LinearGradient
+              colors={appTheme.gradients.accent}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.nextButtonGradient}
             >
-              {isLastStep ? (submitting ? "Saving..." : "Finish") : "Next"}
-            </Text>
+              <Text
+                style={[
+                  styles.footerButtonText,
+                  styles.nextButtonText,
+                  (!isCurrentComplete || submitting) &&
+                    styles.footerButtonTextDisabled,
+                ]}
+              >
+                {isLastStep ? (submitting ? "Saving..." : "Finish") : "Next"}
+              </Text>
+            </LinearGradient>
           </Pressable>
         </View>
       </KeyboardAvoidingView>
-    </Screen>
+    </BackdropScreen>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContent: {
+    flex: 1,
+    paddingBottom: 2,
+  },
   container: {
     flex: 1,
     gap: spacing.sm,
-    paddingBottom: spacing.sm,
   },
-  closeButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.background.elevated,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
+  headerTitle: {
+    fontSize: 28,
+    letterSpacing: -0.8,
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
   },
   progressCard: {
-    borderRadius: radius.lg,
-    backgroundColor: colors.background.card,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    ...shadows.card,
+    paddingVertical: 14,
   },
   progressRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: spacing.xs,
+    marginBottom: 12,
+    gap: spacing.sm,
+  },
+  progressMeta: {
+    flex: 1,
+  },
+  progressEyebrow: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: appTheme.colors.surfaceMuted,
+    marginBottom: 8,
+  },
+  progressEyebrowText: {
+    fontSize: 11,
+    lineHeight: 13,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
   },
   progressLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: colors.text.secondary,
+    fontSize: 15,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.textPrimary,
+  },
+  progressPercentBadge: {
+    minWidth: 58,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: appTheme.colors.surfaceAccent,
   },
   progressPercent: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.brand.dark,
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
   },
   progressTrack: {
-    height: 8,
-    borderRadius: 8,
-    backgroundColor: colors.background.shell,
+    height: appTheme.questionnaire.progressHeight,
+    borderRadius: 999,
+    backgroundColor: appTheme.colors.surfaceMuted,
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
-    borderRadius: 8,
-    backgroundColor: colors.brand.primary,
+    borderRadius: 999,
   },
   card: {
     flex: 1,
-    backgroundColor: colors.background.card,
-    borderRadius: radius.xl,
-    padding: spacing.md,
-    ...shadows.card,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  cardScrollContent: {
+    paddingBottom: spacing.md,
+  },
+  sectionPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    marginBottom: 14,
   },
   sectionLabel: {
     fontSize: 12,
-    fontWeight: "700",
+    lineHeight: 15,
+    fontFamily: typography.fontFamily.headingSemiBold,
     textTransform: "uppercase",
-    letterSpacing: 0.35,
-    color: colors.text.muted,
-    marginBottom: spacing.xs,
+    letterSpacing: 0.3,
+    color: appTheme.colors.textStrong,
   },
   cardTitle: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: colors.text.primary,
-    lineHeight: 30,
+    fontSize: 28,
+    lineHeight: 33,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textPrimary,
+    letterSpacing: -0.7,
   },
   cardBody: {
-    marginTop: spacing.xs,
-    fontSize: 14,
+    marginTop: 8,
+    fontSize: 15,
     lineHeight: 21,
-    color: colors.text.secondary,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
   },
   questionBody: {
-    marginTop: spacing.md,
+    marginTop: 18,
     paddingBottom: spacing.md,
   },
   input: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
-    color: colors.text.primary,
+    minHeight: appTheme.questionnaire.fieldMinHeight,
+    borderRadius: appTheme.input.radius,
+    backgroundColor: appTheme.input.background,
+    color: appTheme.input.text,
     fontSize: 16,
+    lineHeight: 21,
+    fontFamily: typography.fontFamily.body,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: 14,
   },
   selectInput: {
-    minHeight: 52,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
+    minHeight: appTheme.questionnaire.fieldMinHeight,
+    borderRadius: appTheme.input.radius,
+    backgroundColor: appTheme.input.background,
     paddingHorizontal: spacing.md,
     flexDirection: "row",
     alignItems: "center",
@@ -1985,136 +2220,123 @@ const styles = StyleSheet.create({
   },
   selectInputText: {
     fontSize: 15,
-    color: colors.text.primary,
-    fontWeight: "600",
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.input.text,
   },
   selectInputPlaceholder: {
-    color: colors.text.muted,
-    fontWeight: "500",
+    color: appTheme.input.placeholder,
   },
   segmentedRow: {
     flexDirection: "row",
-    gap: spacing.xs,
+    gap: 10,
   },
   segmentedOption: {
     flex: 1,
-    minHeight: 46,
-    borderRadius: radius.md,
+    minHeight: appTheme.questionnaire.fieldMinHeight,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
+    borderColor: appTheme.colors.borderSubtle,
+    backgroundColor: appTheme.colors.surface,
     alignItems: "center",
     justifyContent: "center",
   },
   segmentedOptionSelected: {
-    borderColor: colors.brand.primary,
-    backgroundColor: colors.brand.soft,
+    backgroundColor: appTheme.colors.surfaceAccent,
+    borderColor: "rgba(20,20,20,0.16)",
   },
   segmentedOptionLabel: {
     fontSize: 14,
-    fontWeight: "600",
-    color: colors.text.secondary,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.textSecondary,
   },
   segmentedOptionLabelSelected: {
-    color: colors.brand.dark,
+    color: appTheme.colors.textStrong,
   },
   rowInputs: {
     flexDirection: "row",
-    gap: spacing.xs,
+    gap: 10,
   },
   rowInputItem: {
     flex: 1,
   },
   textarea: {
-    minHeight: 110,
+    minHeight: 124,
   },
   optionsGroup: {
-    gap: spacing.xs,
+    gap: 10,
   },
   optionRow: {
-    minHeight: 54,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
-    paddingHorizontal: spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  optionRowSelected: {
-    backgroundColor: colors.brand.soft,
-    borderColor: colors.brand.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
   },
   optionRowPressed: {
-    opacity: 0.86,
-  },
-  optionRowDisabled: {
-    opacity: 0.45,
+    opacity: 0.82,
   },
   optionTextBlock: {
     flex: 1,
-    paddingRight: spacing.sm,
+  },
+  optionContent: {
+    alignItems: "center",
   },
   optionLabel: {
     fontSize: 15,
-    color: colors.text.primary,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.textPrimary,
   },
   optionLabelSelected: {
-    color: colors.brand.dark,
-    fontWeight: "600",
-  },
-  optionLabelDisabled: {
-    color: colors.text.muted,
+    color: appTheme.colors.textStrong,
   },
   optionDescription: {
-    marginTop: 2,
+    marginTop: 4,
     fontSize: 12,
-    lineHeight: 16,
-    color: colors.text.secondary,
+    lineHeight: 17,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
   },
   helperText: {
     fontSize: 13,
     lineHeight: 18,
-    color: colors.text.secondary,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
   },
   scaleGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.xs,
+    gap: 10,
   },
   scaleChip: {
     width: 46,
     height: 46,
     borderRadius: 23,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
+    borderColor: appTheme.colors.borderSubtle,
+    backgroundColor: appTheme.colors.surface,
     alignItems: "center",
     justifyContent: "center",
   },
   scaleChipSelected: {
-    backgroundColor: colors.brand.primary,
-    borderColor: colors.brand.primary,
+    backgroundColor: appTheme.colors.surfaceAccent,
+    borderColor: "rgba(20,20,20,0.16)",
   },
   scaleChipText: {
     fontSize: 15,
-    fontWeight: "700",
-    color: colors.text.secondary,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textSecondary,
   },
   scaleChipTextSelected: {
-    color: colors.text.inverse,
+    color: appTheme.colors.textStrong,
   },
   complexGroup: {
     gap: spacing.sm,
   },
   supplementCard: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
-    padding: spacing.sm,
-    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    gap: 10,
   },
   supplementCardHeader: {
     flexDirection: "row",
@@ -2123,54 +2345,58 @@ const styles = StyleSheet.create({
   },
   supplementCardTitle: {
     fontSize: 13,
-    fontWeight: "700",
-    color: colors.text.secondary,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textSecondary,
   },
   frequencyDropdown: {
-    marginTop: spacing.xs,
-    borderRadius: radius.md,
+    marginTop: 10,
+    borderRadius: appTheme.card.radius,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.card,
+    borderColor: appTheme.colors.borderSubtle,
+    backgroundColor: appTheme.colors.surface,
     overflow: "hidden",
+    ...shadows.card,
   },
   frequencyOption: {
     minHeight: 44,
     paddingHorizontal: spacing.md,
     justifyContent: "center",
     borderBottomWidth: 1,
-    borderBottomColor: colors.border.subtle,
+    borderBottomColor: appTheme.colors.borderSubtle,
   },
   frequencyOptionSelected: {
-    backgroundColor: colors.brand.soft,
+    backgroundColor: appTheme.colors.surfaceAccent,
   },
   frequencyOptionLabel: {
     fontSize: 14,
-    color: colors.text.secondary,
-    fontWeight: "600",
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.textSecondary,
   },
   frequencyOptionLabelSelected: {
-    color: colors.brand.dark,
+    color: appTheme.colors.textStrong,
   },
   addSupplementButton: {
     minHeight: 48,
-    borderRadius: radius.md,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.border.strong,
-    backgroundColor: colors.background.card,
+    borderColor: appTheme.colors.borderPill,
+    backgroundColor: appTheme.colors.surfaceOverlay,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
-    gap: spacing.xs,
+    gap: 8,
   },
   addSupplementButtonText: {
     fontSize: 14,
-    fontWeight: "700",
-    color: colors.brand.dark,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
   },
   dateModalBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(16, 23, 41, 0.32)",
+    backgroundColor: appTheme.modal.scrim,
     alignItems: "center",
     justifyContent: "center",
     padding: spacing.md,
@@ -2178,8 +2404,8 @@ const styles = StyleSheet.create({
   dateModalCard: {
     width: "100%",
     maxWidth: 360,
-    borderRadius: radius.lg,
-    backgroundColor: colors.background.card,
+    borderRadius: appTheme.card.radius,
+    backgroundColor: appTheme.colors.surface,
     padding: spacing.md,
     ...shadows.card,
   },
@@ -2192,24 +2418,155 @@ const styles = StyleSheet.create({
   dateModalHeaderText: {
     flex: 1,
     alignItems: "center",
+    justifyContent: "center",
   },
   dateModalTitle: {
     fontSize: 14,
-    fontWeight: "700",
-    color: colors.text.secondary,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textSecondary,
   },
   dateModalMonth: {
-    marginTop: 2,
+    marginTop: 4,
     fontSize: 18,
-    fontWeight: "700",
-    color: colors.text.primary,
+    lineHeight: 22,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textPrimary,
+  },
+  dateWheelRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  dateWheelColumn: {
+    flex: 1,
+  },
+  dateWheelLabel: {
+    marginBottom: 8,
+    textAlign: "center",
+    fontSize: 12,
+    lineHeight: 15,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  dateWheelFrame: {
+    height: DATE_WHEEL_HEIGHT,
+    borderRadius: appTheme.card.radius,
+    backgroundColor: appTheme.colors.surfaceMuted,
+    overflow: "hidden",
+    position: "relative",
+  },
+  dateWheelSelectionOverlay: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    top: DATE_WHEEL_SPACER_HEIGHT,
+    height: DATE_WHEEL_ITEM_HEIGHT,
+    borderRadius: 14,
+    backgroundColor: appTheme.colors.surfaceAccent,
+    borderWidth: 1,
+    borderColor: "rgba(20,20,20,0.12)",
+  },
+  dateWheelSpacer: {
+    height: DATE_WHEEL_SPACER_HEIGHT,
+  },
+  dateWheelItem: {
+    height: DATE_WHEEL_ITEM_HEIGHT,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateWheelItemText: {
+    fontSize: 16,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.textTertiary,
+  },
+  dateWheelItemTextSelected: {
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  nativeDatePicker: {
+    alignSelf: "stretch",
+    height: 220,
+    marginTop: spacing.xs,
+  },
+  dateModalActionRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  dateModalActionButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 999,
+    backgroundColor: appTheme.colors.surfaceMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateModalActionButtonPrimary: {
+    backgroundColor: appTheme.colors.textStrong,
+  },
+  dateModalActionButtonPrimaryText: {
+    color: appTheme.colors.surface,
+  },
+  dateNavButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateNavButtonDisabled: {
+    opacity: 0.35,
   },
   dateNavArrow: {
     fontSize: 28,
-    color: colors.icon.primary,
+    color: appTheme.colors.textStrong,
     lineHeight: 30,
     width: 28,
     textAlign: "center",
+  },
+  dateNavArrowDisabled: {
+    color: appTheme.colors.textTertiary,
+  },
+  dateSelectionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  dateSelectionChip: {
+    width: "31%",
+    minHeight: 52,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+    backgroundColor: appTheme.colors.surfaceMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateSelectionChipSelected: {
+    backgroundColor: appTheme.colors.surfaceAccent,
+    borderColor: "rgba(20,20,20,0.16)",
+  },
+  dateSelectionChipDisabled: {
+    opacity: 0.35,
+  },
+  dateSelectionChipText: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textSecondary,
+  },
+  dateSelectionChipTextSelected: {
+    color: appTheme.colors.textStrong,
+  },
+  dateSelectionChipTextDisabled: {
+    color: appTheme.colors.textTertiary,
   },
   weekdayRow: {
     flexDirection: "row",
@@ -2219,8 +2576,9 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: "center",
     fontSize: 12,
-    fontWeight: "700",
-    color: colors.text.muted,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textTertiary,
   },
   calendarGrid: {
     flexDirection: "row",
@@ -2231,58 +2589,49 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radius.md,
+    borderRadius: 16,
   },
   dayCellSelected: {
-    backgroundColor: colors.brand.primary,
+    backgroundColor: appTheme.colors.surfaceAccent,
   },
   dayCellDisabled: {
     opacity: 0.35,
   },
   dayLabel: {
     fontSize: 13,
-    color: colors.text.secondary,
-    fontWeight: "600",
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.textSecondary,
   },
   dayLabelSelected: {
-    color: colors.text.inverse,
+    color: appTheme.colors.textStrong,
   },
   dayLabelDisabled: {
-    color: colors.text.muted,
+    color: appTheme.colors.textTertiary,
   },
   dateModalCloseButton: {
     marginTop: spacing.sm,
     minHeight: 42,
-    borderRadius: radius.md,
-    backgroundColor: colors.background.elevated,
+    borderRadius: 999,
+    backgroundColor: appTheme.colors.surfaceMuted,
     alignItems: "center",
     justifyContent: "center",
   },
   dateModalCloseText: {
     fontSize: 14,
-    fontWeight: "700",
-    color: colors.text.secondary,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textSecondary,
   },
   consentBox: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    backgroundColor: colors.background.elevated,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  consentBoxSelected: {
-    backgroundColor: colors.brand.soft,
-    borderColor: colors.brand.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
   },
   consentText: {
     flex: 1,
     fontSize: 15,
-    fontWeight: "600",
-    color: colors.text.primary,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.textPrimary,
     lineHeight: 22,
   },
   footer: {
@@ -2291,32 +2640,45 @@ const styles = StyleSheet.create({
   },
   footerButton: {
     flex: 1,
-    minHeight: 52,
-    borderRadius: radius.lg,
+    minHeight: appTheme.questionnaire.footerButtonHeight,
+    borderRadius: appTheme.card.radius,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 1,
+    overflow: "hidden",
+  },
+  footerButtonPressed: {
+    opacity: 0.82,
   },
   backButton: {
-    backgroundColor: colors.background.card,
-    borderColor: colors.border.strong,
+    backgroundColor: appTheme.colors.surface,
+    borderColor: appTheme.colors.borderSubtle,
   },
   nextButton: {
-    backgroundColor: colors.brand.primary,
-    borderColor: colors.brand.primary,
+    borderColor: "rgba(20,20,20,0.12)",
   },
   footerButtonDisabled: {
-    opacity: 0.5,
+    opacity: 0.46,
+  },
+  nextButtonGradient: {
+    width: "100%",
+    minHeight: appTheme.questionnaire.footerButtonHeight,
+    alignItems: "center",
+    justifyContent: "center",
   },
   footerButtonText: {
-    color: colors.text.inverse,
     fontSize: 16,
-    fontWeight: "700",
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
   },
   backButtonText: {
-    color: colors.text.secondary,
+    color: appTheme.colors.textStrong,
+  },
+  nextButtonText: {
+    color: appTheme.colors.textStrong,
   },
   footerButtonTextDisabled: {
-    color: colors.text.muted,
+    color: appTheme.colors.textTertiary,
   },
 });

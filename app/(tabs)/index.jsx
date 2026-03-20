@@ -17,8 +17,10 @@ import {
 import { appTheme, spacing, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
+import { getEffectiveEntries } from "@/features/health/selectors";
 import { getSupplementRatings } from "@src/data/getSupplementRatings";
 import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
+import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 import {
   isNumericMetric,
   normalizeMetric,
@@ -39,7 +41,6 @@ const LOWER_IS_BETTER_KEYS = new Set([
 ]);
 const AI_SUMMARY_CACHE_KEY = "suppro.stats.aiSummary.v1";
 const AI_SUMMARY_WINDOW_DAYS = 30;
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 
 function EmptyState() {
   return (
@@ -476,7 +477,7 @@ export default function HomeScreen() {
   const selectedDate = useSupplementsStore((s) => s.selectedDate);
   const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
   const toggleTaken = useSupplementsStore((s) => s.toggleTaken);
-  const healthEntries = useHealthStore((s) => s.entries);
+  const healthEntries = useHealthStore((s) => getEffectiveEntries(s));
   const healthMetrics = useHealthStore((s) => s.metrics);
 
   const [ratingByCatalog, setRatingByCatalog] = useState({});

@@ -244,7 +244,7 @@ export default function SupplementInfoModal() {
   const [hearted, setHearted] = useState(false);
   const [displayedRating, setDisplayedRating] = useState(0);
   const [benefitRankings, setBenefitRankings] = useState({});
-  const [headerHeight, setHeaderHeight] = useState(0);
+  const [, setHeaderHeight] = useState(0);
   const [evidenceSectionOffset, setEvidenceSectionOffset] = useState(0);
   const [openEvidenceById, setOpenEvidenceById] = useState({});
   const [evidenceRowOffsets, setEvidenceRowOffsets] = useState({});
@@ -254,10 +254,10 @@ export default function SupplementInfoModal() {
     if (!id) return;
 
     setLoaded(false);
-    getSupplementById(id)
+    getSupplementById(id, typeof paramName === "string" ? paramName : "")
       .then(setData)
       .finally(() => setLoaded(true));
-  }, [id]);
+  }, [id, paramName]);
 
   useEffect(() => {
     setHearted(false);
@@ -460,7 +460,7 @@ export default function SupplementInfoModal() {
         onHeaderHeightChange={setHeaderHeight}
         header={
           <AppHeader
-            topInsetOffset={appTheme.modal.headerTopInsetOffset}
+            insetPreset="modal"
             bottomPadding={3}
             leftSlot={
               <AppButton
@@ -726,7 +726,7 @@ function BenefitChip({
 
 function DetailRow({ label, value, hideBorder = false }) {
   const [open, setOpen] = useState(false);
-  const body = value?.trim() ? value : "—";
+  const body = value?.trim() ? value.trim() : "No details listed yet.";
 
   return (
     <Pressable

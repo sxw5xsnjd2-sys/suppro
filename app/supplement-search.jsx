@@ -198,7 +198,7 @@ export default function SupplementSearchScreen() {
       contentStyle={styles.screenContent}
       header={
         <AppHeader
-          topInsetOffset={appTheme.modal.headerTopInsetOffset}
+          insetPreset="screen"
           bottomPadding={8}
           leftSlot={
             <AppButton

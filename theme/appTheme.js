@@ -1,5 +1,7 @@
 import { spacing } from "./spacing";
 
+const primaryAccentGradient = ["#E5E1F9", "#F6E2E1"];
+
 export const appTheme = {
   screen: {
     background: "#F5F1EE",
@@ -30,7 +32,7 @@ export const appTheme = {
     inactiveLabelColor: "#607A8C",
     fabSize: 60,
     fabOffset: 21,
-    fabGradient: ["#E5E1F9", "#F6E2E1"],
+    fabGradient: primaryAccentGradient,
     fabBorderColor: "rgba(0,0,0,0.08)",
     plusSize: 18,
     plusThickness: 3,
@@ -58,7 +60,7 @@ export const appTheme = {
     sidePadding: spacing.md,
     maxWidth: 560,
     cardMaxHeight: "92%",
-    headerTopInsetOffset: -7,
+    headerTopInsetOffset: -50,
   },
   input: {
     height: 44,
@@ -67,6 +69,12 @@ export const appTheme = {
     text: "#49423D",
     placeholder: "#887F79",
     icon: "#928780",
+  },
+  questionnaire: {
+    optionMinHeight: 58,
+    fieldMinHeight: 52,
+    progressHeight: 10,
+    footerButtonHeight: 54,
   },
   colors: {
     surface: "#FFFFFF",
@@ -101,6 +109,7 @@ export const appTheme = {
     evidenceBadgeText: "#1E1A24",
   },
   gradients: {
+    accent: primaryAccentGradient,
     evidenceBadge: ["#FFC800", "#FFD438", "#FFF2C2", "#FFDB58", "#FFDF69"],
   },
 };

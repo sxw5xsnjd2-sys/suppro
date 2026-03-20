@@ -42,6 +42,8 @@ const textTracker = (overrides = {}) => ({
 
 export const CUSTOM_METRIC_KEY = "__custom_metric__";
 export const BLOOD_PRESSURE_METRIC_KEY = "blood_pressure_control";
+export const MANUAL_ENTRY_SOURCE = "manual";
+export const APPLE_HEALTH_ENTRY_SOURCE = "apple_health";
 
 export const PRESET_METRICS = [
   {
@@ -300,6 +302,13 @@ export const DEFAULT_METRICS = DEFAULT_METRIC_KEYS.map(
   .filter(Boolean)
   .map((metric) => ({ ...metric, enabled: true }));
 
+export const APPLE_HEALTH_SUPPORTED_METRIC_KEYS = [
+  "sleep",
+  "weight",
+  BLOOD_PRESSURE_METRIC_KEY,
+  "blood_sugar_control",
+];
+
 export const CUSTOM_TRACKER_OPTIONS = [
   { key: TRACKER_TYPES.SCALE, label: "Scale (1-10)" },
   { key: TRACKER_TYPES.NUMBER, label: "Number" },
@@ -490,6 +499,12 @@ export function isBloodPressureMetric(metricOrKey) {
   const key =
     typeof metricOrKey === "string" ? metricOrKey : metricOrKey?.key || "";
   return key === BLOOD_PRESSURE_METRIC_KEY;
+}
+
+export function isAppleHealthSupportedMetric(metricOrKey) {
+  const key =
+    typeof metricOrKey === "string" ? metricOrKey : metricOrKey?.key || "";
+  return APPLE_HEALTH_SUPPORTED_METRIC_KEYS.includes(key);
 }
 
 export function normalizeBloodPressureValue(input) {

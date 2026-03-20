@@ -31,15 +31,19 @@ import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
 import { normalizeMetric } from "@/features/health/metricDefinitions";
 import {
+  getEffectiveEntries,
+  getMetricSource,
+} from "@/features/health/selectors";
+import {
   getAccessTokenOrCreateSession,
   supabase as publicSupabase,
 } from "@src/lib/supabase";
+import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 
 const CHAT_WINDOW_DAYS = 30;
 const MAX_CONTEXT_ENTRIES = 200;
 const MAX_CONVERSATION_MESSAGES = 12;
 const MAX_SUPPLEMENTS_PER_BENEFIT = 5;
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 
 function buildEvidenceCatalog(rows) {
   const byBenefit = {};
@@ -174,6 +178,7 @@ function buildChatStatsInput(
   takenTimesByDate,
   healthEntries,
   healthMetrics,
+  sourceSettings,
   evidenceCatalog
 ) {
   const today = toISODate(new Date());
@@ -218,6 +223,7 @@ function buildChatStatsInput(
       key: metric.key,
       label: metric.label,
       trackerType: metric.trackerType,
+      source: getMetricSource({ sourceSettings }, metric.key),
       unit: metric.unit ?? null,
       min: Number.isFinite(metric.min) ? metric.min : null,
       max: Number.isFinite(metric.max) ? metric.max : null,
@@ -237,6 +243,7 @@ function buildChatStatsInput(
           ? entry.note.trim().slice(0, 180)
           : null,
       date: entry.date,
+      source: entry.source ?? "manual",
     }));
 
   return {
@@ -307,8 +314,9 @@ export function AiChatScreen({ presentation = "modal" }) {
   const isModal = presentation === "modal";
   const supplements = useSupplementsStore((s) => s.supplements);
   const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
-  const healthEntries = useHealthStore((s) => s.entries);
+  const healthEntries = useHealthStore((s) => getEffectiveEntries(s));
   const healthMetrics = useHealthStore((s) => s.metrics);
+  const sourceSettings = useHealthStore((s) => s.sourceSettings);
 
   const messages = useChatStore((s) => s.messages);
   const status = useChatStore((s) => s.status);
@@ -332,6 +340,7 @@ export function AiChatScreen({ presentation = "modal" }) {
         takenTimesByDate,
         healthEntries,
         healthMetrics,
+        sourceSettings,
         evidenceCatalog
       ),
     [
@@ -339,6 +348,7 @@ export function AiChatScreen({ presentation = "modal" }) {
       takenTimesByDate,
       healthEntries,
       healthMetrics,
+      sourceSettings,
       evidenceCatalog,
     ]
   );
@@ -461,7 +471,7 @@ export function AiChatScreen({ presentation = "modal" }) {
         contentStyle={styles.screenContent}
         header={
         <AppHeader
-          topInsetOffset={appTheme.modal.headerTopInsetOffset}
+          insetPreset="modal"
           leftSlot={
             isModal ? (
               <AppButton

@@ -16,6 +16,8 @@ import {
 import { appTheme, spacing, typography } from "@/theme";
 import { useHealthStore } from "@/features/health/store";
 import {
+  APPLE_HEALTH_ENTRY_SOURCE,
+  MANUAL_ENTRY_SOURCE,
   BLOOD_PRESSURE_METRIC_KEY,
   isBloodPressureMetric,
   isValidBloodPressureValue,
@@ -102,7 +104,12 @@ export function HealthEntryModal({ visible, metric, onClose }) {
   const existingToday = useMemo(() => {
     if (!metric) return null;
     const todays = entries
-      .filter((entry) => entry.type === metric && entry.date === date)
+      .filter(
+        (entry) =>
+          entry.type === metric &&
+          entry.date === date &&
+          entry.source !== APPLE_HEALTH_ENTRY_SOURCE
+      )
       .slice();
     return todays.length ? todays[todays.length - 1] : null;
   }, [entries, metric, date]);
@@ -233,6 +240,7 @@ export function HealthEntryModal({ visible, metric, onClose }) {
       type: metric,
       value,
       date,
+      source: MANUAL_ENTRY_SOURCE,
       note: note.trim() ? note.trim() : undefined,
     });
     onClose();
