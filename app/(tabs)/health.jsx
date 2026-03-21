@@ -213,25 +213,54 @@ export default function HealthScreen() {
     }
   }, [disconnectAppleHealthStore]);
 
+  const checkAppleHealthAvailability = useCallback(async () => {
+    if (!isIOS) return false;
+    return Boolean(await isAppleHealthAvailable());
+  }, [isIOS]);
+
+  const handleConnectAppleHealthFromCard = useCallback(async () => {
+    console.log("[apple-health] connect button pressed");
+    setHasCheckedAppleHealthAvailability(false);
+
+    const available = await checkAppleHealthAvailability();
+    console.log("[apple-health] availability after button press", { available });
+    setIsAppleHealthReady(Boolean(available));
+    setHasCheckedAppleHealthAvailability(true);
+
+    if (!available) {
+      const message =
+        "Apple Health is unavailable on this device or in this build. Use a physical iPhone build of Suppro and make sure Health access is enabled.";
+      setConnection("error", message);
+      Alert.alert("Apple Health", message);
+      return;
+    }
+
+    handleConnectAppleHealth();
+  }, [checkAppleHealthAvailability, handleConnectAppleHealth, setConnection]);
+
   useEffect(() => {
     if (!isIOS) return undefined;
 
     let active = true;
 
-    isAppleHealthAvailable()
+    setHasCheckedAppleHealthAvailability(false);
+
+    checkAppleHealthAvailability()
       .then((available) => {
         if (!active) return;
         setIsAppleHealthReady(Boolean(available));
+        setHasCheckedAppleHealthAvailability(true);
       })
-      .finally(() => {
+      .catch(() => {
         if (!active) return;
+        setIsAppleHealthReady(false);
         setHasCheckedAppleHealthAvailability(true);
       });
 
     return () => {
       active = false;
     };
-  }, [isIOS]);
+  }, [checkAppleHealthAvailability, isIOS]);
 
   useEffect(() => {
     if (!isIOS || !isFocused || isSyncing) return;
@@ -296,15 +325,16 @@ export default function HealthScreen() {
               <Text style={styles.appleHealthMeta}>
                 Apple Health is unavailable on this device or in this build.
                 Use a physical iPhone build of Suppro and make sure Health access
-                is enabled.
+                is enabled. You can still try to connect again below.
               </Text>
               <AppButton
-                label="Unavailable"
-                variant="overlay"
+                label={isSyncing ? "Connecting..." : "Connect Apple Health"}
+                variant="accent"
                 size="md"
+                onPress={handleConnectAppleHealthFromCard}
                 style={styles.appleHealthPrimaryButton}
                 textStyle={styles.appleHealthPrimaryButtonText}
-                disabled
+                disabled={isSyncing}
               />
             </>
           ) : connection === "connected" || hasLinkedAppleHealthSource ? (
@@ -352,7 +382,7 @@ export default function HealthScreen() {
                 }
                 variant="accent"
                 size="md"
-                onPress={handleConnectAppleHealth}
+                onPress={handleConnectAppleHealthFromCard}
                 disabled={isSyncing}
                 style={styles.appleHealthPrimaryButton}
                 textStyle={styles.appleHealthPrimaryButtonText}

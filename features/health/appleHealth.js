@@ -1,4 +1,4 @@
-import { Platform } from "react-native";
+import { NativeModules, Platform } from "react-native";
 import {
   APPLE_HEALTH_ENTRY_SOURCE,
   APPLE_HEALTH_SUPPORTED_METRIC_KEYS,
@@ -41,8 +41,56 @@ function getAppleHealthKit() {
 
   try {
     const module = require("react-native-health");
+    const nativeModuleKeys = Object.keys(NativeModules)
+      .filter((key) => /health/i.test(key))
+      .sort();
+    const directNativeModule =
+      NativeModules.AppleHealthKit ??
+      NativeModules.RCTAppleHealthKit ??
+      NativeModules.RNAppleHealthKit ??
+      null;
+
+    console.log("[apple-health] native module loaded", {
+      hasDefaultExport: Boolean(module?.default),
+      hasIsAvailable:
+        typeof (module?.default ?? module)?.isAvailable === "function",
+      nativeModuleKeys,
+      hasDirectAppleHealthKit:
+        typeof NativeModules.AppleHealthKit?.isAvailable === "function",
+      hasDirectRCTAppleHealthKit:
+        typeof NativeModules.RCTAppleHealthKit?.isAvailable === "function",
+      hasDirectRNAppleHealthKit:
+        typeof NativeModules.RNAppleHealthKit?.isAvailable === "function",
+    });
+
+    if (typeof (module?.default ?? module)?.isAvailable === "function") {
+      return module?.default ?? module;
+    }
+
+    if (directNativeModule) {
+      console.log("[apple-health] using direct NativeModules fallback", {
+        hasDirectInitHealthKit:
+          typeof directNativeModule?.initHealthKit === "function",
+        hasDirectGetSleepSamples:
+          typeof directNativeModule?.getSleepSamples === "function",
+      });
+
+      const constants = module?.Constants ?? module?.default?.Constants;
+      if (constants && !directNativeModule.Constants) {
+        Object.defineProperty(directNativeModule, "Constants", {
+          value: constants,
+          configurable: true,
+          enumerable: false,
+          writable: true,
+        });
+      }
+
+      return directNativeModule;
+    }
+
     return module?.default ?? module;
   } catch {
+    console.warn("[apple-health] native module could not be loaded");
     return null;
   }
 }
@@ -248,11 +296,13 @@ function normalizeSyncRange(since) {
 export async function isAppleHealthAvailable() {
   const appleHealthKit = getAppleHealthKit();
   if (!appleHealthKit || typeof appleHealthKit.isAvailable !== "function") {
+    console.log("[apple-health] isAvailable unavailable");
     return false;
   }
 
   return new Promise((resolve) => {
     appleHealthKit.isAvailable((_error, available) => {
+      console.log("[apple-health] isAvailable result", { available });
       resolve(Boolean(available));
     });
   });
@@ -261,23 +311,28 @@ export async function isAppleHealthAvailable() {
 export async function requestAppleHealthPermissions() {
   const appleHealthKit = getAppleHealthKit();
   if (!appleHealthKit) {
+    console.warn("[apple-health] permission request failed: module missing");
     throw makeUnavailableError();
   }
 
   const available = await isAppleHealthAvailable();
   if (!available) {
+    console.warn("[apple-health] permission request failed: unavailable");
     throw makeUnavailableError();
   }
 
   return new Promise((resolve, reject) => {
+    console.log("[apple-health] requesting permissions");
     appleHealthKit.initHealthKit(
       createPermissions(appleHealthKit),
       (error, result) => {
         if (error) {
+          console.warn("[apple-health] permission request error", error);
           reject(error instanceof Error ? error : new Error(String(error)));
           return;
         }
 
+        console.log("[apple-health] permission request success", { result });
         resolve(result);
       }
     );
@@ -287,11 +342,13 @@ export async function requestAppleHealthPermissions() {
 export async function syncAppleHealth({ since } = {}) {
   const available = await isAppleHealthAvailable();
   if (!available) {
+    console.warn("[apple-health] sync failed: unavailable");
     throw makeUnavailableError();
   }
 
   const syncedAt = new Date().toISOString();
   const options = normalizeSyncRange(since);
+  console.log("[apple-health] sync start", { options });
   const syncedMetricKeys = [];
   const warnings = [];
   const entries = [];
@@ -345,11 +402,16 @@ export async function syncAppleHealth({ since } = {}) {
 
   if (syncedMetricKeys.length === 0) {
     const firstError = warnings[0];
+    console.warn("[apple-health] sync produced no metric data", warnings);
     throw firstError instanceof Error
       ? firstError
       : new Error("Could not read Apple Health data.");
   }
 
+  console.log("[apple-health] sync success", {
+    entryCount: entries.length,
+    syncedMetricKeys,
+  });
   return {
     entries,
     syncedMetricKeys,

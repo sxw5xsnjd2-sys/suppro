@@ -62,7 +62,7 @@ export function HealthMetricCard({
       ) : (
         <View style={styles.body}>
           <Text style={styles.emptyText}>
-            {emptyText || "No data yet. Tap Track to add today&apos;s value."}
+            {emptyText || "No data yet. Tap Track to add today's value."}
           </Text>
         </View>
       )}

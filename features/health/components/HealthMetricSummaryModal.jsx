@@ -18,7 +18,6 @@ import Svg, {
   Text as SvgText,
   TSpan,
 } from "react-native-svg";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView, Swipeable } from "react-native-gesture-handler";
 import {
   AppBackdrop,
@@ -36,6 +35,7 @@ import {
   isNumericMetric,
   normalizeMetric,
 } from "@/features/health/metricDefinitions";
+import { HealthMetricInsetView } from "./HealthMetricInsetView";
 
 const CHART_HEIGHT = 260;
 const SIDE_PADDING = 32;
@@ -417,7 +417,7 @@ export function HealthMetricSummaryModal({
         <View style={styles.screen}>
           <AppBackdrop />
 
-          <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+          <HealthMetricInsetView style={styles.safeArea}>
             <View style={styles.header}>
               <SectionTitle
                 title={label}
@@ -751,7 +751,7 @@ export function HealthMetricSummaryModal({
                 });
               }}
             />
-          </SafeAreaView>
+          </HealthMetricInsetView>
         </View>
       </GestureHandlerRootView>
     </Modal>
