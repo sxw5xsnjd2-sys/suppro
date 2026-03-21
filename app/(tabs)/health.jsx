@@ -88,11 +88,8 @@ function formatAppleHealthError(error) {
     return "Could not connect to Apple Health right now.";
   }
 
-  if (
-    message.toLowerCase().includes("development or production build") ||
-    message.toLowerCase().includes("available")
-  ) {
-    return "Apple Health requires an iOS development or production build of Suppro.";
+  if (message.toLowerCase().includes("development or production build")) {
+    return "Apple Health is unavailable on this device or in this build.";
   }
 
   return message;
@@ -184,6 +181,7 @@ export default function HealthScreen() {
           sinceDate: normalizedSinceDate,
         });
       } catch (error) {
+        console.warn("[apple-health] sync failed", error);
         const message = formatAppleHealthError(error);
         setConnection("error", message);
         Alert.alert("Apple Health", message);
@@ -296,8 +294,9 @@ export default function HealthScreen() {
           ) : !isAppleHealthReady ? (
             <>
               <Text style={styles.appleHealthMeta}>
-                Apple Health is unavailable in this build. Use an iOS development
-                or production build instead of Expo Go.
+                Apple Health is unavailable on this device or in this build.
+                Use a physical iPhone build of Suppro and make sure Health access
+                is enabled.
               </Text>
               <AppButton
                 label="Unavailable"

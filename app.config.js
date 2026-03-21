@@ -33,6 +33,20 @@ module.exports = ({ config }) => {
 
   return {
     ...config,
+    ios: {
+      ...config.ios,
+      infoPlist: {
+        ...(config.ios?.infoPlist ?? {}),
+        NSHealthShareUsageDescription:
+          "Allow $(PRODUCT_NAME) to read Apple Health data so your metrics stay up to date in Suppro.",
+        NSHealthUpdateUsageDescription:
+          "Allow $(PRODUCT_NAME) to access Apple Health integration settings.",
+      },
+      entitlements: {
+        ...(config.ios?.entitlements ?? {}),
+        "com.apple.developer.healthkit": true,
+      },
+    },
     plugins,
     extra: {
       ...config.extra,

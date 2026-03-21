@@ -88,7 +88,17 @@ export const useSupplementsStore = create()(persist((set, get) => ({
     storage: {
         getItem: async (key) => {
             const raw = await AsyncStorage.getItem(key);
-            return raw ? JSON.parse(raw) : null;
+            if (!raw)
+                return null;
+            const parsed = JSON.parse(raw);
+            if (parsed?.state && typeof parsed.state === "object") {
+                const { selectedDate: _selectedDate, ...persistedState } = parsed.state;
+                return {
+                    ...parsed,
+                    state: persistedState,
+                };
+            }
+            return parsed;
         },
         setItem: async (key, value) => {
             await AsyncStorage.setItem(key, JSON.stringify(value));
@@ -97,6 +107,10 @@ export const useSupplementsStore = create()(persist((set, get) => ({
             await AsyncStorage.removeItem(key);
         },
     },
+    partialize: (state) => ({
+        supplements: state.supplements,
+        takenTimesByDate: state.takenTimesByDate,
+    }),
     /* ---------- Rehydration & Migration ---------- */
     onRehydrateStorage: () => (state) => {
         if (!state?.supplements)
