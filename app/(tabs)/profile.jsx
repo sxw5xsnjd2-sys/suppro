@@ -3,15 +3,12 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
-import {
-  AppButton,
-  AppHeader,
-  PrimaryCard,
-} from "@/components/common/ui";
+import { AppButton, AppHeader, PrimaryCard } from "@/components/common/ui";
 import { appTheme, spacing, typography } from "@/theme";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
 import QuestionnaireIcon from "@/assets/icons/profile/questionnaire.svg";
+import SettingsIcon from "@/assets/icons/profile/settings.svg";
 import RankingsIcon from "@/assets/icons/supplements/medal.svg";
 
 const MENU_ITEMS = [
@@ -20,6 +17,12 @@ const MENU_ITEMS = [
     label: "Account",
     route: "/modal/account",
     Icon: AccountIcon,
+  },
+  {
+    key: "settings",
+    label: "Settings",
+    route: "/modal/settings",
+    Icon: SettingsIcon,
   },
   {
     key: "favourites",

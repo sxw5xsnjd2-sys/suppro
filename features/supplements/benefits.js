@@ -105,11 +105,30 @@ export function getBenefitIconComponent(label) {
 }
 
 export function compareBenefits(left, right) {
-  const leftRank = BENEFIT_RANK[left?.icon] ?? Number.MAX_SAFE_INTEGER;
-  const rightRank = BENEFIT_RANK[right?.icon] ?? Number.MAX_SAFE_INTEGER;
+  const leftScore = getBenefitScore(left);
+  const rightScore = getBenefitScore(right);
 
-  if (leftRank !== rightRank) {
-    return leftRank - rightRank;
+  const leftDotCount = !Number.isFinite(leftScore)
+    ? 0
+    : leftScore >= 75
+    ? 3
+    : leftScore >= 50
+    ? 2
+    : 1;
+  const rightDotCount = !Number.isFinite(rightScore)
+    ? 0
+    : rightScore >= 75
+    ? 3
+    : rightScore >= 50
+    ? 2
+    : 1;
+
+  if (leftDotCount !== rightDotCount) {
+    return rightDotCount - leftDotCount;
+  }
+
+  if (leftScore !== rightScore) {
+    return (rightScore ?? -1) - (leftScore ?? -1);
   }
 
   return String(left?.label ?? "").localeCompare(String(right?.label ?? ""));
@@ -135,13 +154,17 @@ export function buildBenefitRankings(benefits, rankingRows) {
   const groupedRows = (rankingRows ?? []).reduce((accumulator, row) => {
     if (!row?.label || !Number.isFinite(row?.score)) return accumulator;
     if (!accumulator[row.label]) accumulator[row.label] = [];
-    accumulator[row.label].push(row.score);
+    accumulator[row.label].push({
+      score: row.score,
+      icon: row.icon ?? null,
+    });
     return accumulator;
   }, {});
 
   return benefits.reduce((accumulator, benefit) => {
     const score = getBenefitScore(benefit);
-    const scoresForLabel = groupedRows[benefit.label] ?? [];
+    const rowsForLabel = groupedRows[benefit.label] ?? [];
+    const scoresForLabel = rowsForLabel.map((row) => row.score);
 
     if (!Number.isFinite(score) || scoresForLabel.length === 0) {
       accumulator[benefit.id] = null;
@@ -153,6 +176,7 @@ export function buildBenefitRankings(benefits, rankingRows) {
       rank: higherScores + 1,
       total: scoresForLabel.length,
       score,
+      icon: benefit?.icon ?? rowsForLabel.find((row) => row.score === score)?.icon ?? null,
     };
     return accumulator;
   }, {});

@@ -1,29 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Platform, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import {
   AppButton,
   AppHeader,
   EmptyStateCard,
-  PrimaryCard,
 } from "@/components/common/ui";
 import { appTheme, spacing, typography } from "@/theme";
 import {
   APPLE_HEALTH_ENTRY_SOURCE,
-  APPLE_HEALTH_SUPPORTED_METRIC_KEYS,
   formatMetricValue,
+  getMetricChartRange,
   isAppleHealthSupportedMetric,
   isNumericMetric,
   normalizeMetric,
 } from "@/features/health/metricDefinitions";
-import {
-  APPLE_HEALTH_INITIAL_BACKFILL_DAYS,
-  disconnectAppleHealth as disconnectAppleHealthService,
-  isAppleHealthAvailable,
-  requestAppleHealthPermissions,
-  syncAppleHealth,
-} from "@/features/health/appleHealth";
 import { useHealthStore } from "@/features/health/store";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { MiniLineChart } from "@/features/health/components/MiniLineChart";
@@ -31,6 +23,7 @@ import { HealthEntryModal } from "@/features/health/components/HealthEntryModal"
 import { AddMetricModal } from "@/features/health/components/AddMetricModal";
 import { HealthMetricSummaryModal } from "@/features/health/components/HealthMetricSummaryModal";
 import { HealthMetricCard } from "@/features/health/components/HealthMetricCard";
+import { useAppleHealthConnection } from "@/features/health/useAppleHealthConnection";
 import {
   getEffectiveEntries,
   getMetricSource,
@@ -40,86 +33,24 @@ import {
 
 const AUTO_REFRESH_STALE_MS = 60 * 60 * 1000;
 
-function toLocalISODate(dateLike) {
-  const parsed = new Date(dateLike);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function daysAgo(count) {
-  const next = new Date();
-  next.setDate(next.getDate() - count);
-  return next;
-}
-
-function getAppleHealthSyncStartDate(lastSyncedAt) {
-  if (!lastSyncedAt) {
-    return daysAgo(APPLE_HEALTH_INITIAL_BACKFILL_DAYS - 1);
-  }
-
-  const parsed = new Date(lastSyncedAt);
-  if (Number.isNaN(parsed.getTime())) {
-    return daysAgo(APPLE_HEALTH_INITIAL_BACKFILL_DAYS - 1);
-  }
-
-  parsed.setDate(parsed.getDate() - 1);
-  return parsed;
-}
-
-function formatLastSynced(value) {
-  if (!value) return "Not synced yet";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "Not synced yet";
-
-  return parsed.toLocaleString("en-GB", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatAppleHealthError(error) {
-  const message = String(error?.message || error || "").trim();
-  if (!message) {
-    return "Could not connect to Apple Health right now.";
-  }
-
-  if (message.toLowerCase().includes("development or production build")) {
-    return "Apple Health is unavailable on this device or in this build.";
-  }
-
-  return message;
-}
-
 export default function HealthScreen() {
   const rawEntries = useHealthStore((state) => state.entries);
-  const effectiveEntries = useHealthStore((state) => getEffectiveEntries(state));
+  const effectiveEntries = useHealthStore((state) =>
+    getEffectiveEntries(state)
+  );
   const metrics = useHealthStore((state) => state.metrics);
-  const connection = useHealthStore((state) => state.connection);
-  const connectionError = useHealthStore((state) => state.connectionError);
-  const sourceSettings = useHealthStore((state) => state.sourceSettings);
-  const lastSyncedAt = useHealthStore((state) => state.lastSyncedAt);
   const deleteMetric = useHealthStore((state) => state.deleteMetric);
   const deleteEntry = useHealthStore((state) => state.deleteEntry);
-  const setConnection = useHealthStore((state) => state.setConnection);
-  const mergeAppleHealthEntries = useHealthStore(
-    (state) => state.mergeAppleHealthEntries
-  );
-  const disconnectAppleHealthStore = useHealthStore(
-    (state) => state.disconnectAppleHealth
-  );
+  const sourceSettings = useHealthStore((state) => state.sourceSettings);
   const supplements = useSupplementsStore((state) => state.supplements);
   const isFocused = useIsFocused();
-
-  const isIOS = Platform.OS === "ios";
-  const [isAppleHealthReady, setIsAppleHealthReady] = useState(false);
-  const [hasCheckedAppleHealthAvailability, setHasCheckedAppleHealthAvailability] =
-    useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const {
+    isIOS,
+    isSyncing,
+    lastSyncedAt,
+    isAppleHealthConnected,
+    refreshAppleHealth,
+  } = useAppleHealthConnection();
 
   const normalizedMetrics = useMemo(
     () =>
@@ -161,122 +92,24 @@ export default function HealthScreen() {
     [rawEntries, summaryMetric]
   );
 
-  const syncFromAppleHealth = useCallback(
-    async ({ withPermissionPrompt = false } = {}) => {
-      setIsSyncing(true);
-      setConnection("connecting");
-
-      try {
-        if (withPermissionPrompt) {
-          await requestAppleHealthPermissions();
-        }
-
-        const sinceDate = getAppleHealthSyncStartDate(lastSyncedAt);
-
-        const normalizedSinceDate = toLocalISODate(sinceDate);
-        const syncResult = await syncAppleHealth({ since: sinceDate });
-
-        mergeAppleHealthEntries({
-          ...syncResult,
-          sinceDate: normalizedSinceDate,
-        });
-      } catch (error) {
-        console.warn("[apple-health] sync failed", error);
-        const message = formatAppleHealthError(error);
-        setConnection("error", message);
-        Alert.alert("Apple Health", message);
-      } finally {
-        setIsSyncing(false);
-      }
-    },
-    [lastSyncedAt, mergeAppleHealthEntries, setConnection]
-  );
-
-  const handleConnectAppleHealth = useCallback(() => {
-    syncFromAppleHealth({ withPermissionPrompt: true });
-  }, [syncFromAppleHealth]);
-
-  const handleRefreshAppleHealth = useCallback(() => {
-    syncFromAppleHealth();
-  }, [syncFromAppleHealth]);
-
-  const handleDisconnectAppleHealth = useCallback(async () => {
-    setIsSyncing(true);
-
-    try {
-      await disconnectAppleHealthService();
-      disconnectAppleHealthStore();
-    } catch (error) {
-      Alert.alert("Apple Health", formatAppleHealthError(error));
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [disconnectAppleHealthStore]);
-
-  const checkAppleHealthAvailability = useCallback(async () => {
-    if (!isIOS) return false;
-    return Boolean(await isAppleHealthAvailable());
-  }, [isIOS]);
-
-  const handleConnectAppleHealthFromCard = useCallback(async () => {
-    console.log("[apple-health] connect button pressed");
-    setHasCheckedAppleHealthAvailability(false);
-
-    const available = await checkAppleHealthAvailability();
-    console.log("[apple-health] availability after button press", { available });
-    setIsAppleHealthReady(Boolean(available));
-    setHasCheckedAppleHealthAvailability(true);
-
-    if (!available) {
-      const message =
-        "Apple Health is unavailable on this device or in this build. Use a physical iPhone build of Suppro and make sure Health access is enabled.";
-      setConnection("error", message);
-      Alert.alert("Apple Health", message);
-      return;
-    }
-
-    handleConnectAppleHealth();
-  }, [checkAppleHealthAvailability, handleConnectAppleHealth, setConnection]);
-
-  useEffect(() => {
-    if (!isIOS) return undefined;
-
-    let active = true;
-
-    setHasCheckedAppleHealthAvailability(false);
-
-    checkAppleHealthAvailability()
-      .then((available) => {
-        if (!active) return;
-        setIsAppleHealthReady(Boolean(available));
-        setHasCheckedAppleHealthAvailability(true);
-      })
-      .catch(() => {
-        if (!active) return;
-        setIsAppleHealthReady(false);
-        setHasCheckedAppleHealthAvailability(true);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [checkAppleHealthAvailability, isIOS]);
-
   useEffect(() => {
     if (!isIOS || !isFocused || isSyncing) return;
-    if (connection !== "connected" || !lastSyncedAt) return;
+    if (!isAppleHealthConnected || !lastSyncedAt) return;
 
     const parsed = new Date(lastSyncedAt);
     if (Number.isNaN(parsed.getTime())) return;
     if (Date.now() - parsed.getTime() <= AUTO_REFRESH_STALE_MS) return;
 
-    syncFromAppleHealth();
-  }, [connection, isFocused, isIOS, isSyncing, lastSyncedAt, syncFromAppleHealth]);
+    refreshAppleHealth();
+  }, [
+    isAppleHealthConnected,
+    isFocused,
+    isIOS,
+    isSyncing,
+    lastSyncedAt,
+    refreshAppleHealth,
+  ]);
 
-  const appleHealthMetricCount = APPLE_HEALTH_SUPPORTED_METRIC_KEYS.length;
-  const hasLinkedAppleHealthSource = Object.values(sourceSettings ?? {}).includes(
-    APPLE_HEALTH_ENTRY_SOURCE
-  );
   const isSummaryMetricAppleBacked =
     summaryMetric != null &&
     isMetricAppleBacked({ sourceSettings }, summaryMetric);
@@ -287,6 +120,21 @@ export default function HealthScreen() {
         <AppHeader
           title="HEALTH"
           titleStyle={styles.headerTitle}
+          titleAccessory={
+            <View
+              style={[
+                styles.appleHealthHeaderPill,
+                isAppleHealthConnected
+                  ? styles.appleHealthHeaderPillConnected
+                  : styles.appleHealthHeaderPillDisconnected,
+              ]}
+            >
+              <Text style={styles.appleHealthHeaderPillText}>
+                Apple Health:{" "}
+                {isAppleHealthConnected ? "connected" : "disconnected"}
+              </Text>
+            </View>
+          }
           bottomSlot={
             <Text style={styles.headerSubtitle}>Track your trends</Text>
           }
@@ -295,103 +143,6 @@ export default function HealthScreen() {
       }
       contentStyle={styles.content}
     >
-      {isIOS ? (
-        <PrimaryCard style={styles.appleHealthCard}>
-          <View style={styles.appleHealthHeader}>
-            <View style={styles.appleHealthCopy}>
-              <Text style={styles.appleHealthTitle}>Apple Health</Text>
-              <Text style={styles.appleHealthBody}>
-                Import sleep, weight, blood pressure, and blood glucose from
-                Apple Health. Data stays on this device in v1.
-              </Text>
-            </View>
-            <View style={styles.appleHealthStatusPill}>
-              <Text style={styles.appleHealthStatusText}>
-                {connection === "connected"
-                  ? "Connected"
-                  : connection === "connecting"
-                  ? "Syncing"
-                  : connection === "error"
-                  ? "Needs attention"
-                  : "Disconnected"}
-              </Text>
-            </View>
-          </View>
-
-          {!hasCheckedAppleHealthAvailability ? (
-            <Text style={styles.appleHealthMeta}>Checking availability...</Text>
-          ) : !isAppleHealthReady ? (
-            <>
-              <Text style={styles.appleHealthMeta}>
-                Apple Health is unavailable on this device or in this build.
-                Use a physical iPhone build of Suppro and make sure Health access
-                is enabled. You can still try to connect again below.
-              </Text>
-              <AppButton
-                label={isSyncing ? "Connecting..." : "Connect Apple Health"}
-                variant="accent"
-                size="md"
-                onPress={handleConnectAppleHealthFromCard}
-                style={styles.appleHealthPrimaryButton}
-                textStyle={styles.appleHealthPrimaryButtonText}
-                disabled={isSyncing}
-              />
-            </>
-          ) : connection === "connected" || hasLinkedAppleHealthSource ? (
-            <>
-              <Text style={styles.appleHealthMeta}>
-                {connection === "error" && connectionError
-                  ? `${connectionError} Last successful sync ${formatLastSynced(lastSyncedAt)}.`
-                  : `${appleHealthMetricCount} supported metrics. Last sync ${formatLastSynced(
-                      lastSyncedAt
-                    )}.`}
-              </Text>
-              <View style={styles.appleHealthActionRow}>
-                <AppButton
-                  label={isSyncing ? "Refreshing..." : "Refresh"}
-                  variant="accent"
-                  size="md"
-                  onPress={handleRefreshAppleHealth}
-                  disabled={isSyncing}
-                  textStyle={styles.appleHealthPrimaryButtonText}
-                />
-                <AppButton
-                  label="Disconnect"
-                  variant="overlay"
-                  size="md"
-                  onPress={handleDisconnectAppleHealth}
-                  disabled={isSyncing}
-                  textStyle={styles.appleHealthSecondaryButtonText}
-                />
-              </View>
-            </>
-          ) : (
-            <>
-              <Text style={styles.appleHealthMeta}>
-                {connection === "error" && connectionError
-                  ? `${connectionError} Enable access in the Health app or iPhone Settings, then try again.`
-                  : `Connect Apple Health to auto-fill ${appleHealthMetricCount} supported metrics on iPhone.`}
-              </Text>
-              <AppButton
-                label={
-                  isSyncing
-                    ? "Connecting..."
-                    : connection === "error"
-                    ? "Try again"
-                    : "Connect Apple Health"
-                }
-                variant="accent"
-                size="md"
-                onPress={handleConnectAppleHealthFromCard}
-                disabled={isSyncing}
-                style={styles.appleHealthPrimaryButton}
-                textStyle={styles.appleHealthPrimaryButtonText}
-              />
-            </>
-          )}
-        </PrimaryCard>
-      ) : null}
-
       <AppButton
         label="+ Add metric"
         variant="accent"
@@ -444,20 +195,12 @@ export default function HealthScreen() {
               isNumericMetric(metricConfig) &&
               numericSeries.length > 0
             ) {
-              const values = numericSeries.map((point) => point.value);
-              const dataMin = Math.min(...values);
-              const dataMax = Math.max(...values);
-              const configuredMin = Number.isFinite(metricConfig.min)
-                ? metricConfig.min
-                : dataMin;
-              const configuredMax = Number.isFinite(metricConfig.max)
-                ? metricConfig.max
-                : dataMax;
-              chartMin = Math.min(configuredMin, dataMin);
-              chartMax = Math.max(configuredMax, dataMax);
-              if (chartMax === chartMin) {
-                chartMax += 1;
-              }
+              const range = getMetricChartRange(
+                metricConfig,
+                numericSeries.map((point) => point.value)
+              );
+              chartMin = range.min;
+              chartMax = range.max;
             }
 
             const latestEntry = metricEntries.length
@@ -512,7 +255,7 @@ export default function HealthScreen() {
                 }
                 onTrack={() => {
                   if (metricIsAppleBacked) {
-                    handleRefreshAppleHealth();
+                    refreshAppleHealth();
                     return;
                   }
 
@@ -553,7 +296,7 @@ export default function HealthScreen() {
           setSummaryMetric(null);
         }}
         onDeleteEntry={(id) => deleteEntry(id)}
-        onRefresh={handleRefreshAppleHealth}
+        onRefresh={refreshAppleHealth}
         isRefreshing={isSyncing}
         isReadOnlyAppleMetric={Boolean(isSummaryMetricAppleBacked)}
         supplementMarkers={supplementMarkers}
@@ -577,68 +320,22 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
   },
-  appleHealthCard: {
-    marginBottom: spacing.md,
-    gap: spacing.md,
-  },
-  appleHealthHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-  },
-  appleHealthCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  appleHealthTitle: {
-    fontSize: 18,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textHeading,
-    letterSpacing: -0.3,
-  },
-  appleHealthBody: {
-    marginTop: 4,
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
-  },
-  appleHealthStatusPill: {
+  appleHealthHeaderPill: {
     borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: appTheme.colors.surfaceMuted,
+    paddingVertical: 6,
   },
-  appleHealthStatusText: {
+  appleHealthHeaderPillConnected: {
+    backgroundColor: appTheme.colors.success,
+  },
+  appleHealthHeaderPillDisconnected: {
+    backgroundColor: appTheme.colors.danger,
+  },
+  appleHealthHeaderPillText: {
     fontSize: 11,
     fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textStrong,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  appleHealthMeta: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
-  },
-  appleHealthActionRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm,
-  },
-  appleHealthPrimaryButton: {
-    alignSelf: "flex-start",
-  },
-  appleHealthPrimaryButtonText: {
-    fontSize: 14,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textStrong,
-  },
-  appleHealthSecondaryButtonText: {
-    fontSize: 14,
-    fontFamily: typography.fontFamily.headingSemiBold,
+    color: "#FFFFFF",
+    letterSpacing: 0.2,
   },
   container: {
     marginBottom: spacing.xs,

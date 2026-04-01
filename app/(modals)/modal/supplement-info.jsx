@@ -1,38 +1,39 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, {
+  Circle,
   Defs,
   G,
   LinearGradient as SvgLinearGradient,
   Path,
-  Rect,
   Stop,
 } from "react-native-svg";
-import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
-import {
-  AppButton,
-  AppHeader,
-  PrimaryCard,
-  SectionTitle,
-  StatusPill,
-} from "@/components/common/ui";
-import { appTheme, spacing, typography } from "@/theme";
-import { getSupplementById } from "@src/data/getSupplement";
-import { supabase } from "@src/lib/supabase";
-import {
-  isSupplementHearted,
-  setSupplementHearted,
-} from "@/features/supplements/favouritesStorage";
-import { BenefitIconBadge } from "@/features/supplements/components/BenefitIconBadge";
+import { PrimaryCard } from "@/components/common/ui";
+import ShieldTrustIcon from "@/assets/icons/shield-trust 1.svg";
 import {
   buildBenefitRankings,
   compareBenefits,
   getBenefitColor,
   getBenefitIconComponent,
+  METAL_BADGE_GRADIENTS,
+  METAL_BADGE_LOCATIONS,
 } from "@/features/supplements/benefits";
+import { appTheme, typography } from "@/theme";
+import { getSupplementById } from "@src/data/getSupplement";
+import { supabase } from "@src/lib/supabase";
+
 const SCORE_ANIMATION_DURATION_MS = 1100;
 const EVIDENCE_GAUGE_WIDTH = 261;
 const EVIDENCE_GAUGE_FRAME_HEIGHT = 146;
@@ -42,64 +43,16 @@ const EVIDENCE_GAUGE_CENTER_Y = EVIDENCE_GAUGE_WIDTH / 2;
 const EVIDENCE_GAUGE_RADIUS = 121;
 const EVIDENCE_GAUGE_STROKE_WIDTH = 13;
 const EVIDENCE_GAUGE_LENGTH = Math.PI * EVIDENCE_GAUGE_RADIUS;
+const EVIDENCE_GAUGE_MARKER_RADIUS = 9;
 const EVIDENCE_GAUGE_PATH = `M ${
   EVIDENCE_GAUGE_CENTER_X - EVIDENCE_GAUGE_RADIUS
 } ${EVIDENCE_GAUGE_CENTER_Y} A ${EVIDENCE_GAUGE_RADIUS} ${EVIDENCE_GAUGE_RADIUS} 0 0 1 ${
   EVIDENCE_GAUGE_CENTER_X + EVIDENCE_GAUGE_RADIUS
 } ${EVIDENCE_GAUGE_CENTER_Y}`;
-function getRatingSummary(score) {
-  if (!Number.isFinite(score)) {
-    return {
-      label: "UNRATED",
-      pillTone: "neutral",
-      caption: "This entry has not been rated yet.",
-      colors: ["rgba(23,21,27,0.06)", "rgba(255,255,255,0.96)"],
-      borderColor: appTheme.colors.borderSubtle,
-      iconSurface: appTheme.colors.surfaceOverlayStrong,
-    };
-  }
 
-  if (score >= 90) {
-    return {
-      label: "STRONG EVIDENCE",
-      pillTone: "highlight",
-      caption: "Well-supported in the catalog.",
-      colors: ["rgba(39,174,96,0.24)", "rgba(255,255,255,0.96)"],
-      borderColor: "rgba(39,174,96,0.16)",
-      iconSurface: "rgba(255,255,255,0.48)",
-    };
-  }
-
-  if (score >= 75) {
-    return {
-      label: "GOOD EVIDENCE",
-      pillTone: "neutral",
-      caption: "Well-supported in the catalog.",
-      colors: ["rgba(39,174,96,0.24)", "rgba(255,255,255,0.96)"],
-      borderColor: "rgba(39,174,96,0.16)",
-      iconSurface: "rgba(255,255,255,0.48)",
-    };
-  }
-
-  if (score >= 50) {
-    return {
-      label: "MODERATE EVIDENCE",
-      pillTone: "neutral",
-      caption: "Promising support with mixed strength.",
-      colors: ["rgba(245,166,35,0.24)", "rgba(255,255,255,0.96)"],
-      borderColor: "rgba(245,166,35,0.18)",
-      iconSurface: "rgba(255,255,255,0.48)",
-    };
-  }
-
-  return {
-    label: "LIMITED EVIDENCE",
-    pillTone: "neutral",
-    caption: "Early or weaker catalog support.",
-    colors: ["rgba(231,76,60,0.22)", "rgba(255,255,255,0.96)"],
-    borderColor: "rgba(231,76,60,0.16)",
-    iconSurface: "rgba(255,255,255,0.48)",
-  };
+function normalizeParam(value) {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return typeof value === "string" ? value : "";
 }
 
 function clampEvidenceScore(score) {
@@ -114,37 +67,92 @@ function getEvidenceGaugePalette(score) {
       startColor: "#E8E4E0",
       progressColor: appTheme.colors.evidenceUnknown,
       textColor: appTheme.colors.textSecondary,
-      trackColor: "#E4E4E4",
+      trackColor: "#E9EAF1",
     };
   }
 
   if (score >= 75) {
     return {
-      accentColor: "#F2D7C0",
-      startColor: "#CFEAA8",
+      accentColor: "#FFE1BA",
+      startColor: "#A4ED83",
       progressColor: "#34C759",
-      textColor: "#2FBD59",
-      trackColor: "#E7E7E7",
+      textColor: "#34C759",
+      trackColor: "#E9EAF1",
     };
   }
 
   if (score >= 50) {
     return {
-      accentColor: "#F2D7C0",
-      startColor: "#F2E1A7",
+      accentColor: "#FFDAB5",
+      startColor: "#F5E88D",
       progressColor: appTheme.colors.evidenceModerate,
-      textColor: "#D1911A",
-      trackColor: "#E7E7E7",
+      textColor: appTheme.colors.evidenceModerate,
+      trackColor: "#E9EAF1",
     };
   }
 
   return {
-    accentColor: "#F2D7C0",
-    startColor: "#F0C7BC",
+    accentColor: "#FFD3C8",
+    startColor: "#FFAF96",
     progressColor: appTheme.colors.evidenceLow,
-    textColor: "#D96050",
-    trackColor: "#E7E7E7",
+    textColor: appTheme.colors.evidenceLow,
+    trackColor: "#E9EAF1",
   };
+}
+
+function getBenefitRankText(benefit, ranking) {
+  const label = String(benefit?.label ?? "").toLowerCase();
+  if (ranking?.rank) {
+    return `#${ranking.rank} in ${label}`;
+  }
+  return "Evidence available";
+}
+
+function getBenefitRankingProgress(ranking) {
+  const rank = Number(ranking?.rank);
+  const total = Number(ranking?.total);
+
+  if (!Number.isFinite(rank) || !Number.isFinite(total) || total <= 0) {
+    return 0;
+  }
+
+  if (rank <= 1) {
+    return 1;
+  }
+
+  return Math.max(0, Math.min(1, (total - rank) / total));
+}
+
+function getSectionBody(value) {
+  const body = typeof value === "string" ? value.trim() : "";
+  return body || "No details listed yet.";
+}
+
+function buildEvidenceSnippets(text) {
+  const body = typeof text === "string" ? text.trim() : "";
+  if (!body) {
+    return ["No evidence summary is available for this benefit yet."];
+  }
+
+  const explicitLines = body
+    .split(/\n+/)
+    .map((line) => line.replace(/^[\s\-*•]+/, "").trim())
+    .filter(Boolean);
+
+  if (explicitLines.length >= 2) {
+    return explicitLines.slice(0, 3);
+  }
+
+  const sentences = body
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 18);
+
+  if (sentences.length >= 2) {
+    return sentences.slice(0, 3);
+  }
+
+  return [body];
 }
 
 function EvidenceRatingGauge({ value, toneScore }) {
@@ -158,10 +166,9 @@ function EvidenceRatingGauge({ value, toneScore }) {
     EVIDENCE_GAUGE_CENTER_X + EVIDENCE_GAUGE_RADIUS * Math.cos(theta);
   const indicatorY =
     EVIDENCE_GAUGE_CENTER_Y - EVIDENCE_GAUGE_RADIUS * Math.sin(theta);
-  const indicatorRotation = 90 - (theta * 180) / Math.PI;
 
   return (
-    <View style={styles.scorePanel}>
+    <View style={styles.gaugeWrap}>
       <Svg
         width={EVIDENCE_GAUGE_WIDTH}
         height={EVIDENCE_GAUGE_HEIGHT}
@@ -170,7 +177,7 @@ function EvidenceRatingGauge({ value, toneScore }) {
       >
         <Defs>
           <SvgLinearGradient
-            id="evidenceGaugeGradient"
+            id="supplementGaugeGradient"
             x1="0%"
             y1="100%"
             x2="100%"
@@ -193,7 +200,7 @@ function EvidenceRatingGauge({ value, toneScore }) {
         <Path
           d={EVIDENCE_GAUGE_PATH}
           fill="none"
-          stroke="url(#evidenceGaugeGradient)"
+          stroke="url(#supplementGaugeGradient)"
           strokeWidth={EVIDENCE_GAUGE_STROKE_WIDTH}
           strokeLinecap="round"
           strokeDasharray={`${EVIDENCE_GAUGE_LENGTH} ${EVIDENCE_GAUGE_LENGTH}`}
@@ -201,29 +208,25 @@ function EvidenceRatingGauge({ value, toneScore }) {
         />
 
         {hasRating ? (
-          <G
-            transform={`translate(${indicatorX} ${indicatorY}) rotate(${indicatorRotation})`}
-          >
-            <Rect
-              x={-8.321}
-              y={-11.6515}
-              width={16.642}
-              height={23.303}
-              rx={5}
+          <G>
+            <Circle
+              cx={indicatorX}
+              cy={indicatorY}
+              r={EVIDENCE_GAUGE_MARKER_RADIUS}
               fill={palette.progressColor}
             />
           </G>
         ) : null}
       </Svg>
 
-      <View pointerEvents="none" style={styles.scoreTextWrap}>
-        <Text style={[styles.scoreEyebrow, { color: palette.textColor }]}>
+      <View pointerEvents="none" style={styles.gaugeTextWrap}>
+        <Text style={[styles.gaugeEyebrow, { color: palette.textColor }]}>
           Evidence Rating
         </Text>
         <Text
           style={[
-            styles.scoreValue,
-            !hasRating && styles.scoreUnavailable,
+            styles.gaugeValue,
+            !hasRating && styles.gaugeValueUnavailable,
             { color: palette.textColor },
           ]}
         >
@@ -234,83 +237,275 @@ function EvidenceRatingGauge({ value, toneScore }) {
   );
 }
 
+function HeaderAction({ icon, label, onPress, disabled = false }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.headerAction,
+        pressed && styles.headerActionPressed,
+        disabled && styles.headerActionDisabled,
+      ]}
+    >
+      <Ionicons name={icon} size={15} color={appTheme.colors.textStrong} />
+      <Text style={styles.headerActionText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function EvidenceSnippetCard({ text }) {
+  return (
+    <View style={styles.evidenceSnippetCard}>
+      <Ionicons
+        name="document-text-outline"
+        size={15}
+        color={appTheme.colors.textSecondary}
+        style={styles.evidenceSnippetIcon}
+      />
+      <Text style={styles.evidenceSnippetText}>{text}</Text>
+    </View>
+  );
+}
+
+function BenefitRankingBar({ ranking, dimmed = false }) {
+  const progress = getBenefitRankingProgress(ranking);
+  const gradient = METAL_BADGE_GRADIENTS[ranking?.icon];
+  const locations = METAL_BADGE_LOCATIONS[ranking?.icon];
+  const fillColor = getBenefitColor(ranking?.icon);
+  const trackColor = `${fillColor}29`;
+
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+      style={[
+        styles.rankingBarTrack,
+        { backgroundColor: dimmed ? `${fillColor}1A` : trackColor },
+      ]}
+    >
+      {gradient ? (
+        <LinearGradient
+          colors={gradient}
+          locations={locations}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={[
+            styles.rankingBarFill,
+            dimmed && styles.rankingBarFillDimmed,
+            { width: `${progress * 100}%` },
+          ]}
+        />
+      ) : (
+        <View
+          style={[
+            styles.rankingBarFill,
+            { backgroundColor: dimmed ? `${fillColor}D1` : fillColor },
+            { width: `${progress * 100}%` },
+          ]}
+        />
+      )}
+    </View>
+  );
+}
+
+function DetailCard({ icon, title, body }) {
+  return (
+    <PrimaryCard style={styles.detailCard}>
+      <View style={styles.detailCardHeader}>
+        <Ionicons name={icon} size={18} color={appTheme.colors.textStrong} />
+        <Text style={styles.detailCardTitle}>{title}</Text>
+      </View>
+      <Text style={styles.detailCardBody}>{body}</Text>
+    </PrimaryCard>
+  );
+}
+
+function VerifiedInfoModal({ visible, onClose }) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.verifiedModalRoot}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close verified information"
+          onPress={onClose}
+          style={styles.verifiedModalBackdrop}
+        />
+
+        <LinearGradient
+          colors={["#E9EBFD", "#F7E4E1", "#F5F5F5"]}
+          locations={[0, 0.22, 1]}
+          style={styles.verifiedSheet}
+        >
+          <View style={styles.verifiedSheetHeader}>
+            <ShieldTrustIcon width={32} height={32} />
+            <Text style={styles.verifiedSheetTitle}>Verified</Text>
+          </View>
+
+          <Text style={styles.verifiedSheetBody}>
+            This badge means the supplement has been reviewed and meets our
+            standards for safety, quality, and trust.
+          </Text>
+
+          <Text style={styles.verifiedSheetBody}>
+            {"It's typically given to products that use well-known, widely "}
+            {"accepted ingredients, are considered safe when used as directed, "}
+            {"come from reputable brands with good manufacturing practices, and "}
+            {"are popular among users with consistent, positive usage."}
+          </Text>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Understood"
+            onPress={onClose}
+            style={({ pressed }) => [
+              styles.verifiedSheetButtonWrap,
+              pressed && styles.verifiedSheetButtonPressed,
+            ]}
+          >
+            <LinearGradient
+              colors={["rgba(237,181,181,0.2)", "#E5E1F9", "#F6E2E1"]}
+              locations={[0, 0.05, 1]}
+              start={{ x: 0, y: 0.5 }}
+              end={{ x: 1, y: 0.5 }}
+              style={styles.verifiedSheetButton}
+            >
+              <Text style={styles.verifiedSheetButtonText}>Understood</Text>
+            </LinearGradient>
+          </Pressable>
+        </LinearGradient>
+      </View>
+    </Modal>
+  );
+}
+
+function BenefitRow({
+  benefit,
+  ranking,
+  open,
+  dimmed,
+  onPress,
+  onBenefitPress,
+  supplementEvidence,
+}) {
+  const BenefitIcon = getBenefitIconComponent(benefit.label);
+  const evidenceText =
+    benefit?.evidence ?? benefit?.evidence_summary ?? supplementEvidence;
+  const evidenceSnippets = buildEvidenceSnippets(evidenceText);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open }}
+      accessibilityLabel={`${benefit.label}. ${open ? "Collapse" : "Expand"} evidence.`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.benefitRow,
+        open && styles.benefitRowOpen,
+        dimmed && styles.benefitRowDimmed,
+        pressed && styles.benefitRowPressed,
+      ]}
+    >
+      <View style={styles.benefitRowTop}>
+        <View style={styles.benefitRowLeft}>
+          <View style={styles.benefitIconWrap}>
+            <BenefitIcon width={20} height={20} />
+          </View>
+
+          <View style={styles.benefitCopy}>
+            <Text style={styles.benefitLabel}>{benefit.label}</Text>
+            <Text style={styles.benefitMeta}>
+              {getBenefitRankText(benefit, ranking)}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.benefitRight}>
+          <BenefitRankingBar ranking={ranking} dimmed={dimmed} />
+          <Ionicons
+            name={open ? "chevron-up" : "chevron-down"}
+            size={15}
+            color={appTheme.colors.textSecondary}
+          />
+        </View>
+      </View>
+
+      {open ? (
+        <View style={styles.expandedEvidenceWrap}>
+          {evidenceSnippets.map((snippet, index) => (
+            <EvidenceSnippetCard
+              key={`${benefit.id ?? benefit.label}-${index}`}
+              text={snippet}
+            />
+          ))}
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Go to ${benefit.label}`}
+            onPress={(event) => {
+              event.stopPropagation?.();
+              onBenefitPress?.();
+            }}
+            style={({ pressed }) => [
+              styles.benefitCta,
+              pressed && styles.benefitCtaPressed,
+            ]}
+          >
+            <Text style={styles.benefitCtaText}>
+              {`Go to ${String(benefit.label).toLowerCase()}`}
+            </Text>
+            <Ionicons
+              name="arrow-forward"
+              size={14}
+              color={appTheme.colors.textStrong}
+            />
+          </Pressable>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
 export default function SupplementInfoModal() {
-  const { id, name: paramName } = useLocalSearchParams();
+  const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-  const scrollViewRef = useRef(null);
-  const favouriteToastTimeoutRef = useRef(null);
+  const id = normalizeParam(params.id);
+  const paramName = normalizeParam(params.name);
+
   const [data, setData] = useState(null);
   const [loaded, setLoaded] = useState(false);
-  const [hearted, setHearted] = useState(false);
   const [displayedRating, setDisplayedRating] = useState(0);
   const [benefitRankings, setBenefitRankings] = useState({});
-  const [, setHeaderHeight] = useState(0);
-  const [evidenceSectionOffset, setEvidenceSectionOffset] = useState(0);
-  const [openEvidenceById, setOpenEvidenceById] = useState({});
-  const [evidenceRowOffsets, setEvidenceRowOffsets] = useState({});
-  const [favouriteToastVisible, setFavouriteToastVisible] = useState(false);
+  const [openBenefitId, setOpenBenefitId] = useState(null);
+  const [showAllBenefits, setShowAllBenefits] = useState(false);
+  const [verifiedInfoVisible, setVerifiedInfoVisible] = useState(false);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id) {
+      setData(null);
+      setLoaded(true);
+      return;
+    }
 
     setLoaded(false);
-    getSupplementById(id, typeof paramName === "string" ? paramName : "")
+    setOpenBenefitId(null);
+    setShowAllBenefits(false);
+    setVerifiedInfoVisible(false);
+
+    getSupplementById(id, paramName)
       .then(setData)
       .finally(() => setLoaded(true));
   }, [id, paramName]);
 
   useEffect(() => {
-    setHearted(false);
-    let isActive = true;
-
-    if (!data?.id) return;
-
-    isSupplementHearted(data.id)
-      .then((value) => {
-        if (isActive) setHearted(value);
-      })
-      .catch(() => undefined);
-
-    return () => {
-      isActive = false;
-    };
-  }, [data?.id]);
-
-  useEffect(() => {
-    setEvidenceSectionOffset(0);
-    setOpenEvidenceById({});
-    setEvidenceRowOffsets({});
-  }, [data?.id]);
-
-  useEffect(
-    () => () => {
-      if (favouriteToastTimeoutRef.current) {
-        clearTimeout(favouriteToastTimeoutRef.current);
-      }
-    },
-    []
-  );
-
-  const benefits = useMemo(
-    () => [...(data?.supplement_benefits ?? [])].sort(compareBenefits),
-    [data]
-  );
-  const supplementEvidence =
-    typeof data?.evidence === "string" && data.evidence.trim()
-      ? data.evidence.trim()
-      : "";
-  const hasSupplementEvidence = Boolean(supplementEvidence);
-  const fallbackName = data?.name ?? paramName ?? "Supplement";
-  const rating = data?.evidence_score;
-  const hasRating = Number.isFinite(rating);
-  const ratingSummary = getRatingSummary(rating);
-  const isVerified = data?.verified ?? false;
-  const canAddSupplement = Boolean(data?.id && data?.name);
-  const headerSubtitle = loaded ? "" : "Loading supplement details";
-  const visibleRating = hasRating ? displayedRating : null;
-
-  useEffect(() => {
-    let isActive = true;
+    let active = true;
 
     const loadBenefitRankings = async () => {
       const currentBenefits = data?.supplement_benefits ?? [];
@@ -321,37 +516,39 @@ export default function SupplementInfoModal() {
       ];
 
       if (!labels.length) {
-        if (isActive) setBenefitRankings({});
+        if (active) setBenefitRankings({});
         return;
       }
 
       const { data: rankingRows, error } = await supabase
         .from("supplement_benefits")
-        .select("label, score")
+        .select("label, score, icon")
         .in("label", labels);
+
+      if (!active) return;
 
       if (error) {
         console.error("Failed to load benefit rankings", error);
-        if (isActive) setBenefitRankings({});
+        setBenefitRankings({});
         return;
       }
 
-      if (isActive) {
-        setBenefitRankings(
-          buildBenefitRankings(currentBenefits, rankingRows ?? [])
-        );
-      }
+      setBenefitRankings(
+        buildBenefitRankings(currentBenefits, rankingRows ?? [])
+      );
     };
 
     loadBenefitRankings();
 
     return () => {
-      isActive = false;
+      active = false;
     };
   }, [data?.supplement_benefits]);
 
+  const rating = data?.evidence_score;
+
   useEffect(() => {
-    if (!loaded || !hasRating) {
+    if (!loaded || !Number.isFinite(rating)) {
       setDisplayedRating(0);
       return;
     }
@@ -372,48 +569,55 @@ export default function SupplementInfoModal() {
       }
     };
 
-    setDisplayedRating(0);
     frameId = requestAnimationFrame(tick);
 
     return () => {
       if (frameId) cancelAnimationFrame(frameId);
     };
-  }, [hasRating, loaded, rating]);
+  }, [loaded, rating]);
 
-  const handleHeartPress = () => {
-    if (!data?.id) return;
+  const benefits = useMemo(
+    () => [...(data?.supplement_benefits ?? [])].sort(compareBenefits),
+    [data]
+  );
 
-    const hideFavouriteToast = () => {
-      if (favouriteToastTimeoutRef.current) {
-        clearTimeout(favouriteToastTimeoutRef.current);
-        favouriteToastTimeoutRef.current = null;
-      }
-      setFavouriteToastVisible(false);
-    };
+  const supplementEvidence =
+    typeof data?.evidence === "string" && data.evidence.trim()
+      ? data.evidence.trim()
+      : "";
+  const fallbackName = data?.name ?? paramName ?? "Supplement";
+  const isVerified = Boolean(data?.verified);
+  const canAddSupplement = Boolean(data?.id && data?.name);
+  const visibleBenefitCount = showAllBenefits ? benefits.length : 6;
+  const visibleBenefits = benefits.slice(0, visibleBenefitCount);
+  const hiddenBenefitCount = Math.max(benefits.length - visibleBenefitCount, 0);
 
-    const showFavouriteToast = () => {
-      if (favouriteToastTimeoutRef.current) {
-        clearTimeout(favouriteToastTimeoutRef.current);
-      }
-
-      setFavouriteToastVisible(true);
-      favouriteToastTimeoutRef.current = setTimeout(() => {
-        setFavouriteToastVisible(false);
-        favouriteToastTimeoutRef.current = null;
-      }, 2000);
-    };
-
-    setHearted((previous) => {
-      const next = !previous;
-      setSupplementHearted(data.id, next);
-      if (next) {
-        showFavouriteToast();
-      } else {
-        hideFavouriteToast();
-      }
-      return next;
-    });
-  };
+  const detailCards = [
+    {
+      key: "how-to-use",
+      icon: "information-circle-outline",
+      title: "How to use",
+      body: getSectionBody(data?.how_to_use),
+    },
+    {
+      key: "what-is-it",
+      icon: "search-outline",
+      title: "What is it?",
+      body: getSectionBody(data?.what_is_it),
+    },
+    {
+      key: "why-use-it",
+      icon: "star-outline",
+      title: "Why use it?",
+      body: getSectionBody(data?.why_use_it),
+    },
+    {
+      key: "risks",
+      icon: "sparkles-outline",
+      title: "Risks & Interactions",
+      body: getSectionBody(data?.risks_and_interactions),
+    },
+  ];
 
   const handleAddSupplement = () => {
     if (!canAddSupplement) return;
@@ -427,683 +631,567 @@ export default function SupplementInfoModal() {
     });
   };
 
-  const toggleEvidenceRow = (benefitId) => {
-    setOpenEvidenceById((previous) => ({
-      ...previous,
-      [benefitId]: !previous[benefitId],
-    }));
-  };
-
-  const handleViewEvidencePress = (benefitId) => {
-    setOpenEvidenceById((previous) => ({
-      ...previous,
-      [benefitId]: true,
-    }));
-
-    requestAnimationFrame(() => {
-      const rowOffset = evidenceRowOffsets[benefitId];
-      if (!Number.isFinite(rowOffset)) return;
-
-      scrollViewRef.current?.scrollTo({
-        y: Math.max(0, evidenceSectionOffset + rowOffset - spacing.sm),
-        animated: true,
+  const handleShare = async () => {
+    try {
+      await Share.share({
+        message: `${fallbackName} on Suppro${
+          Number.isFinite(rating) ? ` • Evidence rating ${rating}/100` : ""
+        }`,
       });
-    });
+    } catch (error) {
+      console.error("Failed to share supplement", error);
+    }
   };
 
   return (
     <View style={styles.screenRoot}>
-      <BackdropScreen
-        bottomInsetOffset={72}
-        minBottomPadding={96}
-        scrollViewRef={scrollViewRef}
-        onHeaderHeightChange={setHeaderHeight}
-        header={
-          <AppHeader
-            insetPreset="modal"
-            bottomPadding={3}
-            leftSlot={
-              <AppButton
-                onPress={() => router.back()}
-                variant="overlay"
-                size="icon"
-                accessibilityLabel="Close supplement info"
-              >
-                <Ionicons
-                  name="close"
-                  size={20}
-                  color={appTheme.colors.textStrong}
-                />
-              </AppButton>
-            }
-            rightSlot={
-              <Pressable
-                onPress={handleAddSupplement}
-                disabled={!canAddSupplement}
-                accessibilityLabel="Add supplement to your supplements"
-                hitSlop={8}
-                style={({ pressed }) => [
-                  styles.headerAddAction,
-                  pressed && styles.headerAddActionPressed,
-                  !canAddSupplement && styles.addButtonDisabled,
-                ]}
-              >
-                <Text style={styles.headerAddActionText}>
-                  +Add to supplements
-                </Text>
-              </Pressable>
-            }
-            title={fallbackName}
-            titleStyle={styles.headerTitle}
-            titleNumberOfLines={2}
-            titleEllipsizeMode="tail"
-            bottomSlot={
-              <View>
-                <View style={styles.headerMetaRow}>
-                  <StatusPill
-                    label={isVerified ? "VERIFIED" : "USER SUBMITTED"}
-                    tone={isVerified ? "success" : "neutral"}
-                  />
-                  <StatusPill
-                    label={ratingSummary.label}
-                    tone={ratingSummary.pillTone}
-                    style={styles.headerEvidencePill}
-                  />
-                </View>
-                <Text style={styles.headerSubtitle}>{headerSubtitle}</Text>
-              </View>
-            }
-            bottomSlotStyle={styles.headerBottom}
-          />
-        }
-      >
-        <PrimaryCard style={styles.heroCard}>
-          <View style={styles.scorePanelWrap}>
-            <AppButton
-              onPress={handleHeartPress}
-              variant="overlay"
-              size="icon"
-              accessibilityLabel={
-                hearted
-                  ? "Remove supplement from favourites"
-                  : "Add supplement to favourites"
-              }
-              style={styles.scoreFavouriteAction}
-            >
-              <Text
-                style={[
-                  styles.heartIcon,
-                  hearted && { color: "#EF4444" },
-                  !hearted &&
-                    hasRating && {
-                      color: getEvidenceGaugePalette(rating).progressColor,
-                    },
-                ]}
-              >
-                {hearted ? "♥" : "♡"}
-              </Text>
-            </AppButton>
+      <LinearGradient
+        colors={["#E9EBFD", "#F7E4E1", "#F4F4F4"]}
+        locations={[0, 0.22, 1]}
+        style={StyleSheet.absoluteFill}
+      />
 
-            <EvidenceRatingGauge value={visibleRating} toneScore={rating} />
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: insets.top + 14,
+            paddingBottom: Math.max(insets.bottom + 28, 36),
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.headerBlock}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close supplement info"
+            hitSlop={8}
+            onPress={() => router.back()}
+            style={({ pressed }) => [
+              styles.closeButton,
+              pressed && styles.closeButtonPressed,
+            ]}
+          >
+            <Ionicons
+              name="close"
+              size={18}
+              color={appTheme.colors.textStrong}
+            />
+          </Pressable>
+
+          <View style={styles.titleRow}>
+            <Text style={styles.pageTitle}>{fallbackName}</Text>
+            {isVerified ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Verified supplement information"
+                hitSlop={8}
+                onPress={() => setVerifiedInfoVisible(true)}
+                style={({ pressed }) => [
+                  styles.verifiedBadgeButton,
+                  pressed && styles.verifiedBadgeButtonPressed,
+                ]}
+              >
+                <ShieldTrustIcon width={16} height={16} />
+              </Pressable>
+            ) : null}
           </View>
 
-          {benefits.length > 0 ? (
-            <View style={styles.benefitsSection}>
-              <SectionTitle
-                title={`${benefits.length} benefits`}
-                style={styles.sectionTitle}
-                titleStyle={styles.sectionTitleText}
-                subtitleStyle={styles.sectionSubtitleText}
-              />
-
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.benefitScroll}
-              >
-                {benefits.map((benefit, index) => (
-                  <BenefitChip
-                    key={benefit.id}
-                    benefit={benefit}
-                    ranking={benefitRankings[benefit.id] ?? null}
-                    isLast={index === benefits.length - 1}
-                    onViewEvidencePress={() =>
-                      handleViewEvidencePress(benefit.id)
-                    }
-                    onPress={() =>
-                      router.push({
-                        pathname: "/benefit-ranking",
-                        params: { label: benefit.label },
-                      })
-                    }
-                  />
-                ))}
-              </ScrollView>
-            </View>
-          ) : null}
-        </PrimaryCard>
-
-        <PrimaryCard style={styles.sectionCard}>
-          <View style={styles.sectionList}>
-            <DetailRow label="How to use" value={data?.how_to_use} />
-            <DetailRow label="What is it?" value={data?.what_is_it} />
-            <DetailRow label="Why use it?" value={data?.why_use_it} />
-            <DetailRow
-              label="Risks & interactions"
-              value={data?.risks_and_interactions}
-              hideBorder
+          <View style={styles.headerActionsRow}>
+            <HeaderAction
+              icon="add"
+              label="Add to supplements"
+              onPress={handleAddSupplement}
+              disabled={!canAddSupplement}
+            />
+            <HeaderAction
+              icon="share-social-outline"
+              label="Share"
+              onPress={handleShare}
             />
           </View>
-        </PrimaryCard>
+        </View>
 
-        <PrimaryCard
-          style={styles.sectionCard}
-          onLayout={(event) =>
-            setEvidenceSectionOffset(event.nativeEvent.layout.y)
-          }
-        >
-          <SectionTitle
-            title="Evidence"
-            subtitle={
-              benefits.length > 0
-                ? "Benefits linked to this supplement"
-                : hasSupplementEvidence
-                ? "Summary imported from the supplement catalog"
-                : "No evidence listed yet"
-            }
-            style={styles.sectionTitle}
-            titleStyle={styles.sectionTitleText}
-            subtitleStyle={styles.sectionSubtitleText}
-          />
+        {!loaded ? (
+          <PrimaryCard style={styles.loadingCard}>
+            <Text style={styles.loadingText}>Loading supplement details...</Text>
+          </PrimaryCard>
+        ) : null}
 
-          {benefits.length > 0 ? (
-            benefits.map((benefit, index) => (
-              <EvidenceRow
-                key={benefit.id}
-                benefit={benefit}
-                evidenceText={
-                  benefit?.evidence ??
-                  benefit?.evidence_summary ??
-                  supplementEvidence
-                }
-                open={Boolean(openEvidenceById[benefit.id])}
-                onToggle={() => toggleEvidenceRow(benefit.id)}
-                onLayout={(event) => {
-                  const nextY = event.nativeEvent.layout.y;
+        {loaded ? (
+          <>
+            <PrimaryCard style={styles.summaryCard}>
+              <EvidenceRatingGauge value={displayedRating} toneScore={rating} />
 
-                  setEvidenceRowOffsets((previous) => {
-                    if (previous[benefit.id] === nextY) return previous;
-                    return { ...previous, [benefit.id]: nextY };
-                  });
-                }}
-                showBorder={index < benefits.length - 1}
+              {benefits.length > 0 ? (
+                <>
+                  <View style={styles.benefitHeaderRow}>
+                    <Text style={styles.benefitHeaderText}>Benefit</Text>
+                    <Text style={styles.benefitHeaderText}>Ranking</Text>
+                  </View>
+
+                  <View style={styles.benefitList}>
+                    {visibleBenefits.map((benefit) => {
+                      const isOpen = openBenefitId === benefit.id;
+                      const dimmed = Boolean(openBenefitId && !isOpen);
+
+                      return (
+                        <BenefitRow
+                          key={benefit.id}
+                          benefit={benefit}
+                          ranking={benefitRankings[benefit.id] ?? null}
+                          open={isOpen}
+                          dimmed={dimmed}
+                          supplementEvidence={supplementEvidence}
+                          onPress={() =>
+                            setOpenBenefitId((current) =>
+                              current === benefit.id ? null : benefit.id
+                            )
+                          }
+                          onBenefitPress={() =>
+                            router.push({
+                              pathname: "/benefit-ranking",
+                              params: { label: benefit.label },
+                            })
+                          }
+                        />
+                      );
+                    })}
+
+                    {hiddenBenefitCount > 0 ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${hiddenBenefitCount} more benefits`}
+                        onPress={() => setShowAllBenefits(true)}
+                        style={({ pressed }) => [
+                          styles.moreBenefitsRow,
+                          pressed && styles.moreBenefitsRowPressed,
+                        ]}
+                      >
+                        <Text style={styles.moreBenefitsText}>
+                          {`${hiddenBenefitCount} more benefits`}
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={16}
+                          color={appTheme.colors.textStrong}
+                        />
+                      </Pressable>
+                    ) : null}
+
+                    {showAllBenefits && benefits.length > 6 ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Show fewer benefits"
+                        onPress={() => {
+                          setShowAllBenefits(false);
+                          if (
+                            !benefits
+                              .slice(0, 6)
+                              .some((item) => item.id === openBenefitId)
+                          ) {
+                            setOpenBenefitId(null);
+                          }
+                        }}
+                        style={({ pressed }) => [
+                          styles.moreBenefitsRow,
+                          pressed && styles.moreBenefitsRowPressed,
+                        ]}
+                      >
+                        <Text style={styles.moreBenefitsText}>Show less</Text>
+                        <Ionicons
+                          name="chevron-up"
+                          size={16}
+                          color={appTheme.colors.textStrong}
+                        />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                </>
+              ) : (
+                <Text style={styles.emptyBenefitText}>
+                  No linked benefits are listed for this supplement yet.
+                </Text>
+              )}
+            </PrimaryCard>
+
+            {detailCards.map((section) => (
+              <DetailCard
+                key={section.key}
+                icon={section.icon}
+                title={section.title}
+                body={section.body}
               />
-            ))
-          ) : hasSupplementEvidence ? (
-            <Text style={styles.evidenceSummaryText}>{supplementEvidence}</Text>
-          ) : (
-            <Text style={styles.emptyStateText}>No evidence listed yet.</Text>
-          )}
-        </PrimaryCard>
-      </BackdropScreen>
+            ))}
+          </>
+        ) : null}
+      </ScrollView>
 
-      {favouriteToastVisible ? (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.favouriteToastWrap,
-            { bottom: Math.max(insets.bottom + spacing.lg, 28) },
-          ]}
-        >
-          <View style={styles.favouriteToast}>
-            <Text style={styles.favouriteToastText}>Added to favourites</Text>
-          </View>
-        </View>
-      ) : null}
+      <VerifiedInfoModal
+        visible={verifiedInfoVisible && isVerified}
+        onClose={() => setVerifiedInfoVisible(false)}
+      />
     </View>
-  );
-}
-
-function BenefitChip({
-  benefit,
-  ranking,
-  isLast,
-  onPress,
-  onViewEvidencePress,
-}) {
-  const Icon = getBenefitIconComponent(benefit.label);
-  const color = getBenefitColor(benefit.icon);
-  const rankSummary = ranking
-    ? `Rank #${ranking.rank} of ${ranking.total}`
-    : "View benefit ranking";
-  const message = ranking
-    ? `Open all supplements ranked for ${benefit.label}. This supplement is currently ranked #${ranking.rank} out of ${ranking.total}.`
-    : `Open all supplements ranked for ${benefit.label}.`;
-
-  return (
-    <View style={[styles.benefitChip, isLast && styles.benefitChipLast]}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={benefit.label}
-        accessibilityHint={message}
-        onPress={onPress}
-        style={({ pressed }) => [
-          styles.benefitChipMain,
-          pressed && styles.benefitChipPressed,
-        ]}
-      >
-        <BenefitIconBadge
-          label={benefit.label}
-          color={color}
-          tone={benefit.icon}
-          Icon={Icon}
-          size={22}
-          containerSize={42}
-        />
-
-        <View style={styles.benefitChipCopy}>
-          <Text style={styles.benefitChipLabel}>{benefit.label}</Text>
-          <Text style={styles.benefitChipMeta}>{rankSummary}</Text>
-        </View>
-      </Pressable>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`View evidence for ${benefit.label}`}
-        accessibilityHint={`Scroll to the evidence section for ${benefit.label} and expand it.`}
-        hitSlop={6}
-        onPress={onViewEvidencePress}
-        style={({ pressed }) => [
-          styles.viewEvidencePill,
-          pressed && styles.viewEvidencePillPressed,
-        ]}
-      >
-        <Text style={styles.viewEvidencePillText}>Evidence</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function DetailRow({ label, value, hideBorder = false }) {
-  const [open, setOpen] = useState(false);
-  const body = value?.trim() ? value.trim() : "No details listed yet.";
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ expanded: open }}
-      accessibilityLabel={`${label}. ${open ? "Collapse" : "Expand"} section.`}
-      onPress={() => setOpen((previous) => !previous)}
-      style={[
-        styles.detailRow,
-        !hideBorder && styles.detailRowBorder,
-        open && styles.detailRowOpen,
-      ]}
-    >
-      <View style={styles.detailHeader}>
-        <Text style={styles.detailLabel}>{label}</Text>
-        <Ionicons
-          name={open ? "chevron-down" : "chevron-forward"}
-          size={18}
-          color={appTheme.colors.textSecondary}
-        />
-      </View>
-
-      {open ? <Text style={styles.detailBody}>{body}</Text> : null}
-    </Pressable>
-  );
-}
-
-function EvidenceRow({
-  benefit,
-  evidenceText,
-  showBorder,
-  open,
-  onToggle,
-  onLayout,
-}) {
-  const Icon = getBenefitIconComponent(benefit.label);
-  const color = getBenefitColor(benefit.icon);
-  const body = evidenceText?.trim()
-    ? evidenceText.trim()
-    : "No evidence summary is available for this supplement yet.";
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ expanded: open }}
-      accessibilityLabel={`${benefit.label}. ${
-        open ? "Collapse" : "Expand"
-      } evidence.`}
-      onPress={onToggle}
-      onLayout={onLayout}
-      style={[
-        styles.evidenceRow,
-        showBorder && styles.evidenceRowBorder,
-        open && styles.evidenceRowOpen,
-      ]}
-    >
-      <View style={styles.evidenceTopRow}>
-        <View style={styles.evidenceLeft}>
-          <BenefitIconBadge
-            label={benefit.label}
-            color={color}
-            tone={benefit.icon}
-            Icon={Icon}
-            size={18}
-            containerSize={34}
-          />
-
-          <View style={styles.evidenceCopy}>
-            <Text style={styles.evidenceLabel}>{benefit.label}</Text>
-          </View>
-        </View>
-
-        <Ionicons
-          name={open ? "chevron-down" : "chevron-forward"}
-          size={18}
-          color={appTheme.colors.textSecondary}
-        />
-      </View>
-
-      {open ? <Text style={styles.evidenceBody}>{body}</Text> : null}
-    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   screenRoot: {
     flex: 1,
+    backgroundColor: appTheme.screen.background,
   },
-  headerTitle: {
-    color: appTheme.colors.textPrimary,
-    marginRight: spacing.md,
+  scrollContent: {
+    paddingHorizontal: 24,
   },
-  headerBottom: {
-    marginTop: 2,
-  },
-  headerMetaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-  },
-  headerEvidencePill: {
-    backgroundColor: "rgba(255,255,255,0.42)",
-  },
-  headerSubtitle: {
-    marginTop: 2,
-    fontSize: 14,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textBody,
-  },
-  heartIcon: {
-    fontSize: 21,
-    lineHeight: 28,
-    fontFamily: typography.fontFamily.heading,
-    color: appTheme.colors.textStrong,
-    paddingTop: 2,
-  },
-  headerAddAction: {
-    alignSelf: "flex-start",
-    minHeight: 35,
-    justifyContent: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 0,
-    borderRadius: 999,
-    backgroundColor: appTheme.colors.textStrong,
-  },
-  headerAddActionPressed: {
-    opacity: 0.82,
-  },
-  headerAddActionText: {
-    fontSize: 14,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    letterSpacing: -0.2,
-    color: appTheme.colors.surface,
-  },
-  heroCard: {
-    marginBottom: spacing.md,
-    paddingHorizontal: appTheme.card.paddingSpacious,
-    paddingVertical: appTheme.card.paddingSpacious,
-  },
-  scorePanelWrap: {
+  headerBlock: {
     position: "relative",
-    alignItems: "center",
+    paddingRight: 44,
+    marginBottom: 18,
   },
-  scorePanel: {
-    width: EVIDENCE_GAUGE_WIDTH,
-    height: EVIDENCE_GAUGE_FRAME_HEIGHT,
-    alignItems: "center",
-    justifyContent: "flex-start",
-  },
-  scoreEyebrow: {
-    fontSize: 14,
-    fontFamily: typography.fontFamily.headingBlack,
-    letterSpacing: -0.2,
-    textAlign: "center",
-  },
-  scoreTextWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 58,
-    alignItems: "center",
-  },
-  scoreValue: {
-    marginTop: 12,
-    fontSize: 40,
-    lineHeight: 40,
-    fontFamily: typography.fontFamily.headingBlack,
-    letterSpacing: -0.8,
-    textAlign: "center",
-  },
-  scoreUnavailable: {
-    marginTop: 12,
-    fontSize: 28,
-    lineHeight: 30,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    letterSpacing: -0.4,
-    textAlign: "center",
-  },
-  scoreFavouriteAction: {
+  closeButton: {
     position: "absolute",
     top: 0,
     right: 0,
-    zIndex: 1,
-  },
-  benefitsSection: {
-    marginTop: spacing.sm,
-  },
-  sectionTitle: {
-    marginBottom: spacing.sm,
-  },
-  sectionTitleText: {
-    fontSize: 18,
-    color: appTheme.colors.textHeading,
-  },
-  sectionSubtitleText: {
-    color: appTheme.colors.textSecondary,
-  },
-  benefitScroll: {
-    marginHorizontal: -appTheme.card.paddingSpacious,
-  },
-  benefitChip: {
-    width: 152,
-    minHeight: 94,
-    backgroundColor: appTheme.colors.surfaceMuted,
-    borderRadius: 18,
-    marginRight: spacing.sm,
-    position: "relative",
-    overflow: "hidden",
-  },
-  benefitChipLast: {
-    marginRight: 0,
-  },
-  benefitChipMain: {
-    minHeight: 94,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  benefitChipPressed: {
-    opacity: 0.94,
-  },
-  benefitChipCopy: {
-    marginTop: 10,
-    paddingRight: 8,
-  },
-  benefitChipLabel: {
-    fontSize: 13,
-    lineHeight: 17,
-    fontFamily: typography.fontFamily.bodySemiBold,
-    color: appTheme.colors.textStrong,
-    textDecorationLine: "underline",
-  },
-  benefitChipMeta: {
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 16,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
-  },
-  viewEvidencePill: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    minHeight: 22,
-    paddingHorizontal: 8,
-    borderRadius: 999,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(32,33,36,0.1)",
+    backgroundColor: "rgba(255,255,255,0.52)",
   },
-  viewEvidencePillPressed: {
+  closeButtonPressed: {
     opacity: 0.72,
   },
-  viewEvidencePillText: {
-    fontSize: 10,
-    lineHeight: 12,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    letterSpacing: -0.1,
-    color: appTheme.colors.textStrong,
-  },
-  sectionCard: {
-    marginBottom: spacing.md,
-    paddingHorizontal: appTheme.card.paddingSpacious,
-    paddingVertical: appTheme.card.paddingSpacious,
-  },
-  sectionList: {
-    marginTop: 2,
-  },
-  detailRow: {
-    minHeight: 56,
-    paddingVertical: 14,
-  },
-  detailRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: appTheme.colors.borderSubtle,
-  },
-  detailRowOpen: {
-    paddingBottom: 16,
-  },
-  detailHeader: {
-    minHeight: 28,
+  titleRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.sm,
+    paddingTop: 2,
   },
-  detailLabel: {
-    flex: 1,
-    fontSize: 16,
+  pageTitle: {
+    flexShrink: 1,
+    fontSize: 17,
+    lineHeight: 22,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textPrimary,
+  },
+  verifiedBadgeButton: {
+    marginLeft: 6,
+    width: 22,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  verifiedBadgeButtonPressed: {
+    opacity: 0.72,
+  },
+  headerActionsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 16,
+  },
+  headerAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.08)",
+  },
+  headerActionPressed: {
+    opacity: 0.72,
+  },
+  headerActionDisabled: {
+    opacity: 0.45,
+  },
+  headerActionText: {
+    marginLeft: 6,
+    fontSize: 13,
+    lineHeight: 16,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textStrong,
   },
-  detailBody: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 20,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textBody,
-    paddingRight: spacing.md,
+  loadingCard: {
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    marginBottom: 14,
   },
-  emptyStateText: {
+  loadingText: {
     fontSize: 14,
     lineHeight: 20,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textSecondary,
   },
-  evidenceSummaryText: {
-    fontSize: 14,
-    lineHeight: 22,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textBody,
-  },
-  evidenceRow: {
-    minHeight: 62,
-    paddingVertical: 12,
-  },
-  evidenceRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: appTheme.colors.borderSubtle,
-  },
-  evidenceRowOpen: {
+  summaryCard: {
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 30,
     paddingBottom: 16,
+    marginBottom: 14,
   },
-  evidenceTopRow: {
-    minHeight: 38,
+  gaugeWrap: {
+    width: EVIDENCE_GAUGE_WIDTH,
+    height: EVIDENCE_GAUGE_FRAME_HEIGHT,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "flex-start",
+  },
+  gaugeTextWrap: {
+    position: "absolute",
+    top: 58,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  gaugeEyebrow: {
+    fontSize: 14,
+    lineHeight: 17,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    textAlign: "center",
+  },
+  gaugeValue: {
+    marginTop: 10,
+    fontSize: 32,
+    lineHeight: 34,
+    fontFamily: typography.fontFamily.headingBlack,
+    textAlign: "center",
+  },
+  gaugeValueUnavailable: {
+    fontSize: 26,
+    lineHeight: 28,
+  },
+  benefitHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+    marginBottom: 8,
+    paddingRight: 18,
+  },
+  benefitHeaderText: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textSecondary,
+  },
+  benefitList: {
+    gap: 2,
+  },
+  benefitRow: {
+    paddingVertical: 8,
+    borderRadius: 16,
+  },
+  benefitRowOpen: {
+    paddingBottom: 6,
+  },
+  benefitRowDimmed: {
+    opacity: 0.42,
+  },
+  benefitRowPressed: {
+    opacity: 0.82,
+  },
+  benefitRowTop: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: spacing.sm,
+    gap: 12,
   },
-  evidenceLeft: {
+  benefitRowLeft: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     minWidth: 0,
   },
-  evidenceCopy: {
-    flex: 1,
-    minWidth: 0,
-    marginLeft: 12,
+  benefitIconWrap: {
+    width: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  evidenceLabel: {
+  benefitCopy: {
+    flex: 1,
+    marginLeft: 12,
+    minWidth: 0,
+  },
+  benefitLabel: {
     fontSize: 14,
     lineHeight: 18,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textStrong,
   },
-  evidenceBody: {
-    marginTop: 10,
-    marginLeft: 46,
-    paddingRight: spacing.md,
+  benefitMeta: {
+    marginTop: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  benefitRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    width: 74,
+  },
+  rankingBarTrack: {
+    width: 40,
+    height: 8,
+    borderRadius: 999,
+    overflow: "hidden",
+    marginRight: 10,
+  },
+  rankingBarFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  rankingBarFillDimmed: {
+    opacity: 0.82,
+  },
+  expandedEvidenceWrap: {
+    marginTop: 14,
+    gap: 8,
+  },
+  evidenceSnippetCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    borderRadius: 14,
+    backgroundColor: "#F2F2F7",
+    paddingLeft: 14,
+    paddingRight: 8,
+    paddingVertical: 12,
+  },
+  evidenceSnippetIcon: {
+    marginTop: 1,
+    marginRight: 10,
+  },
+  evidenceSnippetText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textStrong,
+    marginRight: 10,
+  },
+  benefitCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 40,
+    borderRadius: 14,
+    backgroundColor: "#F3E5E8",
+    marginTop: 2,
+  },
+  benefitCtaPressed: {
+    opacity: 0.72,
+  },
+  benefitCtaText: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+    marginRight: 8,
+    textTransform: "lowercase",
+  },
+  moreBenefitsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 12,
+    paddingBottom: 6,
+    paddingHorizontal: 4,
+  },
+  moreBenefitsRowPressed: {
+    opacity: 0.72,
+  },
+  moreBenefitsText: {
+    fontSize: 15,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  emptyBenefitText: {
+    marginTop: 12,
     fontSize: 14,
     lineHeight: 20,
     fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textBody,
+    color: appTheme.colors.textSecondary,
   },
-  addButtonDisabled: {
-    opacity: 0.56,
+  detailCard: {
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    marginBottom: 14,
   },
-  favouriteToastWrap: {
-    position: "absolute",
-    left: spacing.md,
-    right: spacing.md,
+  detailCardHeader: {
+    flexDirection: "row",
     alignItems: "center",
+    marginBottom: 14,
   },
-  favouriteToast: {
+  detailCardTitle: {
+    marginLeft: 8,
+    fontSize: 17,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  detailCardBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  verifiedModalRoot: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  verifiedModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(20,20,20,0.22)",
+  },
+  verifiedSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 20,
+    paddingHorizontal: 30,
+    paddingBottom: 50,
+  },
+  verifiedSheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  verifiedSheetTitle: {
+    marginLeft: 14,
+    fontSize: 17,
+    lineHeight: 22,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textPrimary,
+  },
+  verifiedSheetBody: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textPrimary,
+    marginBottom: 18,
+  },
+  verifiedSheetButtonWrap: {
+    marginTop: 6,
+  },
+  verifiedSheetButtonPressed: {
+    opacity: 0.72,
+  },
+  verifiedSheetButton: {
     minHeight: 44,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    borderRadius: 999,
-    backgroundColor: appTheme.colors.textStrong,
-    justifyContent: "center",
+    borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
   },
-  favouriteToastText: {
-    fontSize: 13,
-    lineHeight: 16,
+  verifiedSheetButtonText: {
+    fontSize: 14,
+    lineHeight: 18,
     fontFamily: typography.fontFamily.bodySemiBold,
-    color: appTheme.colors.surface,
+    color: appTheme.colors.textStrong,
   },
 });

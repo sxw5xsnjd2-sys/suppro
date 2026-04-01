@@ -32,6 +32,7 @@ import {
   BLOOD_PRESSURE_METRIC_KEY,
   TRACKER_TYPES,
   formatMetricValue,
+  getMetricChartRange,
   isNumericMetric,
   normalizeMetric,
 } from "@/features/health/metricDefinitions";
@@ -234,24 +235,19 @@ export function HealthMetricSummaryModal({
 
   const chartMin = useMemo(() => {
     if (!chartEntries.length) return 0;
-    const values = chartEntries.map((entry) => entry.value);
-    const dataMin = Math.min(...values);
-    const configuredMin = Number.isFinite(normalizedMetric?.min)
-      ? normalizedMetric.min
-      : dataMin;
-    return Math.min(configuredMin, dataMin);
+    return getMetricChartRange(
+      normalizedMetric,
+      chartEntries.map((entry) => entry.value)
+    ).min;
   }, [chartEntries, normalizedMetric]);
 
   const chartMax = useMemo(() => {
     if (!chartEntries.length) return 1;
-    const values = chartEntries.map((entry) => entry.value);
-    const dataMax = Math.max(...values);
-    const configuredMax = Number.isFinite(normalizedMetric?.max)
-      ? normalizedMetric.max
-      : dataMax;
-    const result = Math.max(configuredMax, dataMax);
-    return result === chartMin ? result + 1 : result;
-  }, [chartEntries, normalizedMetric, chartMin]);
+    return getMetricChartRange(
+      normalizedMetric,
+      chartEntries.map((entry) => entry.value)
+    ).max;
+  }, [chartEntries, normalizedMetric]);
 
   const getX = (i) =>
     SIDE_PADDING +

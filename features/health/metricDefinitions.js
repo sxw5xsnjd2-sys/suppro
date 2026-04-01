@@ -490,6 +490,46 @@ export function formatMetricValue(metric, value) {
   return `${trimTrailingZeros(numericValue)}${suffix}`;
 }
 
+export function getMetricChartRange(metric, numericValues) {
+  const normalized = normalizeMetric(metric);
+  const values = Array.isArray(numericValues)
+    ? numericValues.filter((value) => Number.isFinite(value))
+    : [];
+
+  if (!values.length) {
+    return { min: 0, max: 1 };
+  }
+
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+
+  if (normalized?.key === "weight") {
+    const anchor = values[values.length - 1];
+    const centeredMin = Math.floor(anchor - 10);
+    const centeredMax = Math.ceil(anchor + 10);
+    const min = Math.min(centeredMin, Math.floor(dataMin));
+    const max = Math.max(centeredMax, Math.ceil(dataMax));
+    return {
+      min,
+      max: max === min ? max + 1 : max,
+    };
+  }
+
+  const configuredMin = Number.isFinite(normalized?.min)
+    ? normalized.min
+    : dataMin;
+  const configuredMax = Number.isFinite(normalized?.max)
+    ? normalized.max
+    : dataMax;
+  const min = Math.min(configuredMin, dataMin);
+  const max = Math.max(configuredMax, dataMax);
+
+  return {
+    min,
+    max: max === min ? max + 1 : max,
+  };
+}
+
 export function parseNumericText(input) {
   const parsed = Number(String(input || "").trim());
   return Number.isFinite(parsed) ? parsed : null;
