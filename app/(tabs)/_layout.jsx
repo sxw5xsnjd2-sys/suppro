@@ -1,8 +1,7 @@
-import React, { useEffect, useRef } from "react";
+import React from "react";
 import { View, Pressable, StyleSheet, Text } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Tabs, router } from "expo-router";
-import { hasCompletedQuestionnaire } from "@src/lib/onboarding";
 import { appTheme, typography } from "@/theme";
 import HomeIcon from "@/assets/icons/tab/home.svg";
 import SupplementsIcon from "@/assets/icons/tab/supplements.svg";
@@ -140,25 +139,6 @@ function CustomTabBar({ state, descriptors, navigation, insets }) {
 }
 
 export default function TabsLayout() {
-  const hasCheckedOnboarding = useRef(false);
-
-  useEffect(() => {
-    if (hasCheckedOnboarding.current) return;
-    hasCheckedOnboarding.current = true;
-    let mounted = true;
-
-    const runOnboardingGate = async () => {
-      const completed = await hasCompletedQuestionnaire();
-      if (!mounted || completed) return;
-      router.push("/modal/questionnaire?flow=first_open");
-    };
-
-    runOnboardingGate();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
   return (
     <View style={styles.root}>
       <Tabs

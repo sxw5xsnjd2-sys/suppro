@@ -15,19 +15,19 @@ const MENU_ITEMS = [
   {
     key: "account",
     label: "Account",
-    route: "/modal/account",
+    route: "/account",
     Icon: AccountIcon,
   },
   {
     key: "settings",
     label: "Settings",
-    route: "/modal/settings",
+    route: "/settings",
     Icon: SettingsIcon,
   },
   {
     key: "favourites",
     label: "Favourites",
-    route: "/modal/favourites",
+    route: "/favourites",
     Icon: FavouriteIcon,
   },
   {
@@ -39,7 +39,7 @@ const MENU_ITEMS = [
   {
     key: "questionnaire",
     label: "Retake Questionnaire",
-    route: "/modal/questionnaire",
+    route: "/onboarding?mode=retake",
     Icon: QuestionnaireIcon,
   },
 ];

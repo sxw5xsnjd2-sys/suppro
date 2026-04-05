@@ -1,12 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View, Pressable } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
-import {
-  AppButton,
-  AppHeader,
-  EmptyStateCard,
-} from "@/components/common/ui";
+import { AppButton, AppHeader, EmptyStateCard } from "@/components/common/ui";
 import { appTheme, spacing, typography } from "@/theme";
 import {
   APPLE_HEALTH_ENTRY_SOURCE,
@@ -50,6 +46,7 @@ export default function HealthScreen() {
     lastSyncedAt,
     isAppleHealthConnected,
     refreshAppleHealth,
+    reconnectAppleHealth,
   } = useAppleHealthConnection();
 
   const normalizedMetrics = useMemo(
@@ -121,19 +118,26 @@ export default function HealthScreen() {
           title="HEALTH"
           titleStyle={styles.headerTitle}
           titleAccessory={
-            <View
+            <Pressable
+              disabled={isSyncing || !isIOS}
+              onPress={() =>
+                isAppleHealthConnected
+                  ? refreshAppleHealth()
+                  : reconnectAppleHealth()
+              }
               style={[
                 styles.appleHealthHeaderPill,
                 isAppleHealthConnected
                   ? styles.appleHealthHeaderPillConnected
                   : styles.appleHealthHeaderPillDisconnected,
+                (isSyncing || !isIOS) && styles.appleHealthHeaderPillDisabled,
               ]}
             >
               <Text style={styles.appleHealthHeaderPillText}>
                 Apple Health:{" "}
                 {isAppleHealthConnected ? "connected" : "disconnected"}
               </Text>
-            </View>
+            </Pressable>
           }
           bottomSlot={
             <Text style={styles.headerSubtitle}>Track your trends</Text>
@@ -330,6 +334,9 @@ const styles = StyleSheet.create({
   },
   appleHealthHeaderPillDisconnected: {
     backgroundColor: appTheme.colors.danger,
+  },
+  appleHealthHeaderPillDisabled: {
+    opacity: 0.6,
   },
   appleHealthHeaderPillText: {
     fontSize: 11,

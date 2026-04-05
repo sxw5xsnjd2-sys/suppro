@@ -7,6 +7,8 @@ import {
   AppButton,
   AppHeader,
   PrimaryCard,
+  SectionTitle,
+  StatusPill,
 } from "@/components/common/ui";
 import SettingsIcon from "@/assets/icons/profile/settings.svg";
 import { appTheme, spacing, typography } from "@/theme";
@@ -30,10 +32,8 @@ export default function SettingsScreen() {
     reconnectAppleHealth,
   } = useAppleHealthConnection();
 
-  const statusLabel = isAppleHealthConnected ? "Connected" : "Disconnected";
-  const statusPillStyle = isAppleHealthConnected
-    ? styles.statusPillConnected
-    : styles.statusPillDisconnected;
+  const statusLabel = isAppleHealthConnected ? "CONNECTED" : "DISCONNECTED";
+  const statusTone = isAppleHealthConnected ? "success" : "neutral";
 
   let helperText = `Last sync ${formatLastSynced(lastSyncedAt)}.`;
   if (!hasCheckedAppleHealthAvailability) {
@@ -82,31 +82,39 @@ export default function SettingsScreen() {
       bottomInsetOffset={96}
       minBottomPadding={120}
     >
-      <PrimaryCard style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={styles.cardLead}>
-            <View style={styles.iconShell}>
-              <SettingsIcon
-                width={18}
-                height={18}
-                color={appTheme.colors.textStrong}
-                fill={appTheme.colors.textStrong}
-                stroke={appTheme.colors.textStrong}
-              />
-            </View>
-
-            <View style={styles.cardCopy}>
-              <Text style={styles.sectionEyebrow}>Connections</Text>
-              <Text style={styles.sectionTitle}>Apple Health</Text>
-            </View>
+      <PrimaryCard style={styles.heroCard}>
+        <View style={styles.heroLead}>
+          <View style={styles.iconShell}>
+            <SettingsIcon
+              width={18}
+              height={18}
+              color={appTheme.colors.textStrong}
+              fill={appTheme.colors.textStrong}
+              stroke={appTheme.colors.textStrong}
+              strokeWidth={0.55}
+            />
           </View>
 
-          <View style={[styles.statusPill, statusPillStyle]}>
-            <Text style={styles.statusText}>{statusLabel}</Text>
+          <View style={styles.heroCopy}>
+            <StatusPill label="CONNECTIONS" tone="neutral" />
+            <Text style={styles.heroTitle}>Apple Health</Text>
+            <Text style={styles.heroBody}>{helperText}</Text>
           </View>
+
+          <StatusPill
+            label={statusLabel}
+            tone={statusTone}
+            style={styles.statusPill}
+            textStyle={styles.statusText}
+          />
         </View>
+      </PrimaryCard>
 
-        <Text style={styles.helperText}>{helperText}</Text>
+      <PrimaryCard style={styles.sectionCard}>
+        <SectionTitle
+          title="Sync controls"
+          subtitle="Keep Apple Health data available throughout the app."
+        />
 
         <View style={styles.buttonRow}>
           <AppButton
@@ -143,53 +151,50 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
   },
-  card: {
-    gap: spacing.md,
+  heroCard: {
+    marginBottom: spacing.sm,
   },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: spacing.md,
-  },
-  cardLead: {
-    flex: 1,
-    minWidth: 0,
+  heroLead: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+    gap: spacing.md,
   },
   iconShell: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: appTheme.colors.surfaceMuted,
     alignItems: "center",
     justifyContent: "center",
   },
-  cardCopy: {
+  heroCopy: {
     flex: 1,
     minWidth: 0,
   },
-  sectionEyebrow: {
-    fontSize: 11,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  sectionTitle: {
-    fontSize: 20,
+  heroTitle: {
+    marginTop: spacing.xs,
+    fontSize: 22,
+    lineHeight: 26,
     fontFamily: typography.fontFamily.headingSemiBold,
     color: appTheme.colors.textHeading,
-    letterSpacing: -0.4,
+    letterSpacing: -0.5,
   },
-  helperText: {
+  heroBody: {
+    marginTop: spacing.xs,
     fontSize: 14,
     lineHeight: 21,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
+  },
+  statusPill: {
+    alignSelf: "flex-start",
+  },
+  statusText: {
+    fontSize: 11,
+    lineHeight: 20,
+  },
+  sectionCard: {
+    gap: spacing.md,
   },
   buttonRow: {
     flexDirection: "row",
@@ -204,23 +209,5 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontSize: 14,
     fontFamily: typography.fontFamily.headingSemiBold,
-  },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  statusPillConnected: {
-    backgroundColor: appTheme.colors.success,
-  },
-  statusPillDisconnected: {
-    backgroundColor: appTheme.colors.danger,
-  },
-  statusText: {
-    fontSize: 11,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: "#FFFFFF",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
   },
 });

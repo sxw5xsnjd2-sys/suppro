@@ -20,11 +20,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
-import {
-  AppButton,
-  AppHeader,
-  PrimaryCard,
-} from "@/components/common/ui";
+import { AppButton, AppHeader, PrimaryCard } from "@/components/common/ui";
 import { appTheme, spacing, typography } from "@/theme";
 import { useChatStore } from "@/features/ai/store";
 import { useSupplementsStore } from "@/features/supplements/store";
@@ -60,25 +56,26 @@ function buildEvidenceCatalog(rows) {
       const name =
         typeof row.name === "string" && row.name.trim()
           ? row.name.trim()
-          : typeof fallbackBenefitName === "string" && fallbackBenefitName.trim()
-            ? fallbackBenefitName.trim()
-            : null;
+          : typeof fallbackBenefitName === "string" &&
+            fallbackBenefitName.trim()
+          ? fallbackBenefitName.trim()
+          : null;
 
       return {
         id: row.id,
         name,
-      evidenceScore:
-        typeof row.evidence_score === "number" &&
-        Number.isFinite(row.evidence_score)
-          ? row.evidence_score
-          : null,
-      benefits: Array.isArray(row.supplement_benefits)
-        ? row.supplement_benefits
-            .map((item) =>
-              typeof item?.label === "string" ? item.label.trim() : ""
-            )
-            .filter(Boolean)
-        : [],
+        evidenceScore:
+          typeof row.evidence_score === "number" &&
+          Number.isFinite(row.evidence_score)
+            ? row.evidence_score
+            : null,
+        benefits: Array.isArray(row.supplement_benefits)
+          ? row.supplement_benefits
+              .map((item) =>
+                typeof item?.label === "string" ? item.label.trim() : ""
+              )
+              .filter(Boolean)
+          : [],
       };
     })
     .filter((row) => typeof row.name === "string" && row.name);
@@ -309,9 +306,11 @@ function MessageBubble({ message }) {
   );
 }
 
-export function AiChatScreen({ presentation = "modal" }) {
+export function AiChatScreen({ presentation = "screen" }) {
   const insets = useSafeAreaInsets();
   const isModal = presentation === "modal";
+  const isTab = presentation === "tab";
+  const [headerHeight, setHeaderHeight] = useState(0);
   const supplements = useSupplementsStore((s) => s.supplements);
   const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
   const healthEntries = useHealthStore((s) => getEffectiveEntries(s));
@@ -463,13 +462,18 @@ export function AiChatScreen({ presentation = "modal" }) {
 
   const isLoading = status === "loading";
   const canSend = draft.trim().length > 0 && !isLoading;
+  const composerBottomSpacing = isModal
+    ? Math.max(insets.bottom, spacing.sm)
+    : 0;
+
   return (
     <BackdropScreen
       scrollable={false}
-        bottomInsetOffset={0}
-        minBottomPadding={0}
-        contentStyle={styles.screenContent}
-        header={
+      bottomInsetOffset={0}
+      minBottomPadding={0}
+      contentStyle={styles.screenContent}
+      onHeaderHeightChange={setHeaderHeight}
+      header={
         <AppHeader
           insetPreset="modal"
           leftSlot={
@@ -516,9 +520,7 @@ export function AiChatScreen({ presentation = "modal" }) {
       <KeyboardAvoidingView
         style={styles.chatShell}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={
-          Platform.OS === "ios" ? Math.max(insets.bottom, spacing.sm) : 0
-        }
+        keyboardVerticalOffset={Platform.OS === "ios" ? headerHeight : 0}
       >
         <ScrollView
           ref={scrollRef}
@@ -547,7 +549,13 @@ export function AiChatScreen({ presentation = "modal" }) {
           ) : null}
         </ScrollView>
 
-        <PrimaryCard style={styles.composerCard}>
+        <PrimaryCard
+          style={[
+            styles.composerCard,
+            isTab && styles.composerCardTab,
+            { marginBottom: composerBottomSpacing },
+          ]}
+        >
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
           <View style={styles.composerRow}>
@@ -700,6 +708,13 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingHorizontal: appTheme.card.paddingSpacious,
     paddingVertical: appTheme.card.paddingSpacious,
+  },
+  composerCardTab: {
+    marginTop: spacing.xs,
+    marginHorizontal: -appTheme.screen.sidePadding,
+    marginBottom: 0,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
   errorText: {
     marginBottom: spacing.sm,

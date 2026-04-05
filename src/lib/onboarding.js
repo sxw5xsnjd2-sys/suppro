@@ -1,12 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "./supabase";
+import { hasNonAnonymousSession } from "./authState";
 
 export const QUESTIONNAIRE_STORAGE_KEY = "suppro.onboarding.questionnaire.v1";
+export const ONBOARDING_DRAFT_STORAGE_KEY = "suppro.onboarding.draft.v1";
 export const SIGNUP_PROMPTED_STORAGE_KEY = "suppro.onboarding.signupPrompted.v1";
 export const SIGNUP_COMPLETED_STORAGE_KEY =
   "suppro.onboarding.signupCompleted.v1";
 
-export async function getQuestionnaireAnswers() {
-  const raw = await AsyncStorage.getItem(QUESTIONNAIRE_STORAGE_KEY);
+function parseStoredJson(raw) {
   if (!raw) return null;
 
   try {
@@ -17,9 +19,85 @@ export async function getQuestionnaireAnswers() {
   }
 }
 
+function normalizeOnboardingMode(mode) {
+  return mode === "retake" ? "retake" : "first_run";
+}
+
+function normalizeOnboardingDraft(draft) {
+  if (!draft || typeof draft !== "object") return null;
+
+  const answers =
+    draft.answers && typeof draft.answers === "object" ? draft.answers : {};
+  const currentPageIndex = Number.isInteger(draft.currentPageIndex)
+    ? Math.max(0, draft.currentPageIndex)
+    : 0;
+
+  return {
+    currentPageIndex,
+    answers,
+    mode: normalizeOnboardingMode(draft.mode),
+  };
+}
+
+export async function getQuestionnaireAnswers() {
+  const raw = await AsyncStorage.getItem(QUESTIONNAIRE_STORAGE_KEY);
+  return parseStoredJson(raw);
+}
+
 export async function hasCompletedQuestionnaire() {
   const data = await getQuestionnaireAnswers();
   return Boolean(data?.completedAt);
+}
+
+export async function loadOnboardingDraft() {
+  const raw = await AsyncStorage.getItem(ONBOARDING_DRAFT_STORAGE_KEY);
+  return normalizeOnboardingDraft(parseStoredJson(raw));
+}
+
+export async function saveOnboardingDraft(draft) {
+  const normalized = normalizeOnboardingDraft(draft);
+  if (!normalized) {
+    throw new Error("Onboarding draft must be an object.");
+  }
+
+  await AsyncStorage.setItem(
+    ONBOARDING_DRAFT_STORAGE_KEY,
+    JSON.stringify(normalized)
+  );
+}
+
+export async function clearOnboardingDraft() {
+  await AsyncStorage.removeItem(ONBOARDING_DRAFT_STORAGE_KEY);
+}
+
+export async function getOnboardingGateState() {
+  const answers = await getQuestionnaireAnswers();
+
+  if (!answers?.completedAt) {
+    return "needs_questions";
+  }
+
+  const { data } = await supabase.auth.getSession();
+  const loggedIn = hasNonAnonymousSession(data?.session ?? null);
+
+  if (loggedIn) {
+    await AsyncStorage.setItem(SIGNUP_COMPLETED_STORAGE_KEY, "true");
+    return "complete";
+  }
+
+  const signupCompleted = await AsyncStorage.getItem(
+    SIGNUP_COMPLETED_STORAGE_KEY
+  );
+
+  if (signupCompleted === "true") {
+    return "needs_login";
+  }
+
+  return "needs_signup";
+}
+
+export async function hasCompletedOnboarding() {
+  return (await getOnboardingGateState()) === "complete";
 }
 
 export function parseNumericField(value) {
@@ -86,4 +164,3 @@ export function parseWeightKg(rawWeight) {
 
   return Number(numeric.toFixed(1));
 }
-

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BackHandler,
   View,
   Text,
   Pressable,
@@ -15,7 +16,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import {
   AppButton,
@@ -32,8 +33,11 @@ import {
 } from "@/features/health/metricDefinitions";
 import { supabase } from "@src/lib/supabase";
 import {
+  clearOnboardingDraft,
   getQuestionnaireAnswers,
+  loadOnboardingDraft,
   QUESTIONNAIRE_STORAGE_KEY,
+  saveOnboardingDraft,
   SIGNUP_COMPLETED_STORAGE_KEY,
   SIGNUP_PROMPTED_STORAGE_KEY,
 } from "@src/lib/onboarding";
@@ -237,7 +241,9 @@ function normalizePositiveNumber(value) {
 }
 
 function parseLegacyHeightValue(rawHeight) {
-  const text = String(rawHeight || "").trim().toLowerCase();
+  const text = String(rawHeight || "")
+    .trim()
+    .toLowerCase();
   if (!text) return null;
 
   const feetInchesMatch = text.match(
@@ -301,7 +307,9 @@ function DatePickerModal({
   const selectedMonthIndex = MONTH_OPTIONS.findIndex(
     (option) => option.value === selectedMonth
   );
-  const selectedDayIndex = dayOptions.findIndex((option) => option === selectedDay);
+  const selectedDayIndex = dayOptions.findIndex(
+    (option) => option === selectedDay
+  );
   const selectedYearIndex = yearOptions.findIndex(
     (option) => option === selectedYear
   );
@@ -439,10 +447,12 @@ function DatePickerModal({
               label: "Month",
               data: MONTH_OPTIONS,
               selectedValue:
-                MONTH_OPTIONS.find((option) => option.value === selectedMonth) ??
-                null,
+                MONTH_OPTIONS.find(
+                  (option) => option.value === selectedMonth
+                ) ?? null,
               listRef: monthListRef,
-              onValueChange: (option) => updatePickerDate({ month: option.value }),
+              onValueChange: (option) =>
+                updatePickerDate({ month: option.value }),
               getItemLabel: (option) => option.label,
             })}
             {renderWheel({
@@ -605,7 +615,8 @@ const BASE_QUESTIONS = [
     id: "current_inputs",
     section: "4. Current Inputs & Safety",
     title: "Are you currently taking any supplements?",
-    description: "If yes, add each supplement with name, dose, and daily frequency.",
+    description:
+      "If yes, add each supplement with name, dose, and daily frequency.",
     type: "supplements",
     required: true,
   },
@@ -756,7 +767,9 @@ function OptionRow({ label, description, selected, disabled, onPress }) {
       contentStyle={styles.optionContent}
     >
       <View style={styles.optionTextBlock}>
-        <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>
+        <Text
+          style={[styles.optionLabel, selected && styles.optionLabelSelected]}
+        >
           {label}
         </Text>
         {description ? (
@@ -776,13 +789,8 @@ function createEmptySupplementRow() {
   };
 }
 
-export default function QuestionnaireScreen() {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [submitting, setSubmitting] = useState(false);
-  const [datePickerOpen, setDatePickerOpen] = useState(false);
-  const [expandedFrequencyRowId, setExpandedFrequencyRowId] = useState(null);
-  const scrollRef = useRef(null);
-  const [form, setForm] = useState({
+function createInitialFormState() {
+  return {
     name: "",
     dateOfBirth: "",
     sexAtBirth: "",
@@ -818,58 +826,106 @@ export default function QuestionnaireScreen() {
     maleHormoneNotes: "",
     hormoneGeneralNotes: "",
     consentAccepted: false,
-  });
+  };
+}
+
+function normalizeOnboardingMode(mode) {
+  return mode === "retake" ? "retake" : "first_run";
+}
+
+function mergeCompletedAnswersIntoForm(form, saved) {
+  if (!saved?.completedAt) return form;
+
+  const legacyHeight = parseLegacyHeightValue(saved.height);
+  const savedHeightUnit =
+    saved.heightUnit === "ft_in" || saved.heightUnit === "cm"
+      ? saved.heightUnit
+      : legacyHeight?.heightUnit || "cm";
+
+  return {
+    ...form,
+    name:
+      form.name || (typeof saved.name === "string" ? saved.name.trim() : ""),
+    dateOfBirth:
+      form.dateOfBirth ||
+      (typeof saved.dateOfBirth === "string" ? saved.dateOfBirth : ""),
+    sexAtBirth:
+      form.sexAtBirth ||
+      (typeof saved.sexAtBirth === "string" ? saved.sexAtBirth : ""),
+    heightUnit:
+      form.heightCm || form.heightFeet || form.heightInches
+        ? form.heightUnit
+        : savedHeightUnit,
+    heightCm:
+      form.heightCm ||
+      (saved.heightCm !== null && saved.heightCm !== undefined
+        ? String(saved.heightCm).trim()
+        : legacyHeight?.heightCm || ""),
+    heightFeet:
+      form.heightFeet ||
+      (saved.heightFeet !== null && saved.heightFeet !== undefined
+        ? String(saved.heightFeet).trim()
+        : legacyHeight?.heightFeet || ""),
+    heightInches:
+      form.heightInches ||
+      (saved.heightInches !== null && saved.heightInches !== undefined
+        ? String(saved.heightInches).trim()
+        : legacyHeight?.heightInches || ""),
+  };
+}
+
+export default function QuestionnaireScreen({ standalone = false } = {}) {
+  const params = useLocalSearchParams();
+  const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
+  const requestedMode =
+    typeof modeParam === "string" ? normalizeOnboardingMode(modeParam) : null;
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [draftMode, setDraftMode] = useState("first_run");
+  const isStrictFirstRun = standalone && draftMode === "first_run";
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [expandedFrequencyRowId, setExpandedFrequencyRowId] = useState(null);
+  const scrollRef = useRef(null);
+  const questionIdsRef = useRef([]);
+  const [form, setForm] = useState(createInitialFormState);
 
   useEffect(() => {
     let mounted = true;
-    const hydrateBaselineFields = async () => {
-      const saved = await getQuestionnaireAnswers();
-      if (!mounted || !saved?.completedAt) return;
+    const hydrateQuestionnaireState = async () => {
+      const [saved, savedDraft] = await Promise.all([
+        getQuestionnaireAnswers(),
+        loadOnboardingDraft(),
+      ]);
+      if (!mounted) return;
 
-      const legacyHeight = parseLegacyHeightValue(saved.height);
-      const savedHeightUnit =
-        saved.heightUnit === "ft_in" || saved.heightUnit === "cm"
-          ? saved.heightUnit
-          : legacyHeight?.heightUnit || "cm";
+      const nextMode =
+        requestedMode ??
+        savedDraft?.mode ??
+        (saved?.completedAt ? "retake" : "first_run");
+      const baseForm =
+        nextMode === "retake"
+          ? mergeCompletedAnswersIntoForm(createInitialFormState(), saved)
+          : createInitialFormState();
 
-      setForm((prev) => ({
-        ...prev,
-        name:
-          prev.name ||
-          (typeof saved.name === "string" ? saved.name.trim() : ""),
-        dateOfBirth:
-          prev.dateOfBirth ||
-          (typeof saved.dateOfBirth === "string" ? saved.dateOfBirth : ""),
-        sexAtBirth:
-          prev.sexAtBirth ||
-          (typeof saved.sexAtBirth === "string" ? saved.sexAtBirth : ""),
-        heightUnit:
-          prev.heightCm || prev.heightFeet || prev.heightInches
-            ? prev.heightUnit
-            : savedHeightUnit,
-        heightCm:
-          prev.heightCm ||
-          (saved.heightCm !== null && saved.heightCm !== undefined
-            ? String(saved.heightCm).trim()
-            : legacyHeight?.heightCm || ""),
-        heightFeet:
-          prev.heightFeet ||
-          (saved.heightFeet !== null && saved.heightFeet !== undefined
-            ? String(saved.heightFeet).trim()
-            : legacyHeight?.heightFeet || ""),
-        heightInches:
-          prev.heightInches ||
-          (saved.heightInches !== null && saved.heightInches !== undefined
-            ? String(saved.heightInches).trim()
-            : legacyHeight?.heightInches || ""),
-      }));
+      const nextForm = savedDraft?.answers
+        ? {
+            ...baseForm,
+            ...savedDraft.answers,
+          }
+        : baseForm;
+
+      setForm(nextForm);
+      setCurrentIndex(savedDraft?.currentPageIndex ?? 0);
+      setDraftMode(nextMode);
+      setDraftHydrated(true);
     };
-    hydrateBaselineFields();
+    hydrateQuestionnaireState();
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [requestedMode]);
 
   const questions = useMemo(() => {
     const visibleBaseQuestions = BASE_QUESTIONS.filter(
@@ -896,14 +952,62 @@ export default function QuestionnaireScreen() {
   }, [form]);
 
   useEffect(() => {
-    if (currentIndex > questions.length - 1) {
-      setCurrentIndex(Math.max(0, questions.length - 1));
+    const previousQuestionIds = questionIdsRef.current;
+    const currentQuestionId = previousQuestionIds[currentIndex] ?? null;
+    const maxIndex = Math.max(0, questions.length - 1);
+
+    if (currentQuestionId) {
+      const nextIndex = questions.findIndex(
+        (question) => question.id === currentQuestionId
+      );
+
+      if (nextIndex >= 0 && nextIndex !== currentIndex) {
+        setCurrentIndex(nextIndex);
+        questionIdsRef.current = questions.map((question) => question.id);
+        return;
+      }
     }
-  }, [currentIndex, questions.length]);
+
+    if (currentIndex > maxIndex) {
+      setCurrentIndex(maxIndex);
+      questionIdsRef.current = questions.map((question) => question.id);
+      return;
+    }
+
+    questionIdsRef.current = questions.map((question) => question.id);
+  }, [currentIndex, questions]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ y: 0, animated: true });
   }, [currentIndex]);
+
+  useEffect(() => {
+    if (!isStrictFirstRun) return undefined;
+
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        if (currentIndex > 0) {
+          setCurrentIndex((prev) => Math.max(0, prev - 1));
+        }
+        return true;
+      }
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }, [currentIndex, isStrictFirstRun]);
+
+  useEffect(() => {
+    if (!draftHydrated) return;
+
+    void saveOnboardingDraft({
+      currentPageIndex: currentIndex,
+      answers: form,
+      mode: draftMode,
+    });
+  }, [currentIndex, draftHydrated, draftMode, form]);
 
   const currentQuestion = questions[currentIndex];
   const isLastStep = currentIndex === questions.length - 1;
@@ -967,8 +1071,10 @@ export default function QuestionnaireScreen() {
 
       const numericValue = Number(rawValue);
       if (!Number.isFinite(numericValue)) return false;
-      if (Number.isFinite(metric.min) && numericValue < metric.min) return false;
-      if (Number.isFinite(metric.max) && numericValue > metric.max) return false;
+      if (Number.isFinite(metric.min) && numericValue < metric.min)
+        return false;
+      if (Number.isFinite(metric.max) && numericValue > metric.max)
+        return false;
       return true;
     }
 
@@ -985,13 +1091,17 @@ export default function QuestionnaireScreen() {
 
     if (currentQuestion.type === "weight_input") {
       const weightValue = normalizePositiveNumber(form.weightValue);
-      return Boolean(form.weightUnit) && weightValue !== null && weightValue > 0;
+      return (
+        Boolean(form.weightUnit) && weightValue !== null && weightValue > 0
+      );
     }
 
     if (currentQuestion.type === "supplements") {
       if (!form.takingSupplements) return false;
       if (form.takingSupplements === "yes") {
-        const rows = Array.isArray(form.supplementRows) ? form.supplementRows : [];
+        const rows = Array.isArray(form.supplementRows)
+          ? form.supplementRows
+          : [];
         const hasCompleteRow = rows.some((row) => {
           const name = String(row?.name || "").trim();
           const dose = String(row?.dose || "").trim();
@@ -1070,10 +1180,14 @@ export default function QuestionnaireScreen() {
       const nextRows = prev.supplementRows.filter((row) => row.id !== rowId);
       return {
         ...prev,
-        supplementRows: nextRows.length ? nextRows : [createEmptySupplementRow()],
+        supplementRows: nextRows.length
+          ? nextRows
+          : [createEmptySupplementRow()],
       };
     });
-    setExpandedFrequencyRowId((current) => (current === rowId ? null : current));
+    setExpandedFrequencyRowId((current) =>
+      current === rowId ? null : current
+    );
   };
 
   const handleNext = async () => {
@@ -1085,12 +1199,14 @@ export default function QuestionnaireScreen() {
 
     try {
       setSubmitting(true);
-      const completeSupplementRows = (form.supplementRows || []).filter((row) => {
-        const name = String(row?.name || "").trim();
-        const dose = String(row?.dose || "").trim();
-        const frequency = String(row?.frequency || "").trim();
-        return Boolean(name && dose && frequency);
-      });
+      const completeSupplementRows = (form.supplementRows || []).filter(
+        (row) => {
+          const name = String(row?.name || "").trim();
+          const dose = String(row?.dose || "").trim();
+          const frequency = String(row?.frequency || "").trim();
+          return Boolean(name && dose && frequency);
+        }
+      );
 
       const heightSummary =
         form.heightUnit === "ft_in"
@@ -1125,23 +1241,40 @@ export default function QuestionnaireScreen() {
           completedAt: new Date().toISOString(),
         })
       );
+      await clearOnboardingDraft();
 
-      const promptAlreadyShown = await AsyncStorage.getItem(
-        SIGNUP_PROMPTED_STORAGE_KEY
-      );
       const { data: sessionData } = await supabase.auth.getSession();
       const activeUser = sessionData?.session?.user ?? null;
       const hasNonAnonymousSession = Boolean(
         activeUser && activeUser.is_anonymous !== true
       );
+      const signupCompleted =
+        hasNonAnonymousSession ||
+        (await AsyncStorage.getItem(SIGNUP_COMPLETED_STORAGE_KEY)) === "true";
 
       if (hasNonAnonymousSession) {
         await AsyncStorage.setItem(SIGNUP_COMPLETED_STORAGE_KEY, "true");
         await AsyncStorage.setItem(SIGNUP_PROMPTED_STORAGE_KEY, "true");
       }
 
-      if (!promptAlreadyShown && !hasNonAnonymousSession) {
+      if (standalone && draftMode === "retake") {
+        router.replace("/");
+        return;
+      }
+
+      if (!signupCompleted) {
+        const promptAlreadyShown = await AsyncStorage.getItem(
+          SIGNUP_PROMPTED_STORAGE_KEY
+        );
         await AsyncStorage.setItem(SIGNUP_PROMPTED_STORAGE_KEY, "true");
+        if (standalone) {
+          router.replace(`/onboarding?mode=${draftMode}&step=account`);
+          return;
+        }
+        if (promptAlreadyShown) {
+          router.replace("/modal/sign-up?source=onboarding");
+          return;
+        }
         Alert.alert(
           "Questionnaire completed",
           "Create your account to save your onboarding profile securely.",
@@ -1157,6 +1290,11 @@ export default function QuestionnaireScreen() {
             },
           ]
         );
+        return;
+      }
+
+      if (standalone) {
+        router.replace("/");
         return;
       }
 
@@ -1331,7 +1469,9 @@ export default function QuestionnaireScreen() {
             return (
               <Pressable
                 key={value}
-                onPress={() => updateMetricInitialValue(metric.key, String(value))}
+                onPress={() =>
+                  updateMetricInitialValue(metric.key, String(value))
+                }
                 style={[styles.scaleChip, selected && styles.scaleChipSelected]}
               >
                 <Text
@@ -1375,7 +1515,10 @@ export default function QuestionnaireScreen() {
     <>
       <Pressable
         onPress={() => setDatePickerOpen(true)}
-        style={({ pressed }) => [styles.selectInput, pressed && styles.optionRowPressed]}
+        style={({ pressed }) => [
+          styles.selectInput,
+          pressed && styles.optionRowPressed,
+        ]}
       >
         <Text
           style={[
@@ -1385,7 +1528,11 @@ export default function QuestionnaireScreen() {
         >
           {formatDate(form[question.field])}
         </Text>
-        <Ionicons name="calendar-outline" size={20} color={colors.icon.primary} />
+        <Ionicons
+          name="calendar-outline"
+          size={20}
+          color={colors.icon.primary}
+        />
       </Pressable>
       <DatePickerModal
         visible={datePickerOpen}
@@ -1429,7 +1576,8 @@ export default function QuestionnaireScreen() {
           <Text
             style={[
               styles.segmentedOptionLabel,
-              form.heightUnit === "ft_in" && styles.segmentedOptionLabelSelected,
+              form.heightUnit === "ft_in" &&
+                styles.segmentedOptionLabelSelected,
             ]}
           >
             ft / in
@@ -1551,7 +1699,10 @@ export default function QuestionnaireScreen() {
                     Supplement {index + 1}
                   </Text>
                   {(form.supplementRows || []).length > 1 ? (
-                    <Pressable onPress={() => removeSupplementRow(row.id)} hitSlop={8}>
+                    <Pressable
+                      onPress={() => removeSupplementRow(row.id)}
+                      hitSlop={8}
+                    >
                       <Ionicons
                         name="trash-outline"
                         size={18}
@@ -1563,14 +1714,18 @@ export default function QuestionnaireScreen() {
 
                 <TextInput
                   value={row.name}
-                  onChangeText={(value) => updateSupplementRow(row.id, "name", value)}
+                  onChangeText={(value) =>
+                    updateSupplementRow(row.id, "name", value)
+                  }
                   placeholder="Supplement name"
                   placeholderTextColor={colors.text.muted}
                   style={styles.input}
                 />
                 <TextInput
                   value={row.dose}
-                  onChangeText={(value) => updateSupplementRow(row.id, "dose", value)}
+                  onChangeText={(value) =>
+                    updateSupplementRow(row.id, "dose", value)
+                  }
                   placeholder="Dose (e.g. 200mg)"
                   placeholderTextColor={colors.text.muted}
                   style={styles.input}
@@ -1605,7 +1760,11 @@ export default function QuestionnaireScreen() {
                         <Pressable
                           key={option.value}
                           onPress={() => {
-                            updateSupplementRow(row.id, "frequency", option.value);
+                            updateSupplementRow(
+                              row.id,
+                              "frequency",
+                              option.value
+                            );
                             setExpandedFrequencyRowId(null);
                           }}
                           style={({ pressed }) => [
@@ -1632,9 +1791,18 @@ export default function QuestionnaireScreen() {
               </PrimaryCard>
             );
           })}
-          <Pressable onPress={addSupplementRow} style={styles.addSupplementButton}>
-            <Ionicons name="add-circle-outline" size={18} color={colors.brand.dark} />
-            <Text style={styles.addSupplementButtonText}>Add supplement line</Text>
+          <Pressable
+            onPress={addSupplementRow}
+            style={styles.addSupplementButton}
+          >
+            <Ionicons
+              name="add-circle-outline"
+              size={18}
+              color={colors.brand.dark}
+            />
+            <Text style={styles.addSupplementButtonText}>
+              Add supplement line
+            </Text>
           </Pressable>
         </View>
       ) : null}
@@ -1934,7 +2102,7 @@ export default function QuestionnaireScreen() {
     <BackdropScreen
       header={
         <AppHeader
-          insetPreset="modal"
+          insetPreset="screen"
           title="Questionnaire"
           titleStyle={styles.headerTitle}
           bottomSlot={
@@ -1943,18 +2111,20 @@ export default function QuestionnaireScreen() {
             </Text>
           }
           rightSlot={
-            <AppButton
-              onPress={() => router.back()}
-              variant="overlay"
-              size="icon"
-              accessibilityLabel="Close questionnaire"
-            >
-              <Ionicons
-                name="close"
-                size={20}
-                color={appTheme.colors.textStrong}
-              />
-            </AppButton>
+            standalone ? null : (
+              <AppButton
+                onPress={() => router.back()}
+                variant="overlay"
+                size="icon"
+                accessibilityLabel="Close questionnaire"
+              >
+                <Ionicons
+                  name="close"
+                  size={20}
+                  color={appTheme.colors.textStrong}
+                />
+              </AppButton>
+            )
           }
         />
       }
@@ -1974,7 +2144,7 @@ export default function QuestionnaireScreen() {
                 <Text style={styles.progressEyebrowText}>Progress</Text>
               </View>
               <Text style={styles.progressLabel}>
-                Question {currentIndex + 1} of {questions.length}
+                {currentIndex + 1} of {questions.length}
               </Text>
             </View>
             <View style={styles.progressPercentBadge}>
@@ -2009,7 +2179,9 @@ export default function QuestionnaireScreen() {
               end={{ x: 1, y: 1 }}
               style={styles.sectionPill}
             >
-              <Text style={styles.sectionLabel}>{currentQuestion?.section}</Text>
+              <Text style={styles.sectionLabel}>
+                {currentQuestion?.section}
+              </Text>
             </LinearGradient>
             <Text style={styles.cardTitle}>{currentQuestion?.title}</Text>
             {currentQuestion?.description ? (
@@ -2020,26 +2192,20 @@ export default function QuestionnaireScreen() {
         </PrimaryCard>
 
         <View style={styles.footer}>
-          <Pressable
-            onPress={handleBack}
-            disabled={currentIndex === 0}
-            style={({ pressed }) => [
-              styles.footerButton,
-              styles.backButton,
-              currentIndex === 0 && styles.footerButtonDisabled,
-              pressed && currentIndex !== 0 && styles.footerButtonPressed,
-            ]}
-          >
-            <Text
-              style={[
-                styles.footerButtonText,
-                styles.backButtonText,
-                currentIndex === 0 && styles.footerButtonTextDisabled,
+          {currentIndex > 0 ? (
+            <Pressable
+              onPress={handleBack}
+              style={({ pressed }) => [
+                styles.footerButton,
+                styles.backButton,
+                pressed && styles.footerButtonPressed,
               ]}
             >
-              Back
-            </Text>
-          </Pressable>
+              <Text style={[styles.footerButtonText, styles.backButtonText]}>
+                Back
+              </Text>
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={handleNext}
             disabled={!isCurrentComplete || submitting}

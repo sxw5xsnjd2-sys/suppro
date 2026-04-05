@@ -12,6 +12,11 @@ module.exports = ({ config }) => {
       ? plugin[0] === "react-native-health"
       : plugin === "react-native-health"
   );
+  const hasAppleAuthenticationPlugin = existingPlugins.some((plugin) =>
+    Array.isArray(plugin)
+      ? plugin[0] === "expo-apple-authentication"
+      : plugin === "expo-apple-authentication"
+  );
 
   const plugins = [...existingPlugins];
 
@@ -31,12 +36,18 @@ module.exports = ({ config }) => {
     ]);
   }
 
+  if (!hasAppleAuthenticationPlugin) {
+    plugins.push("expo-apple-authentication");
+  }
+
   return {
     ...config,
     ios: {
       ...config.ios,
+      usesAppleSignIn: true,
       infoPlist: {
         ...(config.ios?.infoPlist ?? {}),
+        CFBundleAllowMixedLocalizations: true,
         NSHealthShareUsageDescription:
           "Allow $(PRODUCT_NAME) to read Apple Health data so your metrics stay up to date in Suppro.",
         NSHealthUpdateUsageDescription:

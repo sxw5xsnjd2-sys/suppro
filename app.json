@@ -7,10 +7,11 @@
     "icon": "./assets/images/icon.png",
     "scheme": "suppro",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.suppro",
+      "icon": "./assets/images/icon-ios.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
