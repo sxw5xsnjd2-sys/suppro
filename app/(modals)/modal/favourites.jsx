@@ -13,11 +13,17 @@ import {
   StatusPill,
 } from "@/components/common/ui";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
+import { CATALOG_TYPES } from "@/features/supplements/catalog";
 import { appTheme, spacing, typography } from "@/theme";
 import { getSupplementById } from "@src/data/getSupplement";
 import { getHeartedSupplementIds } from "@/features/supplements/favouritesStorage";
 
 function FavouriteRow({ item, showBorder }) {
+  const meta =
+    item.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT
+      ? { label: "SUPPLEMENT", description: "Supplement product" }
+      : { label: "INGREDIENT", description: "Active ingredient" };
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -43,15 +49,17 @@ function FavouriteRow({ item, showBorder }) {
 
         <View style={styles.rowTextWrap}>
           <Text style={styles.rowTitle}>{item.name}</Text>
-          <Text style={styles.rowMeta}>
-            {item.verified ? "Verified supplement" : "User submitted supplement"}
-          </Text>
+          <Text style={styles.rowMeta}>{meta.description}</Text>
         </View>
       </View>
 
       <StatusPill
-        label={item.verified ? "VERIFIED" : "COMMUNITY"}
-        tone={item.verified ? "success" : "neutral"}
+        label={meta.label}
+        tone={
+          item.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT
+            ? "neutral"
+            : "success"
+        }
         style={styles.rowPill}
         textStyle={styles.rowPillText}
       />
@@ -87,6 +95,7 @@ export default function FavouritesScreen() {
         id: record.id,
         name: record.data.name,
         verified: record.data.verified ?? false,
+        catalogType: record.data.catalogType ?? null,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -99,8 +108,18 @@ export default function FavouritesScreen() {
     loadFavourites();
   }, [isFocused, loadFavourites]);
 
-  const verifiedCount = useMemo(
-    () => favourites.filter((item) => item.verified).length,
+  const ingredientCount = useMemo(
+    () =>
+      favourites.filter(
+        (item) => item.catalogType !== CATALOG_TYPES.SUPPLEMENT_PRODUCT
+      ).length,
+    [favourites]
+  );
+  const productCount = useMemo(
+    () =>
+      favourites.filter(
+        (item) => item.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT
+      ).length,
     [favourites]
   );
 
@@ -159,7 +178,7 @@ export default function FavouritesScreen() {
                 ? "Refreshing your saved supplement list."
                 : favourites.length === 0
                 ? "No favourites yet. Save supplements from their detail page."
-                : `${verifiedCount} verified supplements ready to revisit.`}
+                : `${ingredientCount} active ingredients, ${productCount} supplement products.`}
             </Text>
           </View>
         </View>

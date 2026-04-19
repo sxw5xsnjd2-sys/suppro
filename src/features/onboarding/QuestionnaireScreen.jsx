@@ -13,6 +13,7 @@ import {
   Alert,
   Modal,
 } from "react-native";
+import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -730,7 +731,7 @@ const BASE_QUESTIONS = [
     id: "consent",
     section: "8. Required Consent",
     title:
-      "I understand this supplement plan is educational and not medical advice. I will consult my doctor before starting any new supplements.",
+      "I understand any information in this app is for educational purposes only and not medical advice. I will consult my doctor before starting or changing any supplements.",
     type: "consent",
     required: true,
   },
@@ -1190,15 +1191,27 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     );
   };
 
+  const triggerImpactHaptic = (style) => {
+    void Haptics.impactAsync(style).catch(() => {});
+  };
+
+  const triggerSuccessHaptic = () => {
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+      () => {}
+    );
+  };
+
   const handleNext = async () => {
     if (!currentQuestion || !isCurrentComplete || submitting) return;
     if (!isLastStep) {
+      triggerImpactHaptic(Haptics.ImpactFeedbackStyle.Light);
       setCurrentIndex((prev) => prev + 1);
       return;
     }
 
     try {
       setSubmitting(true);
+      triggerImpactHaptic(Haptics.ImpactFeedbackStyle.Medium);
       const completeSupplementRows = (form.supplementRows || []).filter(
         (row) => {
           const name = String(row?.name || "").trim();
@@ -1258,11 +1271,13 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       }
 
       if (standalone && draftMode === "retake") {
+        triggerSuccessHaptic();
         router.replace("/");
         return;
       }
 
       if (!signupCompleted) {
+        triggerSuccessHaptic();
         const promptAlreadyShown = await AsyncStorage.getItem(
           SIGNUP_PROMPTED_STORAGE_KEY
         );
@@ -1294,10 +1309,12 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       }
 
       if (standalone) {
+        triggerSuccessHaptic();
         router.replace("/");
         return;
       }
 
+      triggerSuccessHaptic();
       Alert.alert("Questionnaire completed", "Your answers were saved.", [
         { text: "Done", onPress: () => router.back() },
       ]);
@@ -2107,7 +2124,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
           titleStyle={styles.headerTitle}
           bottomSlot={
             <Text style={styles.headerSubtitle}>
-              Tailor your supplement plan to your goals, baseline, and routine.
+              Personalise the app around your goals, baseline, and routine.
             </Text>
           }
           rightSlot={

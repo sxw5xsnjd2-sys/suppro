@@ -1,9 +1,10 @@
+import { isActiveIngredientCatalogId } from "@/features/supplements/catalog";
 import { supabase } from "@src/lib/supabase";
 /**
  * Fetch evidence_score for a set of supplement catalog IDs.
  */
 export async function getSupplementRatings(ids) {
-    const officialIds = Array.from(new Set(ids.filter((id) => id && !id.startsWith("user-") && !id.startsWith("custom-"))));
+    const officialIds = Array.from(new Set(ids.filter((id) => isActiveIngredientCatalogId(id))));
     if (officialIds.length === 0)
         return {};
     const { data, error } = await supabase

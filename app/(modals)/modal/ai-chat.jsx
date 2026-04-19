@@ -40,6 +40,18 @@ const CHAT_WINDOW_DAYS = 30;
 const MAX_CONTEXT_ENTRIES = 200;
 const MAX_CONVERSATION_MESSAGES = 12;
 const MAX_SUPPLEMENTS_PER_BENEFIT = 5;
+const CHAT_ACTION_BAR_HEIGHT = 40;
+
+function stripBasicMarkdown(value) {
+  if (typeof value !== "string" || !value) {
+    return "";
+  }
+
+  return value
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1");
+}
 
 function buildEvidenceCatalog(rows) {
   const byBenefit = {};
@@ -210,6 +222,7 @@ function buildChatStatsInput(
     startDate: supplement.startDate ?? null,
     endDate: supplement.endDate ?? null,
     catalogId: supplement.catalogId ?? null,
+    catalogType: supplement.catalogType ?? null,
   }));
 
   const metricsContext = (healthMetrics ?? [])
@@ -287,6 +300,7 @@ function IntroCard() {
 
 function MessageBubble({ message }) {
   const isUser = message.role === "user";
+  const displayContent = stripBasicMarkdown(message.content);
 
   return (
     <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
@@ -300,7 +314,7 @@ function MessageBubble({ message }) {
         <Text style={styles.messageEyebrow}>
           {isUser ? "You" : "Suppro AI"}
         </Text>
-        <Text style={styles.messageText}>{message.content}</Text>
+        <Text style={styles.messageText}>{displayContent}</Text>
       </PrimaryCard>
     </View>
   );
@@ -475,7 +489,7 @@ export function AiChatScreen({ presentation = "screen" }) {
       onHeaderHeightChange={setHeaderHeight}
       header={
         <AppHeader
-          insetPreset="modal"
+          insetPreset={isModal ? "modal" : "screen"}
           leftSlot={
             isModal ? (
               <AppButton
@@ -491,20 +505,6 @@ export function AiChatScreen({ presentation = "screen" }) {
                 />
               </AppButton>
             ) : null
-          }
-          rightSlot={
-            <Pressable
-              onPress={clearMessages}
-              accessibilityRole="button"
-              accessibilityLabel="Clear conversation"
-              hitSlop={8}
-              style={({ pressed }) => [
-                styles.headerAction,
-                pressed && styles.headerActionPressed,
-              ]}
-            >
-              <Text style={styles.headerActionText}>Clear</Text>
-            </Pressable>
           }
           title="SUPPRO AI"
           titleStyle={styles.headerTitle}
@@ -522,34 +522,51 @@ export function AiChatScreen({ presentation = "screen" }) {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? headerHeight : 0}
       >
-        <ScrollView
-          ref={scrollRef}
-          style={styles.messagesScroll}
-          contentContainerStyle={styles.messagesContent}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={
-            Platform.OS === "ios" ? "interactive" : "on-drag"
-          }
-          showsVerticalScrollIndicator={false}
-        >
-          {messages.length === 0 ? <IntroCard /> : null}
+        <View style={styles.messagesArea}>
+          <View style={styles.actionBar}>
+            <Pressable
+              onPress={clearMessages}
+              accessibilityRole="button"
+              accessibilityLabel="Clear conversation"
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.headerAction,
+                pressed && styles.headerActionPressed,
+              ]}
+            >
+              <Text style={styles.headerActionText}>Clear</Text>
+            </Pressable>
+          </View>
 
-          {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
-          ))}
+          <ScrollView
+            ref={scrollRef}
+            style={styles.messagesScroll}
+            contentContainerStyle={styles.messagesContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={
+              Platform.OS === "ios" ? "interactive" : "on-drag"
+            }
+            showsVerticalScrollIndicator={false}
+          >
+            {messages.length === 0 ? <IntroCard /> : null}
 
-          {isLoading ? (
-            <MessageBubble
-              message={{
-                id: "thinking",
-                role: "assistant",
-                content: "Thinking...",
-              }}
-            />
-          ) : null}
-        </ScrollView>
+            {messages.map((message) => (
+              <MessageBubble key={message.id} message={message} />
+            ))}
 
-        <PrimaryCard
+            {isLoading ? (
+              <MessageBubble
+                message={{
+                  id: "thinking",
+                  role: "assistant",
+                  content: "Thinking...",
+                }}
+              />
+            ) : null}
+          </ScrollView>
+        </View>
+
+        <View
           style={[
             styles.composerCard,
             isTab && styles.composerCardTab,
@@ -559,7 +576,7 @@ export function AiChatScreen({ presentation = "screen" }) {
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
           <View style={styles.composerRow}>
-            <View style={styles.inputShell}>
+            <View style={styles.composerField}>
               <TextInput
                 value={draft}
                 onChangeText={setDraft}
@@ -568,22 +585,32 @@ export function AiChatScreen({ presentation = "screen" }) {
                 multiline
                 maxLength={700}
                 style={styles.input}
-                textAlignVertical="top"
+                textAlignVertical="center"
               />
+              <Pressable
+                onPress={sendMessage}
+                disabled={!canSend}
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                style={({ pressed }) => [
+                  styles.sendButton,
+                  !canSend && styles.sendButtonDisabled,
+                  pressed && canSend && styles.sendButtonPressed,
+                ]}
+              >
+                {isLoading ? (
+                  <Text style={styles.sendButtonText}>...</Text>
+                ) : (
+                  <Ionicons
+                    name="arrow-up"
+                    size={18}
+                    color={canSend ? "#FFFFFF" : appTheme.colors.textMuted}
+                  />
+                )}
+              </Pressable>
             </View>
-
-            <AppButton
-              label={isLoading ? "..." : "Send"}
-              onPress={sendMessage}
-              disabled={!canSend}
-              variant="primary"
-              size="md"
-              accessibilityLabel="Send message"
-              style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-              textStyle={styles.sendButtonText}
-            />
           </View>
-        </PrimaryCard>
+        </View>
       </KeyboardAvoidingView>
     </BackdropScreen>
   );
@@ -634,10 +661,24 @@ const styles = StyleSheet.create({
   chatShell: {
     flex: 1,
   },
+  messagesArea: {
+    flex: 1,
+  },
+  actionBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 2,
+    alignItems: "flex-end",
+    marginTop: spacing.xs,
+    backgroundColor: "transparent",
+  },
   messagesScroll: {
     flex: 1,
   },
   messagesContent: {
+    paddingTop: CHAT_ACTION_BAR_HEIGHT,
     paddingBottom: spacing.sm,
   },
   introCard: {
@@ -706,13 +747,13 @@ const styles = StyleSheet.create({
   },
   composerCard: {
     marginTop: spacing.sm,
-    paddingHorizontal: appTheme.card.paddingSpacious,
-    paddingVertical: appTheme.card.paddingSpacious,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
+    backgroundColor: "#E7E1DD",
   },
   composerCardTab: {
     marginTop: spacing.xs,
     marginHorizontal: -appTheme.screen.sidePadding,
-    marginBottom: 0,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
   },
@@ -724,36 +765,46 @@ const styles = StyleSheet.create({
     color: appTheme.colors.danger,
   },
   composerRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: spacing.sm,
+    width: "100%",
   },
-  inputShell: {
-    flex: 1,
+  composerField: {
+    flexDirection: "row",
+    alignItems: "center",
     minHeight: 54,
     maxHeight: 132,
-    borderRadius: 18,
-    backgroundColor: appTheme.input.background,
+    borderRadius: 26,
+    backgroundColor: "#FFFFFF",
     paddingHorizontal: spacing.md,
-    paddingVertical: 12,
+    paddingVertical: 10,
+    gap: spacing.sm,
   },
   input: {
+    flex: 1,
     minHeight: 30,
     maxHeight: 108,
-    fontSize: 15,
-    lineHeight: 21,
+    fontSize: 16,
+    lineHeight: 22,
     fontFamily: typography.fontFamily.body,
     color: appTheme.input.text,
   },
   sendButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignSelf: "flex-end",
-    paddingHorizontal: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: appTheme.colors.textStrong,
   },
   sendButtonDisabled: {
-    opacity: 0.5,
+    backgroundColor: "#E7E1DD",
+  },
+  sendButtonPressed: {
+    opacity: 0.86,
   },
   sendButtonText: {
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: typography.fontFamily.headingSemiBold,
+    color: "#FFFFFF",
   },
 });

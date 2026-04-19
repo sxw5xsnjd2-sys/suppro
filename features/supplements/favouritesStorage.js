@@ -1,3 +1,4 @@
+import { isLegacyCustomCatalogId } from "@/features/supplements/catalog";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const HEART_STORE_KEY = "supplement-heart-flags";
@@ -50,4 +51,23 @@ export async function setSupplementHearted(supplementId, hearted) {
 export async function getHeartedSupplementIds() {
   const flags = await getHeartFlags();
   return Object.keys(flags).filter((id) => Boolean(flags[id]));
+}
+
+export async function cleanupLegacyHeartFlags() {
+  const flags = await getHeartFlags();
+  const nextFlags = Object.fromEntries(
+    Object.entries(flags).filter(
+      ([id, hearted]) => Boolean(hearted) && !isLegacyCustomCatalogId(id)
+    )
+  );
+
+  if (JSON.stringify(nextFlags) === JSON.stringify(flags)) {
+    return;
+  }
+
+  try {
+    await AsyncStorage.setItem(HEART_STORE_KEY, JSON.stringify(nextFlags));
+  } catch (err) {
+    console.error("Failed to clean up legacy heart flags", err);
+  }
 }

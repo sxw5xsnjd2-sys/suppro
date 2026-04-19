@@ -1,7 +1,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { reconcileSupplementCatalogIds } from "@src/data/reconcileSupplementCatalogIds";
+import {
+  getCatalogType,
+  isLegacyCustomCatalogId,
+} from "@/features/supplements/catalog";
+import { cleanupLegacyHeartFlags } from "@/features/supplements/favouritesStorage";
+import { getSupplementLinkedIngredients } from "@/features/supplements/trackedScanContext";
 /* ----------------------------------------
    Helpers
 ----------------------------------------- */
@@ -21,11 +26,12 @@ const timeToMinutes = (time) => {
 /* ----------------------------------------
    Store
 ----------------------------------------- */
-export const useSupplementsStore = create()(persist((set, get) => ({
+export const useSupplementsStore = create()(persist((set) => ({
     supplements: [
         {
             id: "local-creatine",
             catalogId: "948a9744-85f8-4987-9f09-40db85e4e188",
+            catalogType: getCatalogType("948a9744-85f8-4987-9f09-40db85e4e188"),
             name: "Creatine",
             dose: "5 g",
             time: "08:00",
@@ -47,6 +53,7 @@ export const useSupplementsStore = create()(persist((set, get) => ({
             ...state.supplements,
             {
                 ...s,
+                catalogType: s.catalogType ?? getCatalogType(s.catalogId),
                 startDate: s.startDate ?? today(),
                 endDate: s.endDate ?? null,
             },
@@ -116,7 +123,12 @@ export const useSupplementsStore = create()(persist((set, get) => ({
         if (!state?.supplements)
             return;
         let didMigrate = false;
-        const migrated = state.supplements.map((s) => {
+        const migrated = state.supplements
+            .map((s) => {
+            if (isLegacyCustomCatalogId(s?.catalogId)) {
+                didMigrate = true;
+                return null;
+            }
             let updated = s;
             if (typeof updated.timeMinutes !== "number") {
                 updated = { ...updated, timeMinutes: timeToMinutes(updated.time) };
@@ -139,20 +151,36 @@ export const useSupplementsStore = create()(persist((set, get) => ({
                 updated = { ...updated, endDate: null };
                 didMigrate = true;
             }
-            return updated;
-        });
-        const nextSupplements = didMigrate ? migrated : state.supplements;
-        if (didMigrate) {
-            useSupplementsStore.setState({ supplements: nextSupplements });
-        }
-        reconcileSupplementCatalogIds(nextSupplements)
-            .then((reconciled) => {
-            if (reconciled) {
-                useSupplementsStore.setState({ supplements: reconciled });
+            const derivedCatalogType = getCatalogType(updated.catalogId);
+            if (derivedCatalogType && updated.catalogType !== derivedCatalogType) {
+                updated = { ...updated, catalogType: derivedCatalogType };
+                didMigrate = true;
             }
+            const linkedIngredients = getSupplementLinkedIngredients(updated);
+            if (linkedIngredients.length > 0 &&
+                JSON.stringify(updated.linkedIngredients ?? []) !==
+                    JSON.stringify(linkedIngredients)) {
+                updated = { ...updated, linkedIngredients };
+                didMigrate = true;
+            }
+            return updated;
         })
-            .catch((error) => {
-            console.error("Failed to reconcile supplement catalog IDs", error);
+            .filter(Boolean);
+        const validSupplementIds = new Set(migrated.map((supplement) => supplement.id));
+        const nextTakenTimesByDate = Object.fromEntries(Object.entries(state.takenTimesByDate ?? {}).map(([date, entries]) => [
+            date,
+            Object.fromEntries(Object.entries(entries ?? {}).filter(([id]) => validSupplementIds.has(id))),
+        ]));
+        const takenTimesChanged = JSON.stringify(nextTakenTimesByDate) !==
+            JSON.stringify(state.takenTimesByDate ?? {});
+        if (didMigrate || takenTimesChanged) {
+            useSupplementsStore.setState({
+                supplements: migrated,
+                takenTimesByDate: nextTakenTimesByDate,
+            });
+        }
+        cleanupLegacyHeartFlags().catch((error) => {
+            console.error("Failed to clean up legacy heart flags", error);
         });
     },
 }));

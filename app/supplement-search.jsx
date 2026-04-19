@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  FlatList,
   KeyboardAvoidingView,
   Platform,
+  SectionList,
   StyleSheet,
   Text,
   TextInput,
@@ -18,6 +18,7 @@ import {
   PrimaryCard,
   StatusPill,
 } from "@/components/common/ui";
+import { CATALOG_TYPES } from "@/features/supplements/catalog";
 import { appTheme, spacing, typography } from "@/theme";
 import { searchSupplementCatalog } from "@src/data/searchSupplementCatalog";
 
@@ -26,6 +27,8 @@ function asString(value) {
 }
 
 function SearchResultCard({ item, onPress }) {
+  const isActiveIngredient = item.catalogType === CATALOG_TYPES.ACTIVE_INGREDIENT;
+
   return (
     <PrimaryCard
       onPress={onPress}
@@ -36,13 +39,13 @@ function SearchResultCard({ item, onPress }) {
         <View style={styles.resultCopy}>
           <Text style={styles.resultName}>{item.name}</Text>
           <Text style={styles.resultMeta}>
-            {item.verified ? "Verified catalog" : "Custom supplement"}
+            {isActiveIngredient ? "Active ingredient" : "Supplement product"}
           </Text>
         </View>
 
         <StatusPill
-          label={item.verified ? "VERIFIED" : "CUSTOM"}
-          tone={item.verified ? "success" : "neutral"}
+          label={isActiveIngredient ? "INGREDIENT" : "SUPPLEMENT"}
+          tone={isActiveIngredient ? "success" : "neutral"}
           style={styles.resultBadge}
         />
       </View>
@@ -55,7 +58,7 @@ function LoadingCard() {
     <PrimaryCard style={styles.stateCard}>
       <Text style={styles.stateTitle}>Searching...</Text>
       <Text style={styles.stateBody}>
-        Looking across the verified catalog and your custom supplements.
+        Looking across active ingredients and supplement products.
       </Text>
     </PrimaryCard>
   );
@@ -65,25 +68,26 @@ export default function SupplementSearchScreen() {
   const params = useLocalSearchParams();
   const mode = asString(params.mode) === "picker" ? "picker" : "info";
   const initialQuery = asString(params.initialQuery);
-  const newCatalogId = asString(params.newCatalogId);
-  const newCatalogName = asString(params.newCatalogName);
   const [query, setQuery] = useState(initialQuery);
-  const [results, setResults] = useState([]);
+  const [sections, setSections] = useState([]);
   const [loading, setLoading] = useState(false);
-  const handledForwardKey = useRef("");
 
   const trimmedQuery = useMemo(() => query.trim(), [query]);
+  const resultCount = useMemo(
+    () => sections.reduce((sum, section) => sum + section.data.length, 0),
+    [sections]
+  );
   const resultCountLabel = loading
     ? "SEARCHING"
-    : `${results.length} ${results.length === 1 ? "MATCH" : "MATCHES"}`;
+    : `${resultCount} ${resultCount === 1 ? "MATCH" : "MATCHES"}`;
   const headerSubtitle =
     mode === "picker"
-      ? "Pick a supplement for your routine."
-      : "Browse the verified catalog and your custom entries.";
+      ? "Pick an active ingredient or supplement product."
+      : "Browse active ingredients and supplement products.";
 
   useEffect(() => {
     if (!trimmedQuery) {
-      setResults([]);
+      setSections([]);
       setLoading(false);
       return;
     }
@@ -92,9 +96,9 @@ export default function SupplementSearchScreen() {
     setLoading(true);
 
     searchSupplementCatalog(trimmedQuery)
-      .then((nextResults) => {
+      .then((nextSections) => {
         if (active) {
-          setResults(nextResults);
+          setSections(nextSections);
         }
       })
       .finally(() => {
@@ -108,33 +112,6 @@ export default function SupplementSearchScreen() {
     };
   }, [trimmedQuery]);
 
-  useEffect(() => {
-    if (!newCatalogId || !newCatalogName) return;
-
-    const forwardKey = `${newCatalogId}:${newCatalogName}:${mode}`;
-    if (handledForwardKey.current === forwardKey) return;
-    handledForwardKey.current = forwardKey;
-
-    if (mode === "picker") {
-      router.navigate({
-        pathname: "/(modals)/modal/supplement",
-        params: {
-          newCatalogId,
-          newCatalogName,
-        },
-      });
-      return;
-    }
-
-    router.navigate({
-      pathname: "/(modals)/modal/supplement",
-      params: {
-        newCatalogId,
-        newCatalogName,
-      },
-    });
-  }, [mode, newCatalogId, newCatalogName]);
-
   const handleSelect = (item) => {
     if (mode === "picker") {
       router.navigate({
@@ -142,6 +119,7 @@ export default function SupplementSearchScreen() {
         params: {
           newCatalogId: item.id,
           newCatalogName: item.name,
+          newCatalogType: item.catalogType,
         },
       });
       return;
@@ -156,22 +134,12 @@ export default function SupplementSearchScreen() {
     });
   };
 
-  const handleAddSupplement = () => {
-    router.push({
-      pathname: "/(modals)/modal/add-supplement-catalog",
-      params: {
-        ...(trimmedQuery ? { initialName: trimmedQuery } : {}),
-        mode,
-      },
-    });
-  };
-
   const renderEmptyState = () => {
     if (!trimmedQuery) {
       return (
         <EmptyStateCard
           title="Start typing to search"
-          description="Search the verified catalog and your custom supplements in one place."
+          description="Search active ingredients and supplement products in one place."
           style={styles.stateCard}
         />
       );
@@ -184,7 +152,7 @@ export default function SupplementSearchScreen() {
     return (
       <EmptyStateCard
         title="No matches yet"
-        description="Add it as a new supplement if you can’t find the right match."
+        description="Try a different ingredient or product name."
         style={styles.stateCard}
       />
     );
@@ -226,9 +194,9 @@ export default function SupplementSearchScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 48 : 0}
       >
-        <FlatList
-          data={trimmedQuery ? results : []}
-          keyExtractor={(item) => `${item.verified ? "v" : "u"}-${item.id}`}
+        <SectionList
+          sections={trimmedQuery ? sections : []}
+          keyExtractor={(item) => `${item.catalogType}-${item.id}`}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.resultsContent}
@@ -247,13 +215,13 @@ export default function SupplementSearchScreen() {
                 <TextInput
                   value={query}
                   onChangeText={setQuery}
-                  placeholder="Search supplements"
+                  placeholder="Search ingredients and supplements"
                   placeholderTextColor={appTheme.input.placeholder}
                   style={styles.searchFieldInput}
                   clearButtonMode="while-editing"
                   autoFocus
                   autoCapitalize="words"
-                  accessibilityLabel="Search supplements"
+                  accessibilityLabel="Search ingredients and supplements"
                 />
               </View>
 
@@ -269,18 +237,12 @@ export default function SupplementSearchScreen() {
               ) : null}
             </View>
           }
-          ListEmptyComponent={renderEmptyState}
-          ListFooterComponent={
-            trimmedQuery ? (
-              <PrimaryCard
-                onPress={handleAddSupplement}
-                style={styles.addCard}
-                pressedStyle={styles.resultCardPressed}
-              >
-                <Text style={styles.addCardText}>+ Add new supplement</Text>
-              </PrimaryCard>
+          renderSectionHeader={({ section }) =>
+            section.data.length > 0 ? (
+              <Text style={styles.sectionHeader}>{section.title}</Text>
             ) : null
           }
+          ListEmptyComponent={renderEmptyState}
         />
       </KeyboardAvoidingView>
     </BackdropScreen>
@@ -368,6 +330,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
+  sectionHeader: {
+    marginBottom: spacing.sm,
+    marginTop: spacing.xs,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
   resultCardPressed: {
     opacity: 0.84,
   },
@@ -396,19 +368,5 @@ const styles = StyleSheet.create({
   },
   resultBadge: {
     marginLeft: spacing.xs,
-  },
-  addCard: {
-    marginTop: spacing.xs,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: appTheme.colors.surfaceAccent,
-    borderWidth: 1,
-    borderColor: appTheme.colors.borderSubtle,
-    borderStyle: "dashed",
-  },
-  addCardText: {
-    fontSize: 15,
-    fontFamily: typography.fontFamily.bodySemiBold,
-    color: appTheme.colors.textStrong,
   },
 });

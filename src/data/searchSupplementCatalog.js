@@ -1,31 +1,57 @@
-import { getScopedSupabase, supabase as publicSupabase } from "@src/lib/supabase";
+import { CATALOG_TYPES, createSupplementProductCatalogId } from "@/features/supplements/catalog";
+import { supabase } from "@src/lib/supabase";
 export async function searchSupplementCatalog(query) {
-    if (!query.trim())
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
         return [];
-    const [official, user] = await Promise.all([
-        publicSupabase
+    }
+    const [activeIngredients, supplementProducts] = await Promise.all([
+        supabase
             .from("supplements")
             .select("id, name")
             .eq("status", "approved")
-            .ilike("name", `%${query}%`)
+            .ilike("name", `%${trimmedQuery}%`)
             .order("name")
             .limit(12),
-        (await getScopedSupabase())
-            .from("user_supplements")
-            .select("id, name")
-            .ilike("name", `%${query}%`)
-            .order("name")
+        supabase
+            .from("supplement_products_master")
+            .select("product_id, display_name")
+            .ilike("display_name", `%${trimmedQuery}%`)
+            .order("display_name")
             .limit(12),
     ]);
-    if (official.error)
-        console.error("supplements search failed", official.error);
-    if (user.error)
-        console.error("user_supplements search failed", user.error);
-    const officialResults = official.data?.map((row) => ({ ...row, verified: true })) ?? [];
-    const userResults = user.data?.map((row) => ({
-        id: `user-${row.id}`,
-        name: row.name,
-        verified: false,
-    })) ?? [];
-    return [...officialResults, ...userResults];
+    if (activeIngredients.error) {
+        console.error("supplements search failed", activeIngredients.error);
+    }
+    if (supplementProducts.error) {
+        console.error("supplement_products_master search failed", supplementProducts.error);
+    }
+
+    const productResults = (supplementProducts.data ?? []).map((row) => ({
+        id: createSupplementProductCatalogId(row.product_id),
+        name: row.display_name,
+        catalogType: CATALOG_TYPES.SUPPLEMENT_PRODUCT,
+    }));
+
+    if (productResults.length > 0) {
+        return [
+            {
+                key: "supplements",
+                title: "Supplements",
+                data: productResults,
+            },
+        ];
+    }
+
+    return [
+        {
+            key: "active-ingredients",
+            title: "Active ingredients",
+            data: (activeIngredients.data ?? []).map((row) => ({
+                id: row.id,
+                name: row.name,
+                catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
+            })),
+        },
+    ].filter((section) => section.data.length > 0);
 }

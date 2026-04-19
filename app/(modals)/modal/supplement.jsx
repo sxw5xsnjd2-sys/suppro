@@ -23,8 +23,17 @@ import { appTheme, spacing, typography } from "@/theme";
 import { SUPPLEMENT_ROUTES } from "@/features/supplements/types";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { Icon } from "@/features/supplements/icons/Icon";
-import { getScopedSupabase } from "@src/lib/supabase";
-import { getClientId } from "@src/lib/clientId";
+import { useScannerStore } from "@/features/scanner/store";
+import {
+  getTrackedScanMatchedIngredients,
+  getSupplementLinkedIngredients,
+  hasTrackedScanContext,
+} from "@/features/supplements/trackedScanContext";
+import {
+  getCatalogType,
+  CATALOG_TYPES,
+} from "@/features/supplements/catalog";
+import { getSupplementProductLinkedIngredients } from "@src/data/getSupplement";
 
 const todayYYYYMMDD = () => {
   const now = new Date();
@@ -48,6 +57,19 @@ const isValidISODate = (value) => {
   );
 };
 
+const normalizeIntegerParam = (value) => {
+  if (Array.isArray(value)) {
+    return normalizeIntegerParam(value[0]);
+  }
+
+  const parsed = Number.parseInt(
+    typeof value === "string" ? value : String(value ?? ""),
+    10
+  );
+
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const formatDisplayDate = (iso) => {
   if (!iso) return "Set date";
   if (!isValidISODate(iso)) return "Invalid date";
@@ -68,6 +90,9 @@ const formatDisplayDate = (iso) => {
   ];
   return `${String(d).padStart(2, "0")}-${months[(m || 1) - 1]}`;
 };
+
+const trimString = (value) =>
+  typeof value === "string" ? value.trim() : "";
 
 const daysInMonth = (year, monthIndex) =>
   new Date(year, monthIndex + 1, 0).getDate();
@@ -234,9 +259,18 @@ const DAYS = [
 ];
 
 export default function SupplementModal() {
-  const { newCatalogId, newCatalogName } = useLocalSearchParams();
-  const { id } = useLocalSearchParams();
+  const {
+    newCatalogId,
+    newCatalogName,
+    newCatalogType,
+    initialName,
+    id,
+    scanSessionId,
+    scanSource,
+  } = useLocalSearchParams();
   const isEdit = Boolean(id);
+  const requestedScanSessionId = normalizeIntegerParam(scanSessionId);
+  const currentScannerSessionId = useScannerStore((state) => state.scanSessionId);
 
   const supplement = useSupplementsStore((state) =>
     id ? state.supplements.find((item) => item.id === id) : undefined
@@ -261,8 +295,13 @@ export default function SupplementModal() {
       (TIME_PICKER_HEIGHT - TIME_ITEM_HEIGHT) / 2
   );
 
-  const [name, setName] = useState(supplement?.name ?? "");
+  const initialScannedName =
+    typeof initialName === "string" ? initialName : "";
+  const [name, setName] = useState(supplement?.name ?? initialScannedName);
   const [catalogId, setCatalogId] = useState(supplement?.catalogId ?? null);
+  const [catalogType, setCatalogType] = useState(
+    supplement?.catalogType ?? getCatalogType(supplement?.catalogId)
+  );
   const [saving, setSaving] = useState(false);
   const [dose, setDose] = useState(supplement?.dose ?? "");
   const [route, setRoute] = useState(supplement?.route ?? "tablet");
@@ -285,6 +324,7 @@ export default function SupplementModal() {
     !endDate || (startDateValid && endDateValid && endDate >= startDate);
   const canSave =
     name.trim().length > 0 &&
+    Boolean(catalogId) &&
     startDateValid &&
     endDateValid &&
     chronologicalValid;
@@ -304,8 +344,20 @@ export default function SupplementModal() {
     if (newCatalogId && newCatalogName) {
       setName(newCatalogName);
       setCatalogId(newCatalogId);
+      setCatalogType(
+        typeof newCatalogType === "string"
+          ? newCatalogType
+          : getCatalogType(newCatalogId)
+      );
+      return;
     }
-  }, [newCatalogId, newCatalogName]);
+
+    if (initialScannedName && !isEdit) {
+      setName(initialScannedName);
+      setCatalogId(null);
+      setCatalogType(null);
+    }
+  }, [initialScannedName, isEdit, newCatalogId, newCatalogName, newCatalogType]);
 
   const handleSave = async () => {
     if (!canSave || saving) return;
@@ -313,72 +365,22 @@ export default function SupplementModal() {
 
     try {
       const trimmedName = name.trim();
-      let resolvedCatalogId = catalogId;
-      const needsUserCatalogId =
-        !resolvedCatalogId || resolvedCatalogId.startsWith("custom-");
+      const resolvedCatalogId = catalogId;
+      const resolvedCatalogType = catalogType ?? getCatalogType(resolvedCatalogId);
 
-      if (needsUserCatalogId) {
-        const [supabase, clientId] = await Promise.all([
-          getScopedSupabase(),
-          getClientId(),
-        ]);
-
-        const findExistingByName = async () => {
-          const { data: exactMatch, error: exactError } = await supabase
-            .from("user_supplements")
-            .select("id")
-            .eq("name", trimmedName)
-            .maybeSingle();
-          if (!exactError && exactMatch?.id) {
-            return `user-${exactMatch.id}`;
-          }
-
-          const { data: fuzzyMatch, error: fuzzyError } = await supabase
-            .from("user_supplements")
-            .select("id")
-            .ilike("name", trimmedName)
-            .limit(1)
-            .maybeSingle();
-          if (!fuzzyError && fuzzyMatch?.id) {
-            return `user-${fuzzyMatch.id}`;
-          }
-
-          return null;
-        };
-
-        const existingCatalogId = await findExistingByName();
-        if (existingCatalogId) {
-          resolvedCatalogId = existingCatalogId;
-        } else {
-          const { data, error } = await supabase
-            .from("user_supplements")
-            .insert({
-              client_id: clientId,
-              name: trimmedName,
-            })
-            .select("id")
-            .single();
-
-          if (error) {
-            if (error.code === "23505") {
-              const duplicateCatalogId = await findExistingByName();
-              if (duplicateCatalogId) {
-                resolvedCatalogId = duplicateCatalogId;
-              } else {
-                throw error;
-              }
-            } else {
-              throw error;
-            }
-          } else {
-            resolvedCatalogId = `user-${data.id}`;
-          }
-        }
+      if (!resolvedCatalogId || !resolvedCatalogType) {
+        Alert.alert(
+          "Choose a supplement",
+          "Search and select an active ingredient or supplement product before saving."
+        );
+        return;
       }
 
+      let linkedIngredients = null;
       const payload = {
         name: trimmedName,
         catalogId: resolvedCatalogId,
+        catalogType: resolvedCatalogType,
         dose: dose.trim() || undefined,
         route,
         time: timeLabel,
@@ -387,6 +389,56 @@ export default function SupplementModal() {
         startDate: startDateValid ? startDate : todayYYYYMMDD(),
         endDate: endDateValid ? endDate || null : null,
       };
+
+      const selectedCatalogChanged = Boolean(newCatalogId && newCatalogName);
+      const canUseActiveScanContext =
+        scanSource === "scanned_product" &&
+        !selectedCatalogChanged &&
+        Number.isFinite(requestedScanSessionId) &&
+        requestedScanSessionId === currentScannerSessionId;
+
+      const activeScannerState = canUseActiveScanContext
+        ? useScannerStore.getState()
+        : null;
+      const activeScanMatchedIngredients =
+        activeScannerState?.status === "success" &&
+        Array.isArray(activeScannerState?.matchedIngredients)
+          ? activeScannerState.matchedIngredients
+          : [];
+      const activeScanServingSizeText = trimString(
+        activeScannerState?.product?.servingSizeText
+      );
+      let resolvedServingSizeText = null;
+
+      if (activeScanMatchedIngredients.length > 0) {
+        payload.scanSource = "scanned_product";
+        linkedIngredients = activeScanMatchedIngredients;
+        resolvedServingSizeText = activeScanServingSizeText || null;
+      } else if (isEdit && hasTrackedScanContext(supplement) && !selectedCatalogChanged) {
+        payload.scanSource = supplement.scanSource;
+        linkedIngredients = getTrackedScanMatchedIngredients(supplement);
+        resolvedServingSizeText = trimString(supplement?.servingSizeText) || null;
+      } else if (resolvedCatalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT) {
+        const productLinkedIngredients =
+          await getSupplementProductLinkedIngredients(resolvedCatalogId);
+        if (!productLinkedIngredients.length) {
+          Alert.alert(
+            "Could not add supplement",
+            "This supplement product does not have linked active ingredients yet."
+          );
+          return;
+        }
+        payload.scanSource = null;
+        linkedIngredients = productLinkedIngredients;
+      } else if (isEdit && !selectedCatalogChanged) {
+        payload.scanSource = supplement?.scanSource ?? null;
+        linkedIngredients = getSupplementLinkedIngredients(supplement);
+      } else {
+        payload.scanSource = null;
+      }
+      payload.linkedIngredients = linkedIngredients?.length ? linkedIngredients : null;
+      payload.servingSizeText =
+        payload.scanSource === "scanned_product" ? resolvedServingSizeText : null;
 
       if (isEdit && id) {
         updateSupplement(id, payload);
@@ -399,10 +451,7 @@ export default function SupplementModal() {
 
       router.back();
     } catch (error) {
-      console.error(
-        "Failed to save custom supplement to user_supplements",
-        error
-      );
+      console.error("Failed to save supplement", error);
       Alert.alert("Could not save supplement", "Please try again in a moment.");
     } finally {
       setSaving(false);

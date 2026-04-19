@@ -16,7 +16,7 @@ import { appTheme, spacing, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
 import { getEffectiveEntries } from "@/features/health/selectors";
-import { getSupplementRatings } from "@src/data/getSupplementRatings";
+import { getTrackedSupplementEvidenceScores } from "@/features/supplements/getTrackedSupplementEvidenceScores";
 import {
   isNumericMetric,
   normalizeMetric,
@@ -314,7 +314,7 @@ export default function StatsScreen() {
 
   const [period, setPeriod] = useState("weekly");
   const [today, setToday] = useState(() => toISODate(new Date()));
-  const [ratingByCatalog, setRatingByCatalog] = useState({});
+  const [ratingBySupplementId, setRatingBySupplementId] = useState({});
 
   useEffect(() => {
     if (!isFocused) return;
@@ -323,25 +323,18 @@ export default function StatsScreen() {
 
   useEffect(() => {
     let active = true;
-    const catalogIds = Array.from(
-      new Set(
-        (supplements ?? [])
-          .map((supplement) => supplement.catalogId)
-          .filter(Boolean)
-      )
-    );
-    if (!catalogIds.length) {
-      setRatingByCatalog({});
+    if (!supplements?.length) {
+      setRatingBySupplementId({});
       return undefined;
     }
-    getSupplementRatings(catalogIds)
+    getTrackedSupplementEvidenceScores(supplements)
       .then((map) => {
         if (!active) return;
-        setRatingByCatalog(map);
+        setRatingBySupplementId(map);
       })
       .catch(() => {
         if (!active) return;
-        setRatingByCatalog({});
+        setRatingBySupplementId({});
       });
     return () => {
       active = false;
@@ -515,8 +508,8 @@ export default function StatsScreen() {
   const evidenceGroups = useMemo(() => {
     const groups = { high: [], good: [], poor: [] };
     activeSupplements.forEach((supplement) => {
-      const score = Number.isFinite(ratingByCatalog[supplement.catalogId])
-        ? ratingByCatalog[supplement.catalogId]
+      const score = Number.isFinite(ratingBySupplementId[supplement.id])
+        ? ratingBySupplementId[supplement.id]
         : null;
       const bucket = evidenceBucketForScore(score);
       groups[bucket].push({
@@ -526,7 +519,7 @@ export default function StatsScreen() {
       });
     });
     return groups;
-  }, [activeSupplements, ratingByCatalog]);
+  }, [activeSupplements, ratingBySupplementId]);
 
   const topImprovingMetrics = useMemo(
     () =>

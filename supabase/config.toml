@@ -1,7 +1,7 @@
 
 [functions.ai-supplement]
 enabled = true
-verify_jwt = false
+verify_jwt = true
 import_map = "./functions/ai-supplement/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
@@ -12,6 +12,18 @@ entrypoint = "./functions/ai-supplement/index.ts"
 
 [functions.delete-account]
 enabled = true
-verify_jwt = false
+verify_jwt = true
 import_map = "./functions/delete-account/deno.json"
 entrypoint = "./functions/delete-account/index.ts"
+
+[functions.scan-supplement-photos]
+enabled = true
+verify_jwt = true
+import_map = "./functions/scan-supplement-photos/deno.json"
+entrypoint = "./functions/scan-supplement-photos/index.ts"
+
+[functions.process-photo-rescue-reviews]
+enabled = true
+verify_jwt = true
+import_map = "./functions/process-photo-rescue-reviews/deno.json"
+entrypoint = "./functions/process-photo-rescue-reviews/index.ts"

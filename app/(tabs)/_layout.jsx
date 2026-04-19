@@ -7,6 +7,7 @@ import HomeIcon from "@/assets/icons/tab/home.svg";
 import SupplementsIcon from "@/assets/icons/tab/supplements.svg";
 import HealthIcon from "@/assets/icons/tab/health.svg";
 import MessagesIcon from "@/assets/icons/tab/messages.svg";
+import QrScanIcon from "@/assets/icons/tab/qr-scan.svg";
 
 const VISIBLE_TABS = ["index", "supplements", "health", "ai"];
 
@@ -60,6 +61,8 @@ function TabItem({ route, label, focused, navigation }) {
     >
       <TabIcon routeName={route.name} color={tintColor} />
       <Text
+        adjustsFontSizeToFit
+        minimumFontScale={0.78}
         numberOfLines={1}
         style={[
           styles.tabLabel,
@@ -77,8 +80,9 @@ function CustomTabBar({ state, descriptors, navigation, insets }) {
     state.routes.find((route) => route.name === name)
   ).filter(Boolean);
   const currentRouteName = state.routes[state.index]?.name;
-  const leftTabs = visibleRoutes.slice(0, 2);
-  const rightTabs = visibleRoutes.slice(2);
+  const midpoint = Math.ceil(visibleRoutes.length / 2);
+  const leftRoutes = visibleRoutes.slice(0, midpoint);
+  const rightRoutes = visibleRoutes.slice(midpoint);
 
   const renderTab = (route) => {
     const options = descriptors[route.key]?.options ?? {};
@@ -109,29 +113,41 @@ function CustomTabBar({ state, descriptors, navigation, insets }) {
       ]}
     >
       <View style={styles.tabRow}>
-        {leftTabs.map(renderTab)}
+        <View style={styles.tabGroup}>{leftRoutes.map(renderTab)}</View>
         <View style={styles.centerSlot} />
-        {rightTabs.map(renderTab)}
+        <View style={[styles.tabGroup, styles.rightTabGroup]}>
+          {rightRoutes.map(renderTab)}
+        </View>
       </View>
 
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Add supplement"
-        onPress={() => router.push("/modal/supplement")}
+        accessibilityLabel="Scan product"
+        onPress={() => router.push("/scanner")}
         style={({ pressed }) => [
-          styles.fab,
-          { top: -appTheme.tabBar.fabOffset },
-          pressed && styles.fabPressed,
+          styles.scanButton,
+          {
+            top: -appTheme.tabBar.scanButtonTopOffset,
+          },
+          pressed && styles.scanButtonPressed,
         ]}
       >
         <LinearGradient
-          colors={appTheme.tabBar.fabGradient}
+          colors={appTheme.tabBar.scanButtonGradient}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
-          style={styles.fabInner}
+          style={styles.scanButtonInner}
         >
-          <View style={styles.plus} />
-          <View style={[styles.plus, styles.plusVertical]} />
+          <View style={styles.scanButtonContent}>
+            <QrScanIcon
+              width={28}
+              height={28}
+              style={styles.scanButtonIcon}
+              color={appTheme.tabBar.plusColor}
+              fill={appTheme.tabBar.plusColor}
+              stroke={appTheme.tabBar.plusColor}
+            />
+          </View>
         </LinearGradient>
       </Pressable>
     </View>
@@ -197,6 +213,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   tabBar: {
+    position: "relative",
     backgroundColor: "#FFFFFF",
     borderTopWidth: 1,
     borderTopColor: appTheme.tabBar.borderColor,
@@ -206,6 +223,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "stretch",
     height: appTheme.tabBar.baseHeight,
+  },
+  tabGroup: {
+    flex: 2,
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  rightTabGroup: {
+    marginLeft: -10,
+  },
+  centerSlot: {
+    flex: 1,
   },
   tabItem: {
     flex: 1,
@@ -217,13 +245,11 @@ const styles = StyleSheet.create({
   tabItemPressed: {
     opacity: 0.76,
   },
-  centerSlot: {
-    flex: 1,
-  },
   tabLabel: {
     fontSize: appTheme.tabBar.labelSize,
     textAlign: "center",
     width: "100%",
+    flexShrink: 1,
   },
   tabLabelActive: {
     fontFamily: typography.fontFamily.bodyBold,
@@ -235,37 +261,39 @@ const styles = StyleSheet.create({
     color: appTheme.tabBar.inactiveLabelColor,
     lineHeight: 12,
   },
-  fab: {
+  scanButton: {
     position: "absolute",
-    left: "50%",
-    marginLeft: -(appTheme.tabBar.fabSize / 2),
+    left: "52%",
     zIndex: 20,
+    marginLeft: -appTheme.tabBar.scanButtonSize / 2,
   },
-  fabPressed: {
+  scanButtonPressed: {
     opacity: 0.88,
   },
-  fabInner: {
-    width: appTheme.tabBar.fabSize,
-    height: appTheme.tabBar.fabSize,
-    borderRadius: appTheme.tabBar.fabSize / 2,
+  scanButtonInner: {
+    width: appTheme.tabBar.scanButtonSize,
+    height: appTheme.tabBar.scanButtonSize,
+    borderRadius: appTheme.tabBar.scanButtonSize / 2,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 2,
-    borderColor: appTheme.tabBar.fabBorderColor,
+    borderColor: appTheme.tabBar.scanButtonBorderColor,
     shadowColor: "#000000",
     shadowOpacity: 0.08,
     shadowRadius: 13.2,
     shadowOffset: { width: 0, height: 0 },
     elevation: 8,
   },
-  plus: {
-    position: "absolute",
-    width: appTheme.tabBar.plusSize,
-    height: appTheme.tabBar.plusThickness,
-    backgroundColor: appTheme.tabBar.plusColor,
-    borderRadius: 2,
+  scanButtonContent: {
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
   },
-  plusVertical: {
-    transform: [{ rotate: "90deg" }],
+  scanButtonIcon: {
+    position: "absolute",
+    top: "50%",
+    marginTop: -14,
   },
 });

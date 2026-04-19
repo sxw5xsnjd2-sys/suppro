@@ -2,11 +2,6 @@ require("dotenv").config();
 
 module.exports = ({ config }) => {
   const existingPlugins = Array.isArray(config.plugins) ? config.plugins : [];
-  const hasDateTimePickerPlugin = existingPlugins.some((plugin) =>
-    Array.isArray(plugin)
-      ? plugin[0] === "@react-native-community/datetimepicker"
-      : plugin === "@react-native-community/datetimepicker"
-  );
   const hasAppleHealthPlugin = existingPlugins.some((plugin) =>
     Array.isArray(plugin)
       ? plugin[0] === "react-native-health"
@@ -17,12 +12,11 @@ module.exports = ({ config }) => {
       ? plugin[0] === "expo-apple-authentication"
       : plugin === "expo-apple-authentication"
   );
+  const hasCameraPlugin = existingPlugins.some((plugin) =>
+    Array.isArray(plugin) ? plugin[0] === "expo-camera" : plugin === "expo-camera"
+  );
 
   const plugins = [...existingPlugins];
-
-  if (!hasDateTimePickerPlugin) {
-    plugins.push("@react-native-community/datetimepicker");
-  }
 
   if (!hasAppleHealthPlugin) {
     plugins.push([
@@ -38,6 +32,18 @@ module.exports = ({ config }) => {
 
   if (!hasAppleAuthenticationPlugin) {
     plugins.push("expo-apple-authentication");
+  }
+
+  if (!hasCameraPlugin) {
+    plugins.push([
+      "expo-camera",
+      {
+        cameraPermission:
+          "Allow $(PRODUCT_NAME) to access your camera to scan food barcodes and ingredients.",
+        barcodeScannerEnabled: true,
+        recordAudioAndroid: false,
+      },
+    ]);
   }
 
   return {

@@ -1,103 +1,333 @@
-import { getScopedSupabase, supabase as publicSupabase } from "@src/lib/supabase";
+import {
+  CATALOG_TYPES,
+  createSupplementProductCatalogId,
+  getCatalogEntityId,
+  getCatalogType,
+} from "@/features/supplements/catalog";
+import { supabase } from "@src/lib/supabase";
+import { buildLinkedSupplementPayload } from "./buildLinkedSupplementPayload";
+
 function trimString(value) {
-    return typeof value === "string" ? value.trim() : "";
+  return typeof value === "string" ? value.trim() : "";
 }
-function hasUserSupplementDetails(row) {
-    return Boolean(trimString(row?.what_is_it) ||
-        trimString(row?.why_use_it) ||
-        trimString(row?.risks_and_interactions) ||
-        trimString(row?.evidence_summary));
-}
-async function getVerifiedSupplementByName(name) {
-    const trimmedName = trimString(name);
-    if (!trimmedName)
-        return null;
-    const { data, error } = await publicSupabase
-        .from("supplements")
-        .select(`
-      id,
-      name,
-      description,
-      what_is_it,
-      how_to_use,
-      why_use_it,
-      risks_and_interactions,
-      evidence,
-      evidence_score,
-      supplement_benefits (
-        *
-      )
-    `)
-        .eq("status", "approved")
-        .eq("name", trimmedName)
-        .maybeSingle();
-    if (error) {
-        console.error(error);
-        return null;
+
+function dedupeByKey(items, getKey) {
+  const seen = new Set();
+
+  return (items ?? []).filter((item) => {
+    const key = getKey(item);
+
+    if (!key || seen.has(key)) {
+      return false;
     }
-    return data ? { ...data, verified: true } : null;
+
+    seen.add(key);
+    return true;
+  });
 }
+
+function formatDosageValue(value) {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+
+  return Number.isInteger(value) ? String(value) : String(Number(value));
+}
+
+function formatDosageUnit(value) {
+  const normalizedUnit = trimString(value).toLowerCase();
+  if (!normalizedUnit) {
+    return "";
+  }
+
+  if (normalizedUnit === "mcg" || normalizedUnit === "ug" || normalizedUnit === "µg") {
+    return "μg";
+  }
+
+  return normalizedUnit;
+}
+
+function buildStructuredDosageDisplay(row) {
+  const dosageValue = row?.dosage_value;
+  const dosageUnit = formatDosageUnit(row?.dosage_unit);
+
+  if (!Number.isFinite(dosageValue) || !dosageUnit) {
+    return null;
+  }
+
+  const chemicalForm = trimString(row?.chemical_form);
+  const chemicalFormLabel = chemicalForm ? `${chemicalForm} ` : "";
+
+  return `${chemicalFormLabel}${formatDosageValue(dosageValue)}${dosageUnit}`;
+}
+
+function buildDosageDisplay(row) {
+  const structuredDisplay = buildStructuredDosageDisplay(row);
+  if (structuredDisplay) {
+    return structuredDisplay;
+  }
+
+  const originalText = trimString(row?.dosage_original_text);
+  if (originalText) {
+    const canonicalName = trimString(row?.canonical_name);
+    if (canonicalName) {
+      const normalizedOriginal = originalText.toLowerCase();
+      const normalizedCanonical = canonicalName.toLowerCase();
+
+      if (normalizedOriginal.startsWith(`${normalizedCanonical} `)) {
+        return originalText.slice(canonicalName.length).trim();
+      }
+    }
+
+    return originalText;
+  }
+
+  return null;
+}
+
+function buildProductIngredientKey(match) {
+  return [
+    trimString(match?.catalogId),
+    trimString(match?.ingredientRaw).toLowerCase(),
+    match?.dosageValue ?? "",
+    trimString(match?.dosageUnit),
+    trimString(match?.dosageDisplay),
+    trimString(match?.chemicalForm),
+    trimString(match?.amountBasis),
+  ].join("|");
+}
+
+function buildProductIngredientMatch(row, supplementNameById) {
+  const supplementId = trimString(row?.canonical_supplement_id);
+  const canonicalName = trimString(row?.canonical_name);
+  const linkedSupplementName = trimString(supplementNameById.get(supplementId));
+  const ingredientName = canonicalName || linkedSupplementName || "Active ingredient";
+
+  return {
+    catalogId: supplementId || null,
+    catalogName: linkedSupplementName || "",
+    ingredientName,
+    ingredientRaw: canonicalName || ingredientName,
+    classification: "active",
+    matchType: supplementId ? "linked" : "product_active_ingredient",
+    score: 100,
+    verified: Boolean(supplementId),
+    sourceTable: "product_active_ingredients",
+    dosageValue: Number.isFinite(row?.dosage_value) ? row.dosage_value : null,
+    dosageUnit: trimString(row?.dosage_unit) || null,
+    dosageDisplay: buildDosageDisplay(row),
+    chemicalForm: trimString(row?.chemical_form) || null,
+    amountBasis: trimString(row?.amount_basis) || null,
+  };
+}
+
+const SUPPLEMENT_SELECT = `
+  id,
+  name,
+  description,
+  what_is_it,
+  how_to_use,
+  why_use_it,
+  risks_and_interactions,
+  evidence,
+  evidence_score,
+  recommended_dose_status,
+  recommended_dose_json,
+  dose_scoring_profile_json,
+  supplement_benefits (
+    *
+  )
+`;
+
+const PRODUCT_ACTIVE_INGREDIENTS_SELECT = `
+  canonical_supplement_id,
+  canonical_name,
+  ingredient_type,
+  dosage_value,
+  dosage_unit,
+  dosage_original_text,
+  chemical_form,
+  amount_basis
+`;
+
+export async function getSupplementsByIds(ids) {
+  const cleanIds = Array.from(
+    new Set((ids ?? []).map((id) => trimString(id)).filter(Boolean))
+  );
+
+  if (cleanIds.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("supplements")
+    .select(SUPPLEMENT_SELECT)
+    .eq("status", "approved")
+    .in("id", cleanIds);
+
+  if (error) {
+    console.error(error);
+    return [];
+  }
+
+  return (data ?? []).map((row) => ({
+    ...row,
+    verified: true,
+    catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
+  }));
+}
+
+async function loadSupplementProductIngredientSets(catalogId) {
+  const productId = getCatalogEntityId(catalogId);
+  if (!productId) {
+    return {
+      activeIngredients: [],
+      linkedIngredients: [],
+      supplementRows: [],
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("product_active_ingredients")
+    .select(PRODUCT_ACTIVE_INGREDIENTS_SELECT)
+    .eq("product_id", productId)
+    .eq("ingredient_type", "active")
+    .order("canonical_name", { ascending: true })
+    .order("dosage_value", { ascending: true, nullsFirst: false })
+    .order("dosage_original_text", { ascending: true });
+
+  if (error) {
+    console.error("Failed to load product active ingredients", error);
+    return {
+      activeIngredients: [],
+      linkedIngredients: [],
+      supplementRows: [],
+    };
+  }
+
+  const supplementRows = await getSupplementsByIds(
+    (data ?? []).map((row) => row?.canonical_supplement_id)
+  );
+  const supplementNameById = new Map(
+    supplementRows.map((row) => [row.id, row.name])
+  );
+
+  const activeIngredients = dedupeByKey(
+    (data ?? [])
+      .map((row) => buildProductIngredientMatch(row, supplementNameById))
+      .filter((match) => trimString(match.ingredientName)),
+    buildProductIngredientKey
+  );
+
+  const linkedIngredients = dedupeByKey(
+    activeIngredients.filter((match) => trimString(match.catalogId)),
+    (match) => trimString(match.catalogId)
+  );
+
+  return {
+    activeIngredients,
+    linkedIngredients,
+    supplementRows,
+  };
+}
+
+export async function getSupplementProductActiveIngredients(catalogId) {
+  const { activeIngredients } = await loadSupplementProductIngredientSets(
+    catalogId
+  );
+  return activeIngredients;
+}
+
+export async function getSupplementProductLinkedIngredients(catalogId) {
+  const { linkedIngredients } = await loadSupplementProductIngredientSets(
+    catalogId
+  );
+  return linkedIngredients;
+}
+
+async function getActiveIngredientById(catalogId) {
+  const cleanId = getCatalogEntityId(catalogId);
+  if (!cleanId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("supplements")
+    .select(SUPPLEMENT_SELECT)
+    .eq("id", cleanId)
+    .eq("status", "approved")
+    .maybeSingle();
+
+  if (error) {
+    console.error(error);
+    return null;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    ...data,
+    verified: true,
+    catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
+  };
+}
+
+async function getSupplementProductById(catalogId, fallbackName) {
+  const productId = getCatalogEntityId(catalogId);
+  if (!productId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("supplement_products_master")
+    .select("product_id, display_name, serving_size_text")
+    .eq("product_id", productId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to load supplement product", error);
+    return null;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const { activeIngredients, linkedIngredients, supplementRows } =
+    await loadSupplementProductIngredientSets(catalogId);
+  const supplementsByCatalogId = new Map(
+    supplementRows.map((row) => [row.id, row])
+  );
+  const displayName =
+    trimString(data?.display_name) || trimString(fallbackName) || "Supplement";
+
+  return {
+    ...buildLinkedSupplementPayload({
+      id: createSupplementProductCatalogId(data.product_id),
+      name: displayName,
+      verified: false,
+      catalogType: CATALOG_TYPES.SUPPLEMENT_PRODUCT,
+      matchedIngredients: linkedIngredients,
+      displayIngredients: activeIngredients,
+      servingSizeText: trimString(data?.serving_size_text) || null,
+      supplementsByCatalogId,
+    }),
+    productId: String(data.product_id),
+    ingredient_count: activeIngredients.length,
+  };
+}
+
 export async function getSupplementById(supplementId, fallbackName) {
-    const isUserSupplement = supplementId.startsWith("user-");
-    const cleanId = isUserSupplement
-        ? supplementId.replace(/^user-/, "")
-        : supplementId;
-    if (isUserSupplement) {
-        const supabase = await getScopedSupabase();
-        const { data, error } = await supabase
-            .from("user_supplements")
-            .select(`
-        id,
-        name,
-        what_is_it,
-        how_to_use,
-        why_use_it,
-        risks_and_interactions,
-        evidence_summary
-      `)
-            .eq("id", cleanId)
-            .maybeSingle();
-        if (error) {
-            console.error(error);
-            return null;
-        }
-        const verifiedMatch = !hasUserSupplementDetails(data)
-            ? await getVerifiedSupplementByName(fallbackName ?? data?.name)
-            : null;
-        if (verifiedMatch)
-            return verifiedMatch;
-        if (!data)
-            return null;
-        return {
-            ...data,
-            description: null,
-            evidence: data.evidence_summary ?? null,
-            evidence_score: null,
-            supplement_benefits: [],
-            verified: false,
-        };
-    }
-    const { data, error } = await publicSupabase
-        .from("supplements")
-        .select(`
-      id,
-      name,
-      description,
-      what_is_it,
-      how_to_use,
-      why_use_it,
-      risks_and_interactions,
-      evidence,
-      evidence_score,
-      supplement_benefits (
-        *
-      )
-    `)
-        .eq("id", cleanId)
-        .maybeSingle();
-    if (error) {
-        console.error(error);
-        return null;
-    }
-    return data ? { ...data, verified: true } : null;
+  const catalogType = getCatalogType(supplementId);
+  if (catalogType === CATALOG_TYPES.LEGACY_CUSTOM) {
+    return null;
+  }
+
+  if (catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT) {
+    return getSupplementProductById(supplementId, fallbackName);
+  }
+
+  return getActiveIngredientById(supplementId);
 }

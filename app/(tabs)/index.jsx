@@ -18,7 +18,8 @@ import { appTheme, spacing, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
 import { getEffectiveEntries } from "@/features/health/selectors";
-import { getSupplementRatings } from "@src/data/getSupplementRatings";
+import { getTrackedSupplementEvidenceScores } from "@/features/supplements/getTrackedSupplementEvidenceScores";
+import { openTrackedSupplementInfo } from "@/features/supplements/openTrackedSupplementInfo";
 import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 import {
@@ -239,6 +240,26 @@ function normalizeAiSummaryPayload(payload) {
     summary,
     recommendations: sanitizeRecommendations(payload?.recommendations),
   };
+}
+
+function getAiSummaryFailureMessage(status, responseText) {
+  if (status === 401) {
+    return "Please sign in to generate a live AI summary.";
+  }
+
+  try {
+    const parsed = JSON.parse(responseText);
+    if (typeof parsed?.error === "string" && parsed.error.trim()) {
+      if (parsed.error === "AI service unavailable") {
+        return "Live AI summary is currently unavailable.";
+      }
+      return parsed.error.trim();
+    }
+  } catch {
+    // Fall back to a generic message when the response is not JSON.
+  }
+
+  return "Failed to generate live AI summary.";
 }
 
 function parseAiSummaryCache(raw) {
@@ -480,7 +501,7 @@ export default function HomeScreen() {
   const healthEntries = useHealthStore((s) => getEffectiveEntries(s));
   const healthMetrics = useHealthStore((s) => s.metrics);
 
-  const [ratingByCatalog, setRatingByCatalog] = useState({});
+  const [ratingBySupplementId, setRatingBySupplementId] = useState({});
   const [today, setToday] = useState(() => toISODate(new Date()));
   const [aiSummaryText, setAiSummaryText] = useState("");
   const [, setAiSummaryRecommendations] = useState([]);
@@ -510,16 +531,17 @@ export default function HomeScreen() {
 
   useEffect(() => {
     let active = true;
-    const catalogIds = Array.from(
-      new Set((supplements ?? []).map((s) => s.catalogId).filter(Boolean))
-    );
-    if (catalogIds.length === 0) {
-      setRatingByCatalog({});
+    if (!supplements?.length) {
+      setRatingBySupplementId({});
       return;
     }
-    getSupplementRatings(catalogIds).then((map) => {
-      if (active) setRatingByCatalog(map);
-    });
+    getTrackedSupplementEvidenceScores(supplements)
+      .then((map) => {
+        if (active) setRatingBySupplementId(map);
+      })
+      .catch(() => {
+        if (active) setRatingBySupplementId({});
+      });
     return () => {
       active = false;
     };
@@ -641,9 +663,7 @@ export default function HomeScreen() {
 
           if (!wasTaken) return;
 
-          const tier = evidenceTierForScore(
-            ratingByCatalog[supplement.catalogId]
-          );
+          const tier = evidenceTierForScore(ratingBySupplementId[supplement.id]);
           summary.evidence[tier] += 1;
           if (tier !== "unknown") {
             summary.evidence.points += EVIDENCE_POINTS[tier];
@@ -654,7 +674,7 @@ export default function HomeScreen() {
 
       return summary;
     },
-    [dayStatsByDate, ratingByCatalog]
+    [dayStatsByDate, ratingBySupplementId]
   );
 
   const aiPeriodDates = useMemo(() => {
@@ -931,11 +951,10 @@ export default function HomeScreen() {
           }
         );
         if (!response.ok) {
-          if (response.status === 401) {
-            throw new Error("Please sign in to generate a live AI summary.");
-          }
           const errorText = await response.text();
-          throw new Error(errorText || "Failed to generate live AI summary.");
+          throw new Error(
+            getAiSummaryFailureMessage(response.status, errorText)
+          );
         }
 
         const data = await response.json();
@@ -1046,7 +1065,7 @@ export default function HomeScreen() {
         <View style={styles.scheduleList}>
           {dueSupplements.map((supplement) => {
             const taken = Boolean(takenTimes[supplement.id]);
-            const score = ratingByCatalog[supplement.catalogId];
+            const score = ratingBySupplementId[supplement.id];
 
             return (
               <SupplementRow
@@ -1056,17 +1075,7 @@ export default function HomeScreen() {
                 takenAt={takenTimes[supplement.id]}
                 score={score}
                 onPress={() => toggleTaken(supplement.id)}
-                onLongPress={() =>
-                  supplement.catalogId
-                    ? router.push({
-                        pathname: "/modal/supplement-info",
-                        params: {
-                          id: supplement.catalogId,
-                          name: supplement.name,
-                        },
-                      })
-                    : undefined
-                }
+                onLongPress={() => openTrackedSupplementInfo(supplement)}
                 onEditPress={() =>
                   router.push({
                     pathname: "/modal/supplement",

@@ -269,7 +269,9 @@ export function SignUpScreen({ standalone = false, mode = "first_run" } = {}) {
           style={styles.container}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          keyboardDismissMode={
+            Platform.OS === "ios" ? "interactive" : "on-drag"
+          }
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.cardContainer}>
@@ -284,9 +286,6 @@ export function SignUpScreen({ standalone = false, mode = "first_run" } = {}) {
                   />
                 </View>
                 <Text style={styles.title}>Finish account setup</Text>
-                <Text style={styles.subtitle}>
-                  To get your free supplement plan
-                </Text>
               </View>
 
               <View style={styles.form}>
@@ -294,7 +293,8 @@ export function SignUpScreen({ standalone = false, mode = "first_run" } = {}) {
                   <View style={styles.appleSection}>
                     <AppleAuthentication.AppleAuthenticationButton
                       buttonType={
-                        AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN
+                        AppleAuthentication.AppleAuthenticationButtonType
+                          .SIGN_IN
                       }
                       buttonStyle={
                         AppleAuthentication.AppleAuthenticationButtonStyle.BLACK

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Text, StyleSheet } from "react-native";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
@@ -10,7 +10,8 @@ import {
 import { SupplementCard } from "@/features/supplements/components/SupplementCard";
 import { appTheme, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
-import { getSupplementRatings } from "@src/data/getSupplementRatings";
+import { getTrackedSupplementEvidenceScores } from "@/features/supplements/getTrackedSupplementEvidenceScores";
+import { openTrackedSupplementInfo } from "@/features/supplements/openTrackedSupplementInfo";
 import { getRatingStyle } from "@/utils/ratingStyles";
 
 function EmptyState() {
@@ -24,29 +25,33 @@ function EmptyState() {
 
 export default function SupplementsScreen() {
   const supplements = useSupplementsStore((s) => s.supplements);
-  const [ratingByCatalog, setRatingByCatalog] = useState({});
-  const sorted = [...supplements].sort((a, b) => a.timeMinutes - b.timeMinutes);
+  const [ratingBySupplementId, setRatingBySupplementId] = useState({});
+  const sorted = useMemo(
+    () => [...supplements].sort((a, b) => a.timeMinutes - b.timeMinutes),
+    [supplements]
+  );
 
   useEffect(() => {
     let active = true;
-    const catalogIds = Array.from(
-      new Set(sorted.map((s) => s.catalogId).filter(Boolean))
-    );
-    if (catalogIds.length === 0) {
-      setRatingByCatalog({});
+    if (sorted.length === 0) {
+      setRatingBySupplementId({});
       return;
     }
-    getSupplementRatings(catalogIds).then((map) => {
-      if (active) setRatingByCatalog(map);
-    });
+    getTrackedSupplementEvidenceScores(sorted)
+      .then((map) => {
+        if (active) setRatingBySupplementId(map);
+      })
+      .catch(() => {
+        if (active) setRatingBySupplementId({});
+      });
     return () => {
       active = false;
     };
   }, [sorted]);
 
-  const iconColorFor = (catalogId) => {
-    if (!catalogId) return undefined;
-    const score = ratingByCatalog[catalogId];
+  const iconColorFor = (supplementId) => {
+    if (!supplementId) return undefined;
+    const score = ratingBySupplementId[supplementId];
     if (typeof score !== "number") return undefined;
     return getRatingStyle(score).gradient[0];
   };
@@ -80,14 +85,9 @@ export default function SupplementsScreen() {
             name={s.name}
             subtitle={s.dose ? `${s.dose} · ${s.time}` : s.time}
             route={s.route}
-            iconBackgroundColor={iconColorFor(s.catalogId)}
+            iconBackgroundColor={iconColorFor(s.id)}
             showCheckbox={false}
-            onInfoPress={() =>
-              router.push({
-                pathname: "/modal/supplement-info",
-                params: { id: s.catalogId, name: s.name },
-              })
-            }
+            onInfoPress={() => openTrackedSupplementInfo(s)}
             onPress={() =>
               router.push({
                 pathname: "/modal/supplement",
