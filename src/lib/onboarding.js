@@ -7,6 +7,28 @@ export const ONBOARDING_DRAFT_STORAGE_KEY = "suppro.onboarding.draft.v1";
 export const SIGNUP_PROMPTED_STORAGE_KEY = "suppro.onboarding.signupPrompted.v1";
 export const SIGNUP_COMPLETED_STORAGE_KEY =
   "suppro.onboarding.signupCompleted.v1";
+export const ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY =
+  "suppro.onboarding.premiumCompleted.v1";
+
+const onboardingGateListeners = new Set();
+
+export function notifyOnboardingGateChange() {
+  onboardingGateListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch (error) {
+      console.error("Failed to notify onboarding gate listener", error);
+    }
+  });
+}
+
+export function subscribeOnboardingGateChange(listener) {
+  onboardingGateListeners.add(listener);
+
+  return () => {
+    onboardingGateListeners.delete(listener);
+  };
+}
 
 function parseStoredJson(raw) {
   if (!raw) return null;
@@ -70,6 +92,18 @@ export async function clearOnboardingDraft() {
   await AsyncStorage.removeItem(ONBOARDING_DRAFT_STORAGE_KEY);
 }
 
+export async function hasCompletedOnboardingPremium() {
+  return (
+    (await AsyncStorage.getItem(ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY)) ===
+    "true"
+  );
+}
+
+export async function markOnboardingPremiumComplete() {
+  await AsyncStorage.setItem(ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY, "true");
+  notifyOnboardingGateChange();
+}
+
 export async function getOnboardingGateState() {
   const answers = await getQuestionnaireAnswers();
 
@@ -91,6 +125,10 @@ export async function getOnboardingGateState() {
 
   if (signupCompleted === "true") {
     return "needs_login";
+  }
+
+  if (!(await hasCompletedOnboardingPremium())) {
+    return "needs_paywall";
   }
 
   return "needs_signup";

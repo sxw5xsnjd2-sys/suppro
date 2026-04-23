@@ -29,10 +29,7 @@ import {
   getSupplementLinkedIngredients,
   hasTrackedScanContext,
 } from "@/features/supplements/trackedScanContext";
-import {
-  getCatalogType,
-  CATALOG_TYPES,
-} from "@/features/supplements/catalog";
+import { getCatalogType, CATALOG_TYPES } from "@/features/supplements/catalog";
 import { getSupplementProductLinkedIngredients } from "@src/data/getSupplement";
 
 const todayYYYYMMDD = () => {
@@ -91,8 +88,7 @@ const formatDisplayDate = (iso) => {
   return `${String(d).padStart(2, "0")}-${months[(m || 1) - 1]}`;
 };
 
-const trimString = (value) =>
-  typeof value === "string" ? value.trim() : "";
+const trimString = (value) => (typeof value === "string" ? value.trim() : "");
 
 const daysInMonth = (year, monthIndex) =>
   new Date(year, monthIndex + 1, 0).getDate();
@@ -270,7 +266,9 @@ export default function SupplementModal() {
   } = useLocalSearchParams();
   const isEdit = Boolean(id);
   const requestedScanSessionId = normalizeIntegerParam(scanSessionId);
-  const currentScannerSessionId = useScannerStore((state) => state.scanSessionId);
+  const currentScannerSessionId = useScannerStore(
+    (state) => state.scanSessionId
+  );
 
   const supplement = useSupplementsStore((state) =>
     id ? state.supplements.find((item) => item.id === id) : undefined
@@ -295,8 +293,7 @@ export default function SupplementModal() {
       (TIME_PICKER_HEIGHT - TIME_ITEM_HEIGHT) / 2
   );
 
-  const initialScannedName =
-    typeof initialName === "string" ? initialName : "";
+  const initialScannedName = typeof initialName === "string" ? initialName : "";
   const [name, setName] = useState(supplement?.name ?? initialScannedName);
   const [catalogId, setCatalogId] = useState(supplement?.catalogId ?? null);
   const [catalogType, setCatalogType] = useState(
@@ -357,7 +354,13 @@ export default function SupplementModal() {
       setCatalogId(null);
       setCatalogType(null);
     }
-  }, [initialScannedName, isEdit, newCatalogId, newCatalogName, newCatalogType]);
+  }, [
+    initialScannedName,
+    isEdit,
+    newCatalogId,
+    newCatalogName,
+    newCatalogType,
+  ]);
 
   const handleSave = async () => {
     if (!canSave || saving) return;
@@ -366,7 +369,8 @@ export default function SupplementModal() {
     try {
       const trimmedName = name.trim();
       const resolvedCatalogId = catalogId;
-      const resolvedCatalogType = catalogType ?? getCatalogType(resolvedCatalogId);
+      const resolvedCatalogType =
+        catalogType ?? getCatalogType(resolvedCatalogId);
 
       if (!resolvedCatalogId || !resolvedCatalogType) {
         Alert.alert(
@@ -414,10 +418,15 @@ export default function SupplementModal() {
         payload.scanSource = "scanned_product";
         linkedIngredients = activeScanMatchedIngredients;
         resolvedServingSizeText = activeScanServingSizeText || null;
-      } else if (isEdit && hasTrackedScanContext(supplement) && !selectedCatalogChanged) {
+      } else if (
+        isEdit &&
+        hasTrackedScanContext(supplement) &&
+        !selectedCatalogChanged
+      ) {
         payload.scanSource = supplement.scanSource;
         linkedIngredients = getTrackedScanMatchedIngredients(supplement);
-        resolvedServingSizeText = trimString(supplement?.servingSizeText) || null;
+        resolvedServingSizeText =
+          trimString(supplement?.servingSizeText) || null;
       } else if (resolvedCatalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT) {
         const productLinkedIngredients =
           await getSupplementProductLinkedIngredients(resolvedCatalogId);
@@ -436,9 +445,13 @@ export default function SupplementModal() {
       } else {
         payload.scanSource = null;
       }
-      payload.linkedIngredients = linkedIngredients?.length ? linkedIngredients : null;
+      payload.linkedIngredients = linkedIngredients?.length
+        ? linkedIngredients
+        : null;
       payload.servingSizeText =
-        payload.scanSource === "scanned_product" ? resolvedServingSizeText : null;
+        payload.scanSource === "scanned_product"
+          ? resolvedServingSizeText
+          : null;
 
       if (isEdit && id) {
         updateSupplement(id, payload);
@@ -780,7 +793,7 @@ export default function SupplementModal() {
 
         {isEdit ? (
           <AppSectionCard
-            title="Danger zone"
+            title="Delete"
             subtitle="This action cannot be undone."
             style={styles.sectionCard}
             titleStyle={styles.sectionTitle}

@@ -69,6 +69,19 @@ module.exports = ({ config }) => {
       ...config.extra,
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? "",
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "",
+      revenueCat: {
+        testApiKey:
+          process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY ??
+          "test_IdnZHheVAHVneYsmEjbEJBOomhC",
+        appleApiKey: process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY ?? "",
+        googleApiKey: process.env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY ?? "",
+        webApiKey: process.env.EXPO_PUBLIC_REVENUECAT_WEB_API_KEY ?? "",
+        entitlementId:
+          process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID ??
+          "Suppro Premium",
+        yearlyIdentifier:
+          process.env.EXPO_PUBLIC_REVENUECAT_YEARLY_IDENTIFIER ?? "yearly",
+      },
     },
   };
 };

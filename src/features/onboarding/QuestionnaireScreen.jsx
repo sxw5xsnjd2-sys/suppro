@@ -37,6 +37,7 @@ import {
   clearOnboardingDraft,
   getQuestionnaireAnswers,
   loadOnboardingDraft,
+  notifyOnboardingGateChange,
   QUESTIONNAIRE_STORAGE_KEY,
   saveOnboardingDraft,
   SIGNUP_COMPLETED_STORAGE_KEY,
@@ -1270,6 +1271,8 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
         await AsyncStorage.setItem(SIGNUP_PROMPTED_STORAGE_KEY, "true");
       }
 
+      notifyOnboardingGateChange();
+
       if (standalone && draftMode === "retake") {
         triggerSuccessHaptic();
         router.replace("/");
@@ -1278,14 +1281,15 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
 
       if (!signupCompleted) {
         triggerSuccessHaptic();
+        if (standalone) {
+          router.replace(`/onboarding?mode=${draftMode}&step=paywall`);
+          return;
+        }
+
         const promptAlreadyShown = await AsyncStorage.getItem(
           SIGNUP_PROMPTED_STORAGE_KEY
         );
         await AsyncStorage.setItem(SIGNUP_PROMPTED_STORAGE_KEY, "true");
-        if (standalone) {
-          router.replace(`/onboarding?mode=${draftMode}&step=account`);
-          return;
-        }
         if (promptAlreadyShown) {
           router.replace("/modal/sign-up?source=onboarding");
           return;

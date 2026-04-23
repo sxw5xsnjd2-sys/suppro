@@ -8,11 +8,13 @@ import {
   parseWeightKg,
   QUESTIONNAIRE_STORAGE_KEY,
   ONBOARDING_DRAFT_STORAGE_KEY,
+  ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY,
+  notifyOnboardingGateChange,
   SIGNUP_COMPLETED_STORAGE_KEY,
   SIGNUP_PROMPTED_STORAGE_KEY,
 } from "./onboarding";
 
-export const SUPPLEMENTS_STORAGE_KEY = "supplement-store";
+export const SUPPLEMENTS_STORAGE_KEY_PREFIX = "supplement-store";
 export const HEALTH_STORAGE_KEY = "health-store";
 export const CHAT_STORAGE_KEY = "suppro.chatStore.v1";
 export const HEART_FLAGS_STORAGE_KEY = "supplement-heart-flags";
@@ -219,15 +221,24 @@ export async function signInWithAppleIdentity() {
 
 export async function markAccountCreationComplete() {
   await AsyncStorage.setItem(SIGNUP_COMPLETED_STORAGE_KEY, "true");
+  notifyOnboardingGateChange();
 }
 
 export async function clearLocalPersistedAppData() {
+  const storageKeys = await AsyncStorage.getAllKeys();
+  const supplementStorageKeys = storageKeys.filter(
+    (key) =>
+      key === SUPPLEMENTS_STORAGE_KEY_PREFIX ||
+      key.startsWith(`${SUPPLEMENTS_STORAGE_KEY_PREFIX}:`)
+  );
+
   await AsyncStorage.multiRemove([
     QUESTIONNAIRE_STORAGE_KEY,
     ONBOARDING_DRAFT_STORAGE_KEY,
+    ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY,
     SIGNUP_PROMPTED_STORAGE_KEY,
     SIGNUP_COMPLETED_STORAGE_KEY,
-    SUPPLEMENTS_STORAGE_KEY,
+    ...supplementStorageKeys,
     HEALTH_STORAGE_KEY,
     CHAT_STORAGE_KEY,
     HEART_FLAGS_STORAGE_KEY,

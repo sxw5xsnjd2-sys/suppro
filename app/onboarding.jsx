@@ -4,15 +4,29 @@ import { Stack, useLocalSearchParams } from "expo-router";
 import QuestionnaireScreen from "@src/features/onboarding/QuestionnaireScreen";
 import { SignUpScreen } from "./(modals)/modal/sign-up";
 
+function OnboardingPaywallStep() {
+  const { RevenueCatProvider } = require("@/features/subscriptions/RevenueCatProvider");
+  const OnboardingPaywallScreen =
+    require("@src/features/onboarding/OnboardingPaywallScreen").default;
+
+  return (
+    <RevenueCatProvider>
+      <OnboardingPaywallScreen />
+    </RevenueCatProvider>
+  );
+}
+
 export default function OnboardingScreen() {
   const params = useLocalSearchParams();
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
   const stepParam = Array.isArray(params.step) ? params.step[0] : params.step;
   const mode = modeParam === "retake" ? "retake" : "first_run";
   const isStrictFirstRun = mode === "first_run";
+  const locksHardwareBack =
+    isStrictFirstRun && (stepParam === "account" || stepParam === "paywall");
 
   useEffect(() => {
-    if (!isStrictFirstRun || stepParam !== "account") return undefined;
+    if (!locksHardwareBack) return undefined;
 
     const subscription = BackHandler.addEventListener(
       "hardwareBackPress",
@@ -22,7 +36,18 @@ export default function OnboardingScreen() {
     return () => {
       subscription.remove();
     };
-  }, [isStrictFirstRun, stepParam]);
+  }, [locksHardwareBack]);
+
+  if (stepParam === "paywall") {
+    return (
+      <>
+        <Stack.Screen
+          options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
+        />
+        <OnboardingPaywallStep />
+      </>
+    );
+  }
 
   if (stepParam === "account") {
     return (

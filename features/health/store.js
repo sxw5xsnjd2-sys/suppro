@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   APPLE_HEALTH_ENTRY_SOURCE,
@@ -13,6 +13,10 @@ import { normalizeHealthEntry } from "./selectors";
 
 const HEALTH_STORE_VERSION = 2;
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function normalizeConnection(value) {
   return ["disconnected", "connecting", "connected", "error"].includes(value)
     ? value
@@ -22,7 +26,7 @@ function normalizeConnection(value) {
 function normalizeSourceSettings(input) {
   const next = {};
 
-  Object.entries(input ?? {}).forEach(([metricKey, source]) => {
+  Object.entries(isPlainObject(input) ? input : {}).forEach(([metricKey, source]) => {
     if (
       APPLE_HEALTH_SUPPORTED_METRIC_KEYS.includes(metricKey) &&
       source === APPLE_HEALTH_ENTRY_SOURCE
@@ -49,8 +53,9 @@ function normalizeStoredEntry(entry) {
 
 function uniqueEntries(entries) {
   const deduped = new Map();
+  const sourceEntries = Array.isArray(entries) ? entries : [];
 
-  (entries ?? []).forEach((entry) => {
+  sourceEntries.forEach((entry) => {
     const normalized = normalizeStoredEntry(entry);
     if (!normalized) return;
 
@@ -120,7 +125,7 @@ function buildInitialState() {
 
 function migrateHealthState(persistedState) {
   const baseState = buildInitialState();
-  const nextState = persistedState && typeof persistedState === "object"
+  const nextState = isPlainObject(persistedState)
     ? persistedState
     : {};
 
@@ -141,7 +146,7 @@ function migrateHealthState(persistedState) {
 
 function addManualEntry(entries, entry) {
   const nextEntry = normalizeStoredEntry({
-    ...entry,
+    ...(isPlainObject(entry) ? entry : {}),
     source: MANUAL_ENTRY_SOURCE,
   });
   if (!nextEntry) return uniqueEntries(entries);
@@ -155,15 +160,15 @@ function mergeAppleHealthEntries(state, payload) {
 
   const dateThreshold =
     typeof payload?.sinceDate === "string" ? payload.sinceDate : null;
-  const nextAppleEntries = (payload?.entries ?? []).map((entry) => ({
-    ...entry,
+  const nextAppleEntries = (Array.isArray(payload?.entries) ? payload.entries : []).map((entry) => ({
+    ...(isPlainObject(entry) ? entry : {}),
     source: APPLE_HEALTH_ENTRY_SOURCE,
     syncedAt: payload?.syncedAt || entry?.syncedAt || null,
   }));
 
   const syncedMetricKeySet = new Set(syncedMetricKeys);
 
-  const preservedEntries = (state.entries ?? []).filter((entry) => {
+  const preservedEntries = (Array.isArray(state.entries) ? state.entries : []).filter((entry) => {
     const normalized = normalizeStoredEntry(entry);
     if (!normalized) return false;
 
@@ -174,9 +179,9 @@ function mergeAppleHealthEntries(state, payload) {
     return !(isSyncedMetric && isAppleEntry && isWithinWindow);
   });
 
-  const nextSourceSettings = {
-    ...state.sourceSettings,
-  };
+  const nextSourceSettings = isPlainObject(state.sourceSettings)
+    ? { ...state.sourceSettings }
+    : {};
 
   syncedMetricKeys.forEach((metricKey) => {
     nextSourceSettings[metricKey] = APPLE_HEALTH_ENTRY_SOURCE;
@@ -192,6 +197,52 @@ function mergeAppleHealthEntries(state, payload) {
       typeof payload?.syncedAt === "string" ? payload.syncedAt : state.lastSyncedAt,
   };
 }
+
+function sanitizeHealthStoreValue(parsed) {
+  if (!isPlainObject(parsed) || !isPlainObject(parsed.state)) return null;
+
+  const state = {
+    entries: Array.isArray(parsed.state.entries) ? parsed.state.entries : [],
+    metrics: Array.isArray(parsed.state.metrics) ? parsed.state.metrics : DEFAULT_METRICS,
+    connection: normalizeConnection(parsed.state.connection),
+    connectionError:
+      typeof parsed.state.connectionError === "string"
+        ? parsed.state.connectionError
+        : "",
+    sourceSettings: isPlainObject(parsed.state.sourceSettings)
+      ? parsed.state.sourceSettings
+      : {},
+    lastSyncedAt:
+      typeof parsed.state.lastSyncedAt === "string"
+        ? parsed.state.lastSyncedAt
+        : null,
+  };
+
+  const value = { state };
+  if (typeof parsed.version === "number") {
+    value.version = parsed.version;
+  }
+  return value;
+}
+
+const safeHealthStorage = {
+  getItem: async (key) => {
+    try {
+      const raw = await AsyncStorage.getItem(key);
+      if (!raw) return null;
+      return sanitizeHealthStoreValue(JSON.parse(raw));
+    } catch (error) {
+      console.error("Failed to load health store", error);
+      return null;
+    }
+  },
+  setItem: async (key, value) => {
+    await AsyncStorage.setItem(key, JSON.stringify(value));
+  },
+  removeItem: async (key) => {
+    await AsyncStorage.removeItem(key);
+  },
+};
 
 export const useHealthStore = create()(
   persist(
@@ -241,7 +292,9 @@ export const useHealthStore = create()(
 
       deleteMetric: (key) =>
         set((state) => {
-          const nextSourceSettings = { ...(state.sourceSettings ?? {}) };
+          const nextSourceSettings = isPlainObject(state.sourceSettings)
+            ? { ...state.sourceSettings }
+            : {};
           delete nextSourceSettings[key];
 
           return {
@@ -272,7 +325,7 @@ export const useHealthStore = create()(
     {
       name: "health-store",
       version: HEALTH_STORE_VERSION,
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: safeHealthStorage,
       migrate: async (persistedState) => migrateHealthState(persistedState),
     }
   )
