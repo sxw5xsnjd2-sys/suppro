@@ -8,12 +8,9 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { router } from "expo-router";
 import { AppButton, AppHeader } from "@/components/common/ui";
 import { appTheme, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
-import StatsIcon from "@/assets/icons/tab/statistics.svg";
-import AccountIcon from "@/assets/icons/profile/account.svg";
 
 const PAGE_SIDE_PADDING = appTheme.screen.sidePadding;
 const PILL_HEIGHT = appTheme.header.progressPillHeight;
@@ -219,41 +216,6 @@ export function HomeHeader({ onLayout }) {
   return (
     <View style={styles.wrapper} onLayout={onLayout}>
       <AppHeader
-        leftSlot={
-          <AppButton
-            onPress={() => router.push("/stats")}
-            variant="overlay"
-            size="icon"
-            accessibilityLabel="Open stats"
-          >
-            <StatsIcon
-              width={20}
-              height={20}
-              color="#141414"
-              fill="#141414"
-              stroke="#141414"
-              strokeWidth={0.55}
-            />
-          </AppButton>
-        }
-        rightSlot={
-          <AppButton
-            onPress={() => router.push("/profile")}
-            variant="overlay"
-            size="icon"
-            accessibilityLabel="Open profile"
-            style={styles.profileButton}
-          >
-            <AccountIcon
-              width={18}
-              height={18}
-              color="#141414"
-              fill="#141414"
-              stroke="#141414"
-              strokeWidth={0.55}
-            />
-          </AppButton>
-        }
         title="SUPPRO"
         titleStyle={styles.title}
         titleAccessory={
@@ -334,10 +296,6 @@ export function HomeHeader({ onLayout }) {
 const styles = StyleSheet.create({
   wrapper: {
     backgroundColor: "transparent",
-  },
-  profileButton: {
-    borderWidth: 1,
-    borderColor: appTheme.colors.borderSubtle,
   },
   selectorSection: {
     paddingTop: 2,

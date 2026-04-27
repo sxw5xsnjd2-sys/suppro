@@ -8,6 +8,8 @@ export const typography = {
         heading: "Exo2_700Bold",
         headingSemiBold: "Exo2_600SemiBold",
         headingBlack: "Exo2_900Black",
+        mono: "GeistMono_400Regular",
+        monoMedium: "GeistMono_500Medium",
     },
     heading: {
         fontSize: 30,

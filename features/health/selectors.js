@@ -56,13 +56,20 @@ function getCachedEffectiveEntries(entries, sourceSettings, metricKey) {
     .map((entry) => normalizeHealthEntry(entry))
     .filter(Boolean);
 
+  const manualEntryDates = new Set(
+    normalizedEntries
+      .filter((entry) => entry.source === MANUAL_ENTRY_SOURCE)
+      .map((entry) => `${entry.type}:${entry.date}`)
+  );
+
   const result = normalizedEntries.filter((entry) => {
     if (metricKey && entry.type !== metricKey) return false;
 
     const metricSource = getMetricSource({ sourceSettings }, entry.type);
 
     if (metricSource === APPLE_HEALTH_ENTRY_SOURCE) {
-      return entry.source === APPLE_HEALTH_ENTRY_SOURCE;
+      if (entry.source === MANUAL_ENTRY_SOURCE) return true;
+      return !manualEntryDates.has(`${entry.type}:${entry.date}`);
     }
 
     return entry.source !== APPLE_HEALTH_ENTRY_SOURCE;

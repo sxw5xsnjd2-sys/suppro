@@ -8,7 +8,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { AppButton, PrimaryCard } from "@/components/common/ui";
 import { leaveScannerScreen } from "@/features/scanner/navigation";
 import { appTheme, spacing, typography } from "@/theme";
@@ -42,6 +42,7 @@ const cameraModuleError = cameraModule.error ?? null;
 const BARCODE_TYPES = ["ean13", "ean8", "upc_a", "upc_e", "code128"];
 
 export default function ScannerScreen() {
+  const params = useLocalSearchParams();
   const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
   const [hasScanned, setHasScanned] = useState(false);
@@ -53,6 +54,12 @@ export default function ScannerScreen() {
   const scannerStatus = useScannerStore((state) => state.status);
   const scanSessionId = useScannerStore((state) => state.scanSessionId);
   const scannerError = useScannerStore((state) => state.error);
+  const sourceParam = Array.isArray(params.source) ? params.source[0] : params.source;
+  const originParam = Array.isArray(params.origin) ? params.origin[0] : params.origin;
+  const scannerOrigin =
+    sourceParam === "onboarding" || originParam === "onboarding"
+      ? "onboarding"
+      : undefined;
 
   useEffect(() => {
     if (!isFocused) return;
@@ -109,6 +116,7 @@ export default function ScannerScreen() {
       pathname: "/scanner/photo-rescue",
       params: {
         scanSessionId: String(scanSessionId),
+        origin: scannerOrigin,
       },
     });
   };
@@ -141,6 +149,7 @@ export default function ScannerScreen() {
       pathname: "/modal/supplement-info",
       params: {
         source: "scanned",
+        origin: scannerOrigin,
         scanSessionId: String(nextScanSessionId),
         name:
           nextScanState.product?.productName ||

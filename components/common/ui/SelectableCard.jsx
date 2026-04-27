@@ -1,6 +1,7 @@
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { appTheme, typography } from "@/theme";
+import { LinearGradient } from "expo-linear-gradient";
+import { appTheme, shadows, typography } from "@/theme";
 import { PrimaryCard } from "./PrimaryCard";
 
 export function SelectableCard({
@@ -32,6 +33,15 @@ export function SelectableCard({
       ]}
       {...rest}
     >
+      {selected ? (
+        <LinearGradient
+          pointerEvents="none"
+          colors={appTheme.tabBar.fabGradient}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={styles.selectedFill}
+        />
+      ) : null}
       <View style={[styles.content, contentStyle]}>
         {children ? (
           children
@@ -60,17 +70,24 @@ const styles = StyleSheet.create({
     borderColor: appTheme.colors.borderSubtle,
   },
   cardSelected: {
-    backgroundColor: appTheme.colors.surfaceAccent,
+    backgroundColor: "transparent",
     borderColor: "rgba(20,20,20,0.16)",
+    ...shadows.card,
   },
   cardDisabled: {
     opacity: 0.45,
   },
   content: {
+    position: "relative",
+    zIndex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
+  },
+  selectedFill: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: appTheme.card.radius,
   },
   copy: {
     flex: 1,

@@ -27,22 +27,6 @@ export async function searchSupplementCatalog(query) {
         console.error("supplement_products_master search failed", supplementProducts.error);
     }
 
-    const productResults = (supplementProducts.data ?? []).map((row) => ({
-        id: createSupplementProductCatalogId(row.product_id),
-        name: row.display_name,
-        catalogType: CATALOG_TYPES.SUPPLEMENT_PRODUCT,
-    }));
-
-    if (productResults.length > 0) {
-        return [
-            {
-                key: "supplements",
-                title: "Supplements",
-                data: productResults,
-            },
-        ];
-    }
-
     return [
         {
             key: "active-ingredients",
@@ -51,6 +35,15 @@ export async function searchSupplementCatalog(query) {
                 id: row.id,
                 name: row.name,
                 catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
+            })),
+        },
+        {
+            key: "supplements",
+            title: "Supplements",
+            data: (supplementProducts.data ?? []).map((row) => ({
+                id: createSupplementProductCatalogId(row.product_id),
+                name: row.display_name,
+                catalogType: CATALOG_TYPES.SUPPLEMENT_PRODUCT,
             })),
         },
     ].filter((section) => section.data.length > 0);

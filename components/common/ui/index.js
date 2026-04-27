@@ -5,6 +5,7 @@ export * from "./AppHeader";
 export * from "./AppModalSurface";
 export * from "./AppSectionCard";
 export * from "./AppTextInput";
+export * from "./ChatFloatingButton";
 export * from "./EmptyStateCard";
 export * from "./EvidenceDots";
 export * from "./GradientHeader";

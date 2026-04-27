@@ -140,6 +140,43 @@ test("keeps per-tablet and per-serving amounts directly comparable", () => {
   assert.equal(serving.adjustedEvidenceScore, 77);
 });
 
+test("converts vitamin D micrograms to IU when comparing doses", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "vitamin-d",
+      evidenceScore: 86,
+      minValue: 200,
+      unit: "IU",
+    }),
+  ]);
+
+  const [ingredient] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "vitamin-d",
+        catalogName: "Vitamin D",
+        ingredientName: "Vitamin D3",
+        ingredientRaw: "Vitamin D3",
+        dosageValue: 5,
+        dosageUnit: "ug",
+        amountBasis: "per_serving",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.deepEqual(ingredient.normalizedServingDose, {
+    value: 200,
+    unit: "IU",
+    amountBasis: "per_serving",
+    multiplier: 1,
+    convertedFromUnit: "mcg",
+  });
+  assert.equal(ingredient.doseComparisonStatus, "within_target_range");
+  assert.equal(ingredient.doseStatusLabel, "Meets target dose");
+  assert.equal(ingredient.adjustedEvidenceScore, 86);
+});
+
 test("keeps slightly under-target products in the mid/high 80s via the generic fallback profile", () => {
   const supplementsByCatalogId = new Map([
     createSupplement({

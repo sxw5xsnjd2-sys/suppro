@@ -10,11 +10,13 @@ export function EmptyStateCard({
   actionLabel,
   onActionPress,
   style,
+  titleStyle,
+  descriptionStyle,
 }) {
   return (
     <PrimaryCard style={[styles.card, style]}>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.description}>{description}</Text>
+      <Text style={[styles.title, titleStyle]}>{title}</Text>
+      <Text style={[styles.description, descriptionStyle]}>{description}</Text>
       {actionLabel && onActionPress ? (
         <AppButton
           label={actionLabel}

@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
@@ -6,6 +12,7 @@ import { AppButton, AppHeader } from "@/components/common/ui";
 import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
 import { appTheme, spacing, typography } from "@/theme";
 import { markOnboardingPremiumComplete } from "@src/lib/onboarding";
+import { supabase } from "@src/lib/supabase";
 
 export default function OnboardingPaywallScreen() {
   const {
@@ -20,12 +27,14 @@ export default function OnboardingPaywallScreen() {
     isPresentingPaywall,
     presentPremiumPaywall,
     restorePurchases,
+    currentOffering,
   } = useRevenueCat();
 
   const [localMessage, setLocalMessage] = useState("");
   const isCompletingRef = useRef(false);
 
-  const isBusy = isLoading || isRefreshing || isRestoring || isPresentingPaywall;
+  const isBusy =
+    isLoading || isRefreshing || isRestoring || isPresentingPaywall;
   const canUseRevenueCat = isReady && !configurationError;
 
   const statusMessage = useMemo(() => {
@@ -70,27 +79,28 @@ export default function OnboardingPaywallScreen() {
     isCompletingRef.current = true;
     try {
       await markOnboardingPremiumComplete();
-      router.replace("/onboarding?mode=first_run&step=account");
+      router.replace("/login?mode=create");
     } finally {
       isCompletingRef.current = false;
     }
   }, []);
 
   const openPaywall = useCallback(async () => {
-    if (!canUseRevenueCat || isBusy) return;
+    if (!canUseRevenueCat || isBusy) return false;
 
     setLocalMessage("");
+
     const unlocked = await presentPremiumPaywall({ ifNeeded: true });
 
     if (unlocked) {
       await continueToAccount();
-      return;
+      return true;
     }
 
-    setLocalMessage(
-      "Premium is required before account setup. Unlock Premium or restore an active subscription to continue."
-    );
-  }, [canUseRevenueCat, continueToAccount, isBusy, presentPremiumPaywall]);
+    // 👇 user closed paywall
+    router.replace("/login");
+    return false;
+  }, [canUseRevenueCat, isBusy, presentPremiumPaywall, continueToAccount]);
 
   const handleRestorePurchases = useCallback(async () => {
     if (!canUseRevenueCat || isBusy) return;
@@ -108,12 +118,6 @@ export default function OnboardingPaywallScreen() {
     );
   }, [canUseRevenueCat, continueToAccount, isBusy, restorePurchases]);
 
-  useEffect(() => {
-    if (!premiumActive) return;
-
-    continueToAccount();
-  }, [continueToAccount, premiumActive]);
-
   const restoreLabel = isRestoring ? "Restoring..." : "Restore purchases";
   const needsFallbackCopy = Boolean(
     configurationError || actionError || actionMessage || localMessage
@@ -122,51 +126,51 @@ export default function OnboardingPaywallScreen() {
   const showStartSubscription = canUseRevenueCat && !premiumActive;
   const canRestore = canUseRevenueCat && !isBusy && needsFallbackCopy;
 
-  return (
-    <BackdropScreen
-      header={
-        <AppHeader
-          insetPreset="screen"
-          title="SUPPRO PREMIUM"
-          titleStyle={styles.headerTitle}
-        />
+  const hasOpenedRef = useRef(false);
+
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null);
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (
+      !isReady ||
+      !canUseRevenueCat ||
+      premiumActive ||
+      hasOpenedRef.current ||
+      !currentOffering
+    )
+      return;
+
+    hasOpenedRef.current = true;
+
+    const run = async () => {
+      const unlocked = await presentPremiumPaywall({ ifNeeded: true });
+
+      if (unlocked) {
+        await continueToAccount();
+      } else {
+        router.replace("/login?mode=login");
       }
-      scrollable={false}
-    >
-      <View style={styles.centerContent}>
-        {!needsFallbackCopy && isBusy ? (
-          <ActivityIndicator color={appTheme.colors.textStrong} />
-        ) : null}
+    };
 
-        <Text style={styles.statusText}>{statusMessage}</Text>
+    run();
+  }, [isReady, canUseRevenueCat, premiumActive, currentOffering]);
 
-        {actionMessage && !localMessage ? (
-          <Text style={styles.successText}>{actionMessage}</Text>
-        ) : null}
-
-        {localMessage ? <Text style={styles.noteText}>{localMessage}</Text> : null}
-
-        {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
-
-        {showStartSubscription ? (
-          <AppButton
-            label="start your subscription"
-            onPress={openPaywall}
-            disabled={!canStartSubscription}
-            variant="primary"
-            style={styles.actionButton}
-          />
-        ) : null}
-
-        {canRestore ? (
-          <AppButton
-            label={restoreLabel}
-            onPress={handleRestorePurchases}
-            disabled={!canRestore}
-            variant="overlay"
-            style={styles.restoreButton}
-          />
-        ) : null}
+  return (
+    <BackdropScreen scrollable={false}>
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator />
       </View>
     </BackdropScreen>
   );

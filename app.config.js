@@ -13,7 +13,9 @@ module.exports = ({ config }) => {
       : plugin === "expo-apple-authentication"
   );
   const hasCameraPlugin = existingPlugins.some((plugin) =>
-    Array.isArray(plugin) ? plugin[0] === "expo-camera" : plugin === "expo-camera"
+    Array.isArray(plugin)
+      ? plugin[0] === "expo-camera"
+      : plugin === "expo-camera"
   );
 
   const plugins = [...existingPlugins];
@@ -70,17 +72,13 @@ module.exports = ({ config }) => {
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? "",
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "",
       revenueCat: {
-        testApiKey:
-          process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY ??
-          "test_IdnZHheVAHVneYsmEjbEJBOomhC",
         appleApiKey: process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY ?? "",
         googleApiKey: process.env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY ?? "",
         webApiKey: process.env.EXPO_PUBLIC_REVENUECAT_WEB_API_KEY ?? "",
         entitlementId:
-          process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID ??
-          "Suppro Premium",
+          process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID ?? "Suppro Premium",
         yearlyIdentifier:
-          process.env.EXPO_PUBLIC_REVENUECAT_YEARLY_IDENTIFIER ?? "yearly",
+          process.env.EXPO_PUBLIC_REVENUECAT_YEARLY_IDENTIFIER ?? "$rc_annual",
       },
     },
   };

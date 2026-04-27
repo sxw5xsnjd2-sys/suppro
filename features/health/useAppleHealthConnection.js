@@ -91,7 +91,8 @@ export function useAppleHealthConnection({ showAlerts = true } = {}) {
     [sourceSettings]
   );
   const isAppleHealthConnected =
-    connection === "connected" || hasLinkedAppleHealthSource;
+    connection === "connected" ||
+    (connection !== "error" && hasLinkedAppleHealthSource);
 
   const checkAppleHealthAvailability = useCallback(async () => {
     if (!isIOS) return false;

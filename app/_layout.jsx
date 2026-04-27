@@ -22,6 +22,11 @@ import {
   Exo2_900Black,
   useFonts as useExo2Fonts,
 } from "@expo-google-fonts/exo-2";
+import {
+  GeistMono_400Regular,
+  GeistMono_500Medium,
+  useFonts as useGeistMonoFonts,
+} from "@expo-google-fonts/geist-mono";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { syncSupplementsStoreAccountScope } from "@/features/supplements/store";
 import {
@@ -72,7 +77,20 @@ function RootNavigator() {
   const isLoginRoute = segments[0] === "login";
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
   const stepParam = Array.isArray(params.step) ? params.step[0] : params.step;
+  const sourceParam = Array.isArray(params.source)
+    ? params.source[0]
+    : params.source;
+  const originParam = Array.isArray(params.origin)
+    ? params.origin[0]
+    : params.origin;
   const isRetakeOnboarding = isOnboardingRoute && modeParam === "retake";
+  const isBuildingOnboardingRoute =
+    isOnboardingRoute && stepParam === "building";
+  const isOnboardingScannerFlow =
+    (segments[0] === "scanner" &&
+      (sourceParam === "onboarding" || originParam === "onboarding")) ||
+    ((segments[0] === "(modals)" || segments[0] === "modal") &&
+      originParam === "onboarding");
 
   useEffect(() => {
     let mounted = true;
@@ -128,8 +146,8 @@ function RootNavigator() {
     const gatedRoutes = {
       needs_questions: "/onboarding?mode=first_run",
       needs_paywall: "/onboarding?mode=first_run&step=paywall",
-      needs_signup: "/onboarding?mode=first_run&step=account",
-      needs_login: "/login",
+      needs_signup: "/login?mode=create",
+      needs_login: "/login?mode=login",
     };
 
     return gatedRoutes[gateState];
@@ -146,28 +164,37 @@ function RootNavigator() {
       return isLoginRoute;
     }
 
-    if (!isOnboardingRoute || isRetakeOnboarding) {
-      return false;
-    }
-
     if (gateState === "needs_questions") {
-      return !stepParam;
-    }
-
-    if (gateState === "needs_paywall") {
-      return stepParam === "paywall";
+      return (
+        (isOnboardingRoute &&
+          !isRetakeOnboarding &&
+          (!stepParam || isBuildingOnboardingRoute)) ||
+        isOnboardingScannerFlow ||
+        (isLoginRoute && modeParam === "login")
+      );
     }
 
     if (gateState === "needs_signup") {
-      return stepParam === "account";
+      return isLoginRoute && modeParam !== "login";
+    }
+
+    if (!isOnboardingRoute || isRetakeOnboarding) {
+      return isOnboardingScannerFlow;
+    }
+
+    if (gateState === "needs_paywall") {
+      return stepParam === "paywall" || isBuildingOnboardingRoute;
     }
 
     return false;
   }, [
     gateState,
+    isBuildingOnboardingRoute,
     isLoginRoute,
     isOnboardingRoute,
+    isOnboardingScannerFlow,
     isRetakeOnboarding,
+    modeParam,
     stepParam,
   ]);
 
@@ -231,13 +258,10 @@ function RootNavigator() {
         />
         <Stack.Screen name="scanner" options={{ headerShown: false }} />
         <Stack.Screen name="benefit-ranking" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="supplement-rankings"
-          options={{ headerShown: false }}
-        />
         <Stack.Screen name="account" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
         <Stack.Screen name="favourites" options={{ headerShown: false }} />
+        <Stack.Screen name="health" options={{ headerShown: false }} />
       </Stack>
       {isRedirectingToAllowedRoute ? <LoadingScreen overlay /> : undefined}
     </>
@@ -260,8 +284,12 @@ export default function RootLayout() {
     Exo2_700Bold,
     Exo2_900Black,
   });
+  const [geistMonoLoaded] = useGeistMonoFonts({
+    GeistMono_400Regular,
+    GeistMono_500Medium,
+  });
 
-  const fontsLoaded = exoLoaded && exo2Loaded;
+  const fontsLoaded = exoLoaded && exo2Loaded && geistMonoLoaded;
 
   useEffect(() => {
     if (!fontsLoaded) return;

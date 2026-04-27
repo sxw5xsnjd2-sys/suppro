@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -8,893 +8,583 @@ import {
   TextInput,
   View,
 } from "react-native";
-import Slider from "@react-native-community/slider";
-import { AppButton, AppModalSurface, SectionTitle } from "@/components/common/ui";
-import { appTheme, spacing, typography } from "@/theme";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Path, Circle } from "react-native-svg";
+import { appTheme, typography } from "@/theme";
 import { useHealthStore } from "@/features/health/store";
 import {
-  MANUAL_ENTRY_SOURCE,
-  BLOOD_PRESSURE_METRIC_KEY,
-  CUSTOM_METRIC_KEY,
-  CUSTOM_TRACKER_OPTIONS,
+  INPUT_ARCHETYPES,
   PRESET_METRICS,
-  PRESET_METRICS_BY_KEY,
-  TRACKER_TYPES,
-  defaultEntryValue,
-  isBloodPressureMetric,
-  isValidBloodPressureValue,
-  makeCustomMetric,
   normalizeMetric,
-  normalizeBloodPressureValue,
-  normalizeNumericValue,
-  parseNumericText,
-  toMetricKey,
 } from "@/features/health/metricDefinitions";
+import { GROUP_ACCENTS } from "@/features/health/groupAccents";
+import { MetricGlyph } from "./MetricGlyph";
 
-function todayYYYYMMDD() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+const GROUP_ORDER = [
+  "Recovery",
+  "Training",
+  "Daily wellbeing",
+  "Cognition",
+  "Load",
+  "Symptoms",
+  "Hormones",
+  "Measurements",
+];
+
+function archetypeLabel(inputArchetype) {
+  if (inputArchetype === INPUT_ARCHETYPES.DURATION) return "Duration";
+  if (inputArchetype === INPUT_ARCHETYPES.SCORE_1_10) return "Score";
+  if (inputArchetype === INPUT_ARCHETYPES.PRESSURE_1_10) return "Pressure";
+  if (inputArchetype === INPUT_ARCHETYPES.SEVERITY_0_10) return "Severity";
+  if (inputArchetype === INPUT_ARCHETYPES.NUMERIC_FREE) return "Measurement";
+  return "Metric";
 }
 
-function trackerLabelFor(metric) {
-  if (!metric) return "Value";
-  if (isBloodPressureMetric(metric)) return "Today's blood pressure";
-  if (metric.trackerType === TRACKER_TYPES.SCALE) return "Today's score";
-  if (metric.trackerType === TRACKER_TYPES.TEXT) return "Today's entry";
-  return "Today's value";
+function AppleHealthBadge() {
+  return (
+    <View style={styles.healthBadge}>
+      <Svg width={9} height={9} viewBox="0 0 16 16">
+        <Path
+          d="M8 14S2 10 2 6.5C2 4.6 3.4 3 5.2 3 6.4 3 7.4 3.6 8 4.6 8.6 3.6 9.6 3 10.8 3 12.6 3 14 4.6 14 6.5 14 10 8 14 8 14z"
+          fill="#E83E5C"
+        />
+      </Svg>
+      <Text style={styles.healthBadgeText}>HEALTH</Text>
+    </View>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <Svg width={16} height={16} viewBox="0 0 16 16" fill="none">
+      <Circle cx="7" cy="7" r="4.5" stroke={appTheme.input.icon} strokeWidth={1.8} />
+      <Path d="M10.5 10.5L13.5 13.5" stroke={appTheme.input.icon} strokeWidth={1.8} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+function GroupHeader({ name, on, total }) {
+  const accent = GROUP_ACCENTS[name] ?? GROUP_ACCENTS.Measurements;
+  return (
+    <View style={styles.groupHeader}>
+      <View style={styles.groupHeaderLeft}>
+        <View style={[styles.groupDot, { backgroundColor: accent.tint }]} />
+        <Text style={styles.groupName}>{name.toUpperCase()}</Text>
+      </View>
+      <Text style={styles.groupCount}>{on}/{total}</Text>
+    </View>
+  );
+}
+
+function MetricPill({ enabled }) {
+  return (
+    <View style={[styles.pill, enabled ? styles.pillEnabled : styles.pillDisabled]}>
+      {enabled && (
+        <Svg width={11} height={11} viewBox="0 0 16 16" fill="none">
+          <Path
+            d="M3 8.5l3 3 7-7"
+            stroke="#fff"
+            strokeWidth={2.4}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </Svg>
+      )}
+      <Text style={[styles.pillText, enabled ? styles.pillTextEnabled : styles.pillTextDisabled]}>
+        {enabled ? "On" : "Add"}
+      </Text>
+    </View>
+  );
+}
+
+function MetricRow({ metric, enabled, onToggle }) {
+  const accent = GROUP_ACCENTS[metric.group] ?? GROUP_ACCENTS.Measurements;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={enabled ? { selected: true } : {}}
+      onPress={onToggle}
+      style={({ pressed }) => [
+        styles.metricRow,
+        enabled
+          ? [styles.metricRowEnabled, { borderColor: appTheme.colors.borderPill }]
+          : styles.metricRowDisabled,
+        pressed && styles.metricRowPressed,
+      ]}
+    >
+      {/* Icon chip */}
+      <View
+        style={[
+          styles.iconChip,
+          { backgroundColor: enabled ? appTheme.colors.iconSurface : accent.soft },
+        ]}
+      >
+        <MetricGlyph metricKey={metric.key} size={18} color={accent.tint} />
+      </View>
+
+      {/* Copy */}
+      <View style={styles.metricCopy}>
+        <View style={styles.labelRow}>
+          <Text style={styles.metricLabel}>{metric.label}</Text>
+          {metric.appleHealthSupported ? <AppleHealthBadge /> : null}
+        </View>
+        <Text numberOfLines={2} style={styles.metricDescription}>
+          {metric.description}
+        </Text>
+        <View style={styles.archetypeRow}>
+          <View style={[styles.archetypeDot, { backgroundColor: accent.tint }]} />
+          <Text style={[styles.archetypeLabel, { color: accent.tint }]}>
+            {archetypeLabel(metric.inputArchetype).toUpperCase()}
+          </Text>
+        </View>
+      </View>
+
+      {/* Toggle pill — separate tap target */}
+      <Pressable onPress={onToggle} hitSlop={8} style={styles.pillWrapper}>
+        <MetricPill enabled={enabled} />
+      </Pressable>
+    </Pressable>
+  );
 }
 
 export function AddMetricModal({ visible, onClose }) {
+  const insets = useSafeAreaInsets();
   const addMetric = useHealthStore((s) => s.addMetric);
-  const addEntry = useHealthStore((s) => s.addEntry);
+  const enableMetric = useHealthStore((s) => s.enableMetric);
+  const disableMetric = useHealthStore((s) => s.disableMetric);
   const metrics = useHealthStore((s) => s.metrics);
 
-  const existingMetricKeys = useMemo(
-    () =>
-      new Set(
-        (metrics ?? [])
-          .map((metric) => metric?.key)
-          .filter(Boolean)
-      ),
-    [metrics]
+  const [query, setQuery] = useState("");
+  const existingByKey = useMemo(() => {
+    const map = new Map();
+    (metrics ?? [])
+      .map((m) => normalizeMetric(m))
+      .filter(Boolean)
+      .forEach((m) => map.set(m.key, m));
+    return map;
+  }, [metrics]);
+
+  const enabledCount = useMemo(
+    () => Array.from(existingByKey.values()).filter((x) => x.enabled).length,
+    [existingByKey]
   );
 
-  const firstAvailablePreset = useMemo(
-    () => PRESET_METRICS.find((metric) => !existingMetricKeys.has(metric.key)),
-    [existingMetricKeys]
-  );
-
-  const [selectedMetricKey, setSelectedMetricKey] = useState(
-    firstAvailablePreset?.key ?? CUSTOM_METRIC_KEY
-  );
-  const [metricName, setMetricName] = useState("");
-  const [customTrackerType, setCustomTrackerType] = useState(
-    TRACKER_TYPES.SCALE
-  );
-
-  const [metricDropdownOpen, setMetricDropdownOpen] = useState(false);
-  const [trackerDropdownOpen, setTrackerDropdownOpen] = useState(false);
-
-  const [scaleValue, setScaleValue] = useState(5);
-  const [numericInput, setNumericInput] = useState("");
-  const [bpSystolicInput, setBpSystolicInput] = useState("");
-  const [bpDiastolicInput, setBpDiastolicInput] = useState("");
-  const [textInput, setTextInput] = useState("");
-  const [error, setError] = useState("");
-
-  const isCustomMetric = selectedMetricKey === CUSTOM_METRIC_KEY;
-  const customMetricKey = toMetricKey(metricName);
-  const customNameConflict =
-    isCustomMetric &&
-    customMetricKey &&
-    existingMetricKeys.has(customMetricKey);
-
-  const selectedMetric = useMemo(() => {
-    if (isCustomMetric) {
-      return normalizeMetric({
-        key: customMetricKey || "custom_metric",
-        label: metricName.trim() || "Custom metric",
-        trackerType: customTrackerType,
-        enabled: true,
-      });
-    }
-    return normalizeMetric(PRESET_METRICS_BY_KEY[selectedMetricKey]);
-  }, [
-    isCustomMetric,
-    selectedMetricKey,
-    metricName,
-    customTrackerType,
-    customMetricKey,
-  ]);
-
-  const selectedMetricLabel = useMemo(() => {
-    if (isCustomMetric) return "Custom metric";
-    return PRESET_METRICS_BY_KEY[selectedMetricKey]?.label ?? "Select metric";
-  }, [isCustomMetric, selectedMetricKey]);
-
-  useEffect(() => {
-    if (!visible) return;
-
-    const nextMetricKey = firstAvailablePreset?.key ?? CUSTOM_METRIC_KEY;
-    setSelectedMetricKey(nextMetricKey);
-    setMetricName("");
-    setCustomTrackerType(TRACKER_TYPES.SCALE);
-    setMetricDropdownOpen(false);
-    setTrackerDropdownOpen(false);
-    setError("");
-
-    const metricForDefaults = normalizeMetric(
-      nextMetricKey === CUSTOM_METRIC_KEY
-        ? {
-            key: "custom_metric",
-            label: "Custom metric",
-            trackerType: TRACKER_TYPES.SCALE,
-            enabled: true,
-          }
-        : PRESET_METRICS_BY_KEY[nextMetricKey]
-    );
-    const defaultValue = defaultEntryValue(metricForDefaults);
-
-    setScaleValue(typeof defaultValue === "number" ? defaultValue : 5);
-    setNumericInput(
-      metricForDefaults?.trackerType === TRACKER_TYPES.NUMBER ||
-        metricForDefaults?.trackerType === TRACKER_TYPES.HOURS
-        ? String(defaultValue ?? "")
-        : ""
-    );
-    setBpSystolicInput("");
-    setBpDiastolicInput("");
-    setTextInput("");
-  }, [visible, firstAvailablePreset]);
-
-  useEffect(() => {
-    if (!visible || !selectedMetric) return;
-    const defaultValue = defaultEntryValue(selectedMetric);
-
-    if (selectedMetric.trackerType === TRACKER_TYPES.SCALE) {
-      setScaleValue(typeof defaultValue === "number" ? defaultValue : 5);
-      setBpSystolicInput("");
-      setBpDiastolicInput("");
-    } else if (
-      selectedMetric.trackerType === TRACKER_TYPES.NUMBER ||
-      selectedMetric.trackerType === TRACKER_TYPES.HOURS
-    ) {
-      if (isBloodPressureMetric(selectedMetric)) {
-        setBpSystolicInput(String(defaultValue ?? 120));
-        setBpDiastolicInput("80");
-        setNumericInput("");
-      } else {
-        setNumericInput(String(defaultValue ?? ""));
-        setBpSystolicInput("");
-        setBpDiastolicInput("");
-      }
-    } else {
-      setTextInput("");
-      setBpSystolicInput("");
-      setBpDiastolicInput("");
-    }
-  }, [visible, selectedMetricKey, customTrackerType, selectedMetric]);
-
-  const canSave = useMemo(() => {
-    if (!selectedMetric) return false;
-    if (isCustomMetric) {
-      if (!metricName.trim()) return false;
-      if (!customMetricKey) return false;
-      if (customNameConflict) return false;
-    }
-
-    if (selectedMetric.trackerType === TRACKER_TYPES.TEXT) {
-      return textInput.trim().length > 0;
-    }
-    if (selectedMetric.trackerType === TRACKER_TYPES.SCALE) {
-      return Number.isFinite(scaleValue);
-    }
-    if (isBloodPressureMetric(selectedMetric)) {
-      return isValidBloodPressureValue({
-        systolic: bpSystolicInput,
-        diastolic: bpDiastolicInput,
-      });
-    }
-    return parseNumericText(numericInput) != null;
-  }, [
-    selectedMetric,
-    isCustomMetric,
-    metricName,
-    customMetricKey,
-    customNameConflict,
-    textInput,
-    scaleValue,
-    numericInput,
-    bpSystolicInput,
-    bpDiastolicInput,
-  ]);
-
-  const handleSave = () => {
-    if (!selectedMetric) return;
-    setError("");
-
-    let metricToSave = selectedMetric;
-    if (isCustomMetric) {
-      const customMetric = makeCustomMetric(metricName, customTrackerType);
-      if (!customMetric?.key) {
-        setError("Enter a valid custom metric name.");
-        return;
-      }
-      if (existingMetricKeys.has(customMetric.key)) {
-        setError("A metric with that name already exists.");
-        return;
-      }
-      metricToSave = customMetric;
-    } else if (existingMetricKeys.has(selectedMetric.key)) {
-      setError("This metric is already in your tracker list.");
-      return;
-    }
-
-    let entryValue;
-    if (metricToSave.trackerType === TRACKER_TYPES.TEXT) {
-      const textValue = textInput.trim();
-      if (!textValue) {
-        setError("Add text so this metric can be tracked.");
-        return;
-      }
-      entryValue = textValue;
-    } else if (metricToSave.trackerType === TRACKER_TYPES.SCALE) {
-      const nextValue = normalizeNumericValue(scaleValue, metricToSave);
-      if (!Number.isFinite(nextValue)) {
-        setError("Select a valid score.");
-        return;
-      }
-      entryValue = nextValue;
-    } else {
-      if (isBloodPressureMetric(metricToSave)) {
-        const bpValue = normalizeBloodPressureValue({
-          systolic: bpSystolicInput,
-          diastolic: bpDiastolicInput,
-        });
-        if (!isValidBloodPressureValue(bpValue)) {
-          setError("Enter valid systolic and diastolic values.");
-          return;
-        }
-        entryValue = bpValue;
-      } else {
-        const parsed = parseNumericText(numericInput);
-        if (parsed == null) {
-          setError("Enter a numeric value.");
-          return;
-        }
-        const nextValue = normalizeNumericValue(parsed, metricToSave);
-        if (!Number.isFinite(nextValue)) {
-          setError("Enter a valid numeric value.");
-          return;
-        }
-        entryValue = nextValue;
-      }
-    }
-
-    addMetric({
-      ...metricToSave,
-      enabled: true,
+  const groupStats = useMemo(() => {
+    const map = new Map();
+    PRESET_METRICS.forEach((m) => {
+      const e = map.get(m.group) ?? { on: 0, total: 0 };
+      e.total += 1;
+      if (existingByKey.get(m.key)?.enabled) e.on += 1;
+      map.set(m.group, e);
     });
-    addEntry({
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      type: metricToSave.key,
-      value: entryValue,
-      date: todayYYYYMMDD(),
-      source: MANUAL_ENTRY_SOURCE,
-    });
+    return map;
+  }, [existingByKey]);
 
-    setMetricName("");
-    setCustomTrackerType(TRACKER_TYPES.SCALE);
-    setScaleValue(5);
-    setNumericInput("");
-    setBpSystolicInput("");
-    setBpDiastolicInput("");
-    setTextInput("");
-    setError("");
-    onClose();
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return PRESET_METRICS.filter((m) => {
+      if (!q) return true;
+      return [m.label, m.shortLabel, m.description, m.group, archetypeLabel(m.inputArchetype)]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [query]);
+
+  const grouped = useMemo(() => {
+    const map = new Map(GROUP_ORDER.map((g) => [g, []]));
+    filtered.forEach((m) => {
+      if (!map.has(m.group)) map.set(m.group, []);
+      map.get(m.group).push(m);
+    });
+    return Array.from(map.entries()).filter(([, items]) => items.length > 0);
+  }, [filtered]);
+
+  const toggleMetric = (metric) => {
+    const existing = existingByKey.get(metric.key);
+    if (existing?.enabled) return disableMetric(metric.key);
+    if (existing) return enableMetric(metric.key);
+    addMetric({ ...metric, enabled: true });
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <AppModalSurface cardStyle={styles.card}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
+        {/* Header */}
         <View style={styles.header}>
-          <SectionTitle
-            title="Add metric"
-            subtitle="Choose a tracker and log today's first value."
-            titleStyle={styles.title}
-            subtitleStyle={styles.subtitle}
-            action={
-              <AppButton
-                accessibilityLabel="Close add metric modal"
-                onPress={onClose}
-                size="icon"
-                variant="overlay"
-                style={styles.closeButton}
-              >
-                <Text style={styles.closeGlyph}>×</Text>
-              </AppButton>
-            }
-          />
+          <View style={styles.headerLeft}>
+            <Text style={styles.title}>Pick metrics</Text>
+            <Text style={styles.subtitle}>Choose daily inputs to log on the Health tab.</Text>
+          </View>
+          <Pressable onPress={onClose} style={styles.closeButton} hitSlop={8}>
+            <Svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+              <Path d="M4 4l8 8M12 4l-8 8" stroke={appTheme.colors.textPrimary} strokeWidth={2} strokeLinecap="round" />
+            </Svg>
+          </Pressable>
         </View>
 
+        {/* Summary chip */}
+        <View style={styles.summaryChip}>
+          <Text style={styles.summaryCount}>{enabledCount}</Text>
+          <View style={styles.summaryCopy}>
+            <Text style={styles.summaryTitle}>
+              {enabledCount === 1 ? "metric on Health tab" : "metrics on Health tab"}
+            </Text>
+            <Text style={styles.summaryBody}>
+              Tap any row to add or remove. Reorder later from the Health tab.
+            </Text>
+          </View>
+        </View>
+
+        {/* Search */}
+        <View style={styles.searchField}>
+          <SearchIcon />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search metrics"
+            placeholderTextColor={appTheme.input.placeholder}
+            style={styles.searchInput}
+          />
+          {query.length > 0 && (
+            <Pressable onPress={() => setQuery("")} style={styles.searchClear} hitSlop={8}>
+              <Text style={styles.searchClearText}>×</Text>
+            </Pressable>
+          )}
+        </View>
+
+        {/* Grouped list */}
         <ScrollView
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.scrollContent}
         >
-          <View style={styles.field}>
-            <Text style={styles.label}>Metric type</Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setTrackerDropdownOpen(false);
-                setMetricDropdownOpen((prev) => !prev);
-              }}
-              style={({ pressed }) => [
-                styles.selector,
-                pressed && styles.selectorPressed,
-              ]}
-            >
-              <Text style={styles.selectorText}>{selectedMetricLabel}</Text>
-              <Text style={styles.selectorChevron}>
-                {metricDropdownOpen ? "▴" : "▾"}
-              </Text>
-            </Pressable>
-
-            {metricDropdownOpen ? (
-              <View style={styles.dropdownPanel}>
-                <ScrollView
-                  nestedScrollEnabled
-                  keyboardShouldPersistTaps="handled"
-                  style={styles.dropdownScroll}
-                >
-                  {PRESET_METRICS.map((metric, index) => {
-                    const alreadyAdded = existingMetricKeys.has(metric.key);
-                    return (
-                      <Pressable
-                        key={metric.key}
-                        accessibilityRole="button"
-                        disabled={alreadyAdded}
-                        onPress={() => {
-                          setSelectedMetricKey(metric.key);
-                          setMetricDropdownOpen(false);
-                          setError("");
-                        }}
-                        style={({ pressed }) => [
-                          styles.dropdownItem,
-                          index > 0 && styles.dropdownItemBorder,
-                          selectedMetricKey === metric.key &&
-                            styles.dropdownItemSelected,
-                          alreadyAdded && styles.dropdownItemDisabled,
-                          pressed &&
-                            !alreadyAdded &&
-                            styles.dropdownItemPressed,
-                        ]}
-                      >
-                        <View style={styles.dropdownTextBlock}>
-                          <Text
-                            style={[
-                              styles.dropdownItemText,
-                              selectedMetricKey === metric.key &&
-                                styles.dropdownItemTextSelected,
-                              alreadyAdded && styles.dropdownItemTextDisabled,
-                            ]}
-                          >
-                            {metric.label}
-                          </Text>
-                          {metric.description ? (
-                            <Text style={styles.dropdownItemDescription}>
-                              {metric.description}
-                            </Text>
-                          ) : null}
-                        </View>
-                        {alreadyAdded ? (
-                          <Text style={styles.dropdownMeta}>Added</Text>
-                        ) : null}
-                      </Pressable>
-                    );
-                  })}
-
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => {
-                      setSelectedMetricKey(CUSTOM_METRIC_KEY);
-                      setMetricDropdownOpen(false);
-                      setError("");
-                    }}
-                    style={({ pressed }) => [
-                      styles.dropdownItem,
-                      styles.dropdownItemBorder,
-                      selectedMetricKey === CUSTOM_METRIC_KEY &&
-                        styles.dropdownItemSelected,
-                      pressed && styles.dropdownItemPressed,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.dropdownItemText,
-                        selectedMetricKey === CUSTOM_METRIC_KEY &&
-                          styles.dropdownItemTextSelected,
-                      ]}
-                    >
-                      Custom metric
-                    </Text>
-                  </Pressable>
-                </ScrollView>
-              </View>
-            ) : null}
-          </View>
-
-          {isCustomMetric ? (
-            <>
-              <View style={styles.field}>
-                <Text style={styles.label}>Custom metric name</Text>
-                <TextInput
-                  value={metricName}
-                  onChangeText={(value) => {
-                    setMetricName(value);
-                    setError("");
-                  }}
-                  placeholder="e.g. Hydration score"
-                  placeholderTextColor={appTheme.colors.textMuted}
-                  style={styles.input}
-                />
-                {customNameConflict ? (
-                  <Text style={styles.helperError}>
-                    A metric with this name already exists.
-                  </Text>
-                ) : null}
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>How to track it</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => {
-                    setMetricDropdownOpen(false);
-                    setTrackerDropdownOpen((prev) => !prev);
-                  }}
-                  style={({ pressed }) => [
-                    styles.selector,
-                    pressed && styles.selectorPressed,
-                  ]}
-                >
-                  <Text style={styles.selectorText}>
-                    {CUSTOM_TRACKER_OPTIONS.find(
-                      (option) => option.key === customTrackerType
-                    )?.label ?? "Select tracker"}
-                  </Text>
-                  <Text style={styles.selectorChevron}>
-                    {trackerDropdownOpen ? "▴" : "▾"}
-                  </Text>
-                </Pressable>
-
-                {trackerDropdownOpen ? (
-                  <View style={styles.dropdownPanel}>
-                    {CUSTOM_TRACKER_OPTIONS.map((option, index) => (
-                      <Pressable
-                        key={option.key}
-                        accessibilityRole="button"
-                        onPress={() => {
-                          setCustomTrackerType(option.key);
-                          setTrackerDropdownOpen(false);
-                          setError("");
-                        }}
-                        style={({ pressed }) => [
-                          styles.dropdownItem,
-                          index > 0 && styles.dropdownItemBorder,
-                          customTrackerType === option.key &&
-                            styles.dropdownItemSelected,
-                          pressed && styles.dropdownItemPressed,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.dropdownItemText,
-                            customTrackerType === option.key &&
-                              styles.dropdownItemTextSelected,
-                          ]}
-                        >
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-            </>
-          ) : null}
-
-          {selectedMetric ? (
-            <View style={styles.field}>
-              <View style={styles.valuePanel}>
-                <View style={styles.sliderHeader}>
-                  <View style={styles.valueCopy}>
-                    <Text style={styles.label}>{trackerLabelFor(selectedMetric)}</Text>
-                    {selectedMetric.description ? (
-                      <Text style={styles.valueDescription}>
-                        {selectedMetric.description}
-                      </Text>
-                    ) : null}
-                  </View>
-                  {selectedMetric.trackerType === TRACKER_TYPES.SCALE ? (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>
-                        {Math.round(scaleValue)}
-                      </Text>
-                    </View>
-                  ) : null}
+          {grouped.map(([groupName, items]) => {
+            const stats = groupStats.get(groupName) ?? { on: 0, total: 0 };
+            return (
+              <View key={groupName} style={styles.group}>
+                <GroupHeader name={groupName} on={stats.on} total={stats.total} />
+                <View style={styles.metricList}>
+                  {items.map((m) => (
+                    <MetricRow
+                      key={m.key}
+                      metric={m}
+                      enabled={existingByKey.get(m.key)?.enabled === true}
+                      onToggle={() => toggleMetric(m)}
+                    />
+                  ))}
                 </View>
-
-                {selectedMetric.trackerType === TRACKER_TYPES.SCALE ? (
-                  <>
-                    <Slider
-                      minimumValue={selectedMetric.min ?? 1}
-                      maximumValue={selectedMetric.max ?? 10}
-                      step={selectedMetric.step ?? 1}
-                      value={scaleValue}
-                      onValueChange={setScaleValue}
-                      minimumTrackTintColor={appTheme.colors.textStrong}
-                      maximumTrackTintColor={appTheme.colors.borderInactive}
-                      thumbTintColor={appTheme.colors.textStrong}
-                    />
-                    <View style={styles.scale}>
-                      <Text style={styles.scaleText}>
-                        {selectedMetric.lowLabel ?? "Low"}
-                      </Text>
-                      <Text style={styles.scaleText}>
-                        {selectedMetric.highLabel ?? "High"}
-                      </Text>
-                    </View>
-                  </>
-                ) : null}
-
-                {(selectedMetric.trackerType === TRACKER_TYPES.NUMBER ||
-                  selectedMetric.trackerType === TRACKER_TYPES.HOURS) &&
-                !isBloodPressureMetric(selectedMetric) ? (
-                  <View style={styles.numericRow}>
-                    <TextInput
-                      value={numericInput}
-                      onChangeText={(value) => {
-                        setNumericInput(value);
-                        setError("");
-                      }}
-                      placeholder={selectedMetric.placeholder ?? "Enter value"}
-                      placeholderTextColor={appTheme.colors.textMuted}
-                      style={[styles.input, styles.numericInput]}
-                      keyboardType="decimal-pad"
-                    />
-                    {selectedMetric.unit ? (
-                      <View style={styles.unitBadge}>
-                        <Text style={styles.unitText}>{selectedMetric.unit}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                ) : null}
-
-                {selectedMetric.key === BLOOD_PRESSURE_METRIC_KEY ? (
-                  <View style={styles.numericRow}>
-                    <TextInput
-                      value={bpSystolicInput}
-                      onChangeText={(value) => {
-                        setBpSystolicInput(value);
-                        setError("");
-                      }}
-                      placeholder="Systolic"
-                      placeholderTextColor={appTheme.colors.textMuted}
-                      style={[styles.input, styles.bloodPressureInput]}
-                      keyboardType="decimal-pad"
-                    />
-                    <TextInput
-                      value={bpDiastolicInput}
-                      onChangeText={(value) => {
-                        setBpDiastolicInput(value);
-                        setError("");
-                      }}
-                      placeholder="Diastolic"
-                      placeholderTextColor={appTheme.colors.textMuted}
-                      style={[styles.input, styles.bloodPressureInput]}
-                      keyboardType="decimal-pad"
-                    />
-                    <View style={styles.unitBadge}>
-                      <Text style={styles.unitText}>mmHg</Text>
-                    </View>
-                  </View>
-                ) : null}
-
-                {selectedMetric.trackerType === TRACKER_TYPES.TEXT ? (
-                  <TextInput
-                    value={textInput}
-                    onChangeText={(value) => {
-                      setTextInput(value);
-                      setError("");
-                    }}
-                    placeholder={selectedMetric.placeholder ?? "Write your entry"}
-                    placeholderTextColor={appTheme.colors.textMuted}
-                    style={[styles.input, styles.textarea]}
-                    multiline
-                  />
-                ) : null}
               </View>
+            );
+          })}
+
+          {grouped.length === 0 && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>No metrics found</Text>
+              <Text style={styles.emptyBody}>Try a symptom, score, or measurement.</Text>
             </View>
-          ) : null}
-
-          {error ? <Text style={styles.helperError}>{error}</Text> : null}
-
-          <AppButton
-            accessibilityLabel="Save metric"
-            disabled={!canSave}
-            label="Save metric"
-            onPress={handleSave}
-            size="md"
-            style={[styles.saveButton, !canSave && styles.saveButtonDisabled]}
-            textStyle={styles.saveText}
-            variant="primary"
-          />
+          )}
         </ScrollView>
-      </AppModalSurface>
+
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    width: "100%",
-    minHeight: "74%",
+  container: {
+    flex: 1,
+    backgroundColor: appTheme.screen.background,
+    paddingHorizontal: 16,
+    paddingBottom: 0,
   },
+  // Header
   header: {
-    marginBottom: spacing.sm,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  headerLeft: {
+    flex: 1,
+    marginRight: 12,
   },
   title: {
-    fontSize: 26,
     fontFamily: typography.fontFamily.heading,
-    letterSpacing: -0.7,
+    fontSize: 24,
     color: appTheme.colors.textPrimary,
+    letterSpacing: -0.7,
+    lineHeight: 28,
   },
   subtitle: {
-    marginTop: 4,
-    fontSize: 14,
-    lineHeight: 20,
     fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
+    fontSize: 13,
+    color: appTheme.colors.textBody,
+    lineHeight: 18,
+    marginTop: 4,
   },
   closeButton: {
-    width: 44,
-    height: 44,
-    minWidth: 44,
-    minHeight: 44,
-  },
-  closeGlyph: {
-    fontSize: 22,
-    lineHeight: 22,
-    color: appTheme.colors.textStrong,
-    fontFamily: typography.fontFamily.body,
-  },
-  scrollContent: {
-    paddingBottom: spacing.xs,
-  },
-  field: {
-    marginTop: spacing.md,
-  },
-  label: {
-    fontSize: 13,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textSecondary,
-    marginBottom: spacing.xs,
-    letterSpacing: -0.1,
-  },
-  selector: {
-    minHeight: 52,
-    borderRadius: appTheme.card.radius,
-    backgroundColor: appTheme.colors.surfaceMuted,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: appTheme.colors.borderSubtle,
-  },
-  selectorPressed: {
-    opacity: 0.84,
-  },
-  selectorText: {
-    flex: 1,
-    marginRight: spacing.sm,
-    fontSize: 15,
-    lineHeight: 20,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textStrong,
-  },
-  selectorChevron: {
-    fontSize: 14,
-    color: appTheme.colors.textTertiary,
-  },
-  dropdownPanel: {
-    marginTop: spacing.sm,
-    backgroundColor: appTheme.colors.surfaceMuted,
-    borderRadius: appTheme.card.radius,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: appTheme.colors.borderSubtle,
-  },
-  dropdownScroll: {
-    maxHeight: 240,
-  },
-  dropdownItem: {
-    minHeight: 52,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: spacing.sm,
-  },
-  dropdownItemBorder: {
-    borderTopWidth: 1,
-    borderTopColor: appTheme.colors.borderSubtle,
-  },
-  dropdownItemSelected: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: appTheme.colors.surfaceOverlay,
-  },
-  dropdownItemDisabled: {
-    opacity: 0.55,
-  },
-  dropdownItemPressed: {
-    opacity: 0.82,
-  },
-  dropdownTextBlock: {
-    flex: 1,
-    paddingRight: spacing.sm,
-  },
-  dropdownItemText: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textStrong,
-  },
-  dropdownItemDescription: {
-    marginTop: 4,
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
-  },
-  dropdownItemTextSelected: {
-    color: appTheme.colors.textPrimary,
-  },
-  dropdownItemTextDisabled: {
-    color: appTheme.colors.textMuted,
-  },
-  dropdownMeta: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textTertiary,
-  },
-  input: {
-    minHeight: 52,
-    borderRadius: appTheme.card.radius,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    backgroundColor: appTheme.colors.surfaceMuted,
-    color: appTheme.colors.textPrimary,
-    borderWidth: 1,
-    borderColor: appTheme.colors.borderSubtle,
-    fontSize: 15,
-    lineHeight: 20,
-    fontFamily: typography.fontFamily.body,
-  },
-  textarea: {
-    minHeight: 116,
-    textAlignVertical: "top",
-    paddingTop: spacing.md,
-  },
-  valuePanel: {
-    borderRadius: appTheme.card.radius,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    backgroundColor: appTheme.colors.surfaceAccent,
-    borderWidth: 1,
-    borderColor: appTheme.colors.borderSubtle,
-  },
-  sliderHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  valueCopy: {
-    flex: 1,
-  },
-  valueDescription: {
-    marginTop: 2,
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
-  },
-  badge: {
-    minWidth: 36,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: 999,
     alignItems: "center",
+    justifyContent: "center",
+  },
+  // Summary chip
+  summaryChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 12,
+    borderRadius: 18,
     backgroundColor: appTheme.colors.surface,
     borderWidth: 1,
     borderColor: appTheme.colors.borderSubtle,
+    marginBottom: 16,
   },
-  badgeText: {
-    fontSize: 12,
-    lineHeight: 16,
+  summaryCount: {
     fontFamily: typography.fontFamily.headingSemiBold,
+    fontSize: 24,
     color: appTheme.colors.textStrong,
+    letterSpacing: -0.4,
+    lineHeight: 28,
+    minWidth: 32,
+    textAlign: "center",
   },
-  scale: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: spacing.xs,
-  },
-  scaleText: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textTertiary,
-  },
-  numericRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  numericInput: {
-    flex: 1,
-  },
-  bloodPressureInput: {
+  summaryCopy: {
     flex: 1,
     minWidth: 0,
   },
-  unitBadge: {
-    minHeight: 44,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: 999,
+  summaryTitle: {
+    fontFamily: typography.fontFamily.headingSemiBold,
+    fontSize: 13,
+    color: appTheme.colors.textStrong,
+    letterSpacing: -0.1,
+  },
+  summaryBody: {
+    fontFamily: typography.fontFamily.body,
+    fontSize: 11.5,
+    color: appTheme.colors.textBody,
+    lineHeight: 16,
+    marginTop: 1,
+  },
+  // Search
+  searchField: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: appTheme.input.background,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+    marginBottom: 14,
+  },
+  searchInput: {
+    flex: 1,
+    fontFamily: typography.fontFamily.body,
+    fontSize: 15,
+    color: appTheme.input.text,
+    padding: 0,
+  },
+  searchClear: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: appTheme.colors.iconSurfaceMuted,
+    alignItems: "center",
     justifyContent: "center",
+  },
+  searchClearText: {
+    color: appTheme.colors.textStrong,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 14,
+    marginTop: -1,
+  },
+  // Scroll content
+  scrollContent: {
+    paddingBottom: 32,
+  },
+  // Group
+  group: {
+    marginBottom: 22,
+  },
+  groupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  groupHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  groupDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  groupName: {
+    fontFamily: typography.fontFamily.heading,
+    fontSize: 13,
+    color: appTheme.colors.textPrimary,
+    letterSpacing: 0.2,
+  },
+  groupCount: {
+    fontFamily: typography.fontFamily.monoMedium,
+    fontSize: 11,
+    color: appTheme.colors.textMuted,
+    letterSpacing: 0.4,
+  },
+  metricList: {
+    gap: 8,
+  },
+  // Metric row
+  metricRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  metricRowDisabled: {
     backgroundColor: appTheme.colors.surface,
+    borderColor: appTheme.colors.borderSubtle,
+  },
+  metricRowEnabled: {
+    borderWidth: 1,
+    backgroundColor: appTheme.colors.surfaceAccent,
+    borderColor: appTheme.colors.borderPill,
+  },
+  metricRowPressed: {
+    opacity: 0.8,
+  },
+  iconChip: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  metricCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  labelRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 2,
+  },
+  metricLabel: {
+    fontFamily: typography.fontFamily.heading,
+    fontSize: 14.5,
+    color: appTheme.colors.textPrimary,
+    letterSpacing: -0.1,
+    lineHeight: 18,
+  },
+  metricDescription: {
+    fontFamily: typography.fontFamily.body,
+    fontSize: 12,
+    color: appTheme.colors.textBody,
+    lineHeight: 17,
+  },
+  archetypeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 5,
+  },
+  archetypeDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  archetypeLabel: {
+    fontFamily: typography.fontFamily.monoMedium,
+    fontSize: 9.5,
+    fontWeight: "600",
+    letterSpacing: 0.6,
+  },
+  pillWrapper: {
+    alignSelf: "center",
+  },
+  // Pill
+  pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  pillEnabled: {
+    backgroundColor: appTheme.colors.textStrong,
+  },
+  pillDisabled: {
+    backgroundColor: appTheme.colors.surfaceMuted,
     borderWidth: 1,
     borderColor: appTheme.colors.borderSubtle,
   },
-  unitText: {
+  pillText: {
+    fontFamily: typography.fontFamily.heading,
     fontSize: 12,
-    lineHeight: 16,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textSecondary,
+    letterSpacing: 0.2,
   },
-  helperError: {
-    marginTop: spacing.sm,
-    fontSize: 13,
-    lineHeight: 18,
+  pillTextEnabled: {
+    color: "#fff",
+  },
+  pillTextDisabled: {
+    color: appTheme.colors.textStrong,
+  },
+  // Apple Health badge
+  healthBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: "#FFE3EA",
+  },
+  healthBadgeText: {
+    fontFamily: typography.fontFamily.monoMedium,
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 0.4,
+    color: "#B83A53",
+    lineHeight: 12,
+  },
+  // Empty state
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+    backgroundColor: appTheme.colors.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+  },
+  emptyTitle: {
+    fontFamily: typography.fontFamily.heading,
+    fontSize: 16,
+    color: appTheme.colors.textPrimary,
+  },
+  emptyBody: {
     fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.danger,
-  },
-  saveButton: {
-    width: "100%",
-    marginTop: spacing.lg,
-    alignSelf: "stretch",
-  },
-  saveButtonDisabled: {
-    backgroundColor: appTheme.colors.borderInactive,
-  },
-  saveText: {
-    fontSize: 15,
-    fontFamily: typography.fontFamily.headingSemiBold,
+    fontSize: 13,
+    color: appTheme.colors.textBody,
+    marginTop: 4,
   },
 });

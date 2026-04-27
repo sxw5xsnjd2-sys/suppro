@@ -29,6 +29,7 @@ const HOW_TO_USE_MULTIPLIERS = {
   million: 1e6,
   billion: 1e9,
 };
+const VITAMIN_D_IU_PER_MCG = 40;
 const HOW_TO_USE_FORM_ONLY_PATTERNS = [
   /\bcapsule(?:s)?\b/i,
   /\btablet(?:s)?\b/i,
@@ -168,6 +169,78 @@ function normalizeValueForComparableUnit(value, originalUnit, expectedUnit) {
   }
 
   return normalized.value;
+}
+
+function matchesVitaminDIdentifier(value) {
+  const normalized = trimString(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /\bvitamin d\b|\bvitamin d2\b|\bvitamin d3\b|\bd2\b|\bd3\b|\bcholecalciferol\b|\bergocalciferol\b/.test(
+    normalized
+  );
+}
+
+function isVitaminDMatch(match, supplement) {
+  return [
+    match?.ingredientName,
+    match?.ingredientRaw,
+    match?.catalogName,
+    supplement?.name,
+  ].some(matchesVitaminDIdentifier);
+}
+
+function convertVitaminDDose(value, fromUnit, toUnit) {
+  if (!Number.isFinite(value) || fromUnit === toUnit) {
+    return Number.isFinite(value) ? roundTo(value) : null;
+  }
+
+  if (fromUnit === "mcg" && toUnit === "IU") {
+    return roundTo(value * VITAMIN_D_IU_PER_MCG);
+  }
+
+  if (fromUnit === "IU" && toUnit === "mcg") {
+    return roundTo(value / VITAMIN_D_IU_PER_MCG);
+  }
+
+  return null;
+}
+
+function alignDoseUnitsForIngredient({
+  normalizedServingDose,
+  doseScoringProfile,
+  match,
+  supplement,
+}) {
+  if (!normalizedServingDose || !doseScoringProfile) {
+    return normalizedServingDose;
+  }
+
+  if (normalizedServingDose.unit === doseScoringProfile.unit) {
+    return normalizedServingDose;
+  }
+
+  if (!isVitaminDMatch(match, supplement)) {
+    return normalizedServingDose;
+  }
+
+  const convertedValue = convertVitaminDDose(
+    normalizedServingDose.value,
+    normalizedServingDose.unit,
+    doseScoringProfile.unit
+  );
+
+  if (!Number.isFinite(convertedValue)) {
+    return normalizedServingDose;
+  }
+
+  return {
+    ...normalizedServingDose,
+    value: convertedValue,
+    unit: doseScoringProfile.unit,
+    convertedFromUnit: normalizedServingDose.unit,
+  };
 }
 
 export function normalizeDoseUnit(value) {
@@ -1044,6 +1117,12 @@ export function scoreMatchedIngredientsForProduct({
       flags: servingFlags,
       status: servingStatus,
     } = normalizeServingDose(match, servingSizeText);
+    const alignedServingDose = alignDoseUnitsForIngredient({
+      normalizedServingDose,
+      doseScoringProfile,
+      match,
+      supplement,
+    });
     const {
       doseFactor,
       status: comparisonStatus,
@@ -1051,7 +1130,7 @@ export function scoreMatchedIngredientsForProduct({
       scoreAdjustmentReasonCode,
       flags: comparisonFlags,
     } = compareDoseToDoseScoringProfile({
-      normalizedServingDose,
+      normalizedServingDose: alignedServingDose,
       doseScoringProfile,
     });
 
@@ -1071,7 +1150,7 @@ export function scoreMatchedIngredientsForProduct({
     const scoreAdjustmentSummary = buildDoseComparisonSummary({
       doseBand,
       doseComparisonStatus,
-      normalizedServingDose,
+      normalizedServingDose: alignedServingDose,
       doseScoringProfile,
     });
 
@@ -1081,7 +1160,7 @@ export function scoreMatchedIngredientsForProduct({
       adjustedEvidenceScore,
       recommendedDose,
       doseScoringProfile,
-      normalizedServingDose,
+      normalizedServingDose: alignedServingDose,
       doseFactor,
       doseBand,
       doseStatusLabel: buildDoseStatusLabel({

@@ -14,9 +14,10 @@ export function AppModalSurface({
   cardStyle,
   contentStyle,
   keyboardVerticalOffset = 0,
+  fullscreen = false,
 }) {
   return (
-    <View style={styles.backdrop}>
+    <View style={[styles.backdrop, fullscreen && styles.backdropFullscreen]}>
       <View pointerEvents="none" style={styles.backdropLayer}>
         <AppBackdrop />
       </View>
@@ -25,10 +26,12 @@ export function AppModalSurface({
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={keyboardVerticalOffset}
-        style={styles.keyboard}
+        style={[styles.keyboard, fullscreen && styles.keyboardFullscreen]}
       >
-        <View style={[styles.content, contentStyle]}>
-          <PrimaryCard style={[styles.card, cardStyle]}>{children}</PrimaryCard>
+        <View style={[styles.content, fullscreen && styles.contentFullscreen, contentStyle]}>
+          <PrimaryCard style={[styles.card, fullscreen && styles.cardFullscreen, cardStyle]}>
+            {children}
+          </PrimaryCard>
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -42,6 +45,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: appTheme.modal.sidePadding,
     paddingVertical: appTheme.modal.sidePadding,
   },
+  backdropFullscreen: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
   backdropLayer: {
     ...StyleSheet.absoluteFillObject,
   },
@@ -52,14 +59,27 @@ const styles = StyleSheet.create({
   keyboard: {
     width: "100%",
   },
+  keyboardFullscreen: {
+    flex: 1,
+  },
   content: {
     width: "100%",
     maxWidth: appTheme.modal.maxWidth,
     alignSelf: "center",
   },
+  contentFullscreen: {
+    flex: 1,
+    maxWidth: "100%",
+    alignSelf: "stretch",
+  },
   card: {
     maxHeight: appTheme.modal.cardMaxHeight,
     paddingHorizontal: appTheme.card.paddingSpacious,
     paddingVertical: appTheme.card.paddingSpacious,
+  },
+  cardFullscreen: {
+    flex: 1,
+    maxHeight: "100%",
+    borderRadius: 0,
   },
 });

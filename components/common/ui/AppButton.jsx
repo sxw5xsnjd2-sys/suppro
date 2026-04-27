@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { appTheme, typography } from "@/theme";
+import { LinearGradient } from "expo-linear-gradient";
+import { appTheme, shadows, typography } from "@/theme";
 
 export function AppButton({
   label,
@@ -26,6 +27,15 @@ export function AppButton({
         style,
       ]}
     >
+      {variant === "accent" ? (
+        <LinearGradient
+          pointerEvents="none"
+          colors={appTheme.tabBar.fabGradient}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={styles.accentFill}
+        />
+      ) : null}
       <View style={[styles.content, contentStyle]}>
         {children || <Text style={[styles.text, textVariantStyles[variant], textStyle]}>{label}</Text>}
       </View>
@@ -44,8 +54,14 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
   content: {
+    position: "relative",
+    zIndex: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  accentFill: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 999,
   },
   text: {
     fontSize: 16,
@@ -62,7 +78,10 @@ const variantStyles = StyleSheet.create({
     backgroundColor: appTheme.colors.surfaceOverlay,
   },
   accent: {
-    backgroundColor: appTheme.colors.surfaceAccent,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "rgba(20,20,20,0.08)",
+    ...shadows.card,
   },
   primary: {
     backgroundColor: appTheme.colors.textStrong,

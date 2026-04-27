@@ -1,8 +1,7 @@
 import { useEffect } from "react";
 import { BackHandler } from "react-native";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Redirect, Stack, useLocalSearchParams } from "expo-router";
 import QuestionnaireScreen from "@src/features/onboarding/QuestionnaireScreen";
-import { SignUpScreen } from "./(modals)/modal/sign-up";
 
 function OnboardingPaywallStep() {
   const { RevenueCatProvider } = require("@/features/subscriptions/RevenueCatProvider");
@@ -55,7 +54,7 @@ export default function OnboardingScreen() {
         <Stack.Screen
           options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
         />
-        <SignUpScreen standalone mode={mode} />
+        <Redirect href="/login?mode=create" />
       </>
     );
   }

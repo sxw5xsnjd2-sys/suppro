@@ -1,313 +1,378 @@
-const TRACKER_TYPES = {
+export const TRACKER_TYPES = {
   SCALE: "scale",
   NUMBER: "number",
   HOURS: "hours",
   TEXT: "text",
 };
 
-const scaleTracker = (overrides = {}) => ({
-  trackerType: TRACKER_TYPES.SCALE,
-  min: 1,
-  max: 10,
-  step: 1,
-  lowLabel: "Low",
-  highLabel: "High",
-  defaultValue: 5,
-  ...overrides,
-});
-
-const numberTracker = (overrides = {}) => ({
-  trackerType: TRACKER_TYPES.NUMBER,
-  step: 1,
-  defaultValue: 0,
-  ...overrides,
-});
-
-const hoursTracker = (overrides = {}) => ({
-  trackerType: TRACKER_TYPES.HOURS,
-  min: 0,
-  max: 16,
-  step: 0.25,
-  unit: "hours",
-  defaultValue: 8,
-  ...overrides,
-});
-
-const textTracker = (overrides = {}) => ({
-  trackerType: TRACKER_TYPES.TEXT,
-  placeholder: "Write your entry",
-  defaultValue: "",
-  ...overrides,
-});
+export const INPUT_ARCHETYPES = {
+  DURATION: "duration",
+  SCORE_1_10: "score-1-10",
+  PRESSURE_1_10: "pressure-1-10",
+  SEVERITY_0_10: "severity-0-10",
+  NUMERIC_FREE: "numeric-free",
+};
 
 export const CUSTOM_METRIC_KEY = "__custom_metric__";
 export const BLOOD_PRESSURE_METRIC_KEY = "blood_pressure_control";
 export const MANUAL_ENTRY_SOURCE = "manual";
 export const APPLE_HEALTH_ENTRY_SOURCE = "apple_health";
 
+const metric = (input) => ({
+  enabled: false,
+  appleHealthSupported: false,
+  lowerIsBetter: false,
+  ...input,
+});
+
+const durationMetric = (input) =>
+  metric({
+    trackerType:
+      input.unit === "hours" ? TRACKER_TYPES.HOURS : TRACKER_TYPES.NUMBER,
+    inputArchetype: INPUT_ARCHETYPES.DURATION,
+    min: 0,
+    step: input.unit === "hours" ? 0.25 : 5,
+    defaultValue: input.unit === "hours" ? 8 : 30,
+    ...input,
+  });
+
+const scoreMetric = (input) =>
+  metric({
+    trackerType: TRACKER_TYPES.SCALE,
+    inputArchetype: INPUT_ARCHETYPES.SCORE_1_10,
+    min: 1,
+    max: 10,
+    step: 1,
+    defaultValue: 5,
+    lowLabel: "Low",
+    highLabel: "High",
+    ...input,
+  });
+
+const pressureMetric = (input) =>
+  metric({
+    trackerType: TRACKER_TYPES.SCALE,
+    inputArchetype: INPUT_ARCHETYPES.PRESSURE_1_10,
+    min: 1,
+    max: 10,
+    step: 1,
+    defaultValue: 5,
+    lowerIsBetter: true,
+    lowLabel: "Low",
+    highLabel: "High",
+    ...input,
+  });
+
+const severityMetric = (input) =>
+  metric({
+    trackerType: TRACKER_TYPES.SCALE,
+    inputArchetype: INPUT_ARCHETYPES.SEVERITY_0_10,
+    min: 0,
+    max: 10,
+    step: 1,
+    defaultValue: 0,
+    lowerIsBetter: true,
+    lowLabel: "None",
+    highLabel: "Severe",
+    ...input,
+  });
+
+const numericMetric = (input) =>
+  metric({
+    trackerType: TRACKER_TYPES.NUMBER,
+    inputArchetype: INPUT_ARCHETYPES.NUMERIC_FREE,
+    step: 1,
+    defaultValue: 0,
+    ...input,
+  });
+
 export const PRESET_METRICS = [
-  {
-    key: "anti_aging",
-    label: "Healthy aging readiness",
-    description:
-      "Overall sense of aging well today across vitality, resilience, and recovery.",
-    ...scaleTracker({ lowLabel: "Poor", highLabel: "Excellent" }),
-  },
-  {
-    key: "anti_inflammatory",
-    label: "Inflammation symptoms score",
-    description:
-      "How intense inflammation-related symptoms feel today, such as soreness, stiffness, or swelling.",
-    ...scaleTracker({ lowLabel: "Severe", highLabel: "Calm" }),
-  },
-  {
-    key: "blood_pressure_control",
-    label: "Blood pressure",
-    description:
-      "Enter your latest blood pressure as systolic/diastolic, for example 120/80 mmHg.",
-    ...numberTracker({
-      unit: "mmHg",
-      min: 40,
-      max: 260,
-      defaultValue: 120,
-      placeholder: "Use systolic/diastolic fields",
-    }),
-  },
-  {
-    key: "blood_sugar_control",
-    label: "Blood glucose",
-    description:
-      "Your blood glucose value. Try to measure at the same time context (for example fasting) for consistency.",
-    ...numberTracker({ unit: "mmol/L", min: 0, max: 35 }),
-  },
-  {
-    key: "bone_health",
-    label: "Bone and skeletal comfort",
-    description:
-      "How comfortable and stable your bones and skeletal system feel during daily activity.",
-    ...scaleTracker({
-      lowLabel: "Very uncomfortable",
-      highLabel: "Very comfortable",
-    }),
-  },
-  {
+  durationMetric({
+    key: "sleep",
+    label: "Sleep duration",
+    shortLabel: "Sleep",
+    description: "Total hours slept in your most recent sleep period.",
+    group: "Recovery",
+    unit: "hours",
+    max: 12,
+    defaultValue: 8,
+    appleHealthSupported: true,
+    lowLabel: "Too little",
+    highLabel: "Well rested",
+  }),
+  durationMetric({
     key: "cardiovascular_health",
     label: "Steady-state cardio duration",
-    description:
-      "How many minutes you can run, swim, or cycle at a pace where you can hold a conversation but not sing.",
-    ...numberTracker({ unit: "minutes", min: 0, max: 180, defaultValue: 30 }),
-  },
-  {
-    key: "cholesterol_support",
-    label: "LDL cholesterol",
-    description: "Your LDL cholesterol from a recent blood test.",
-    ...numberTracker({ unit: "mg/dL", min: 50, max: 220, defaultValue: 130 }),
-  },
-  {
-    key: "cognitive_support",
-    label: "Cognitive clarity",
-    description:
-      "How clear and sharp your thinking feels for reasoning, planning, and decision-making.",
-    ...scaleTracker(),
-  },
-  {
-    key: "concentration_enhancing",
-    label: "Focus quality",
-    description:
-      "How well you can sustain attention on tasks without mental drift or distraction.",
-    ...scaleTracker(),
-  },
-  {
-    key: "digestive_health",
-    label: "Digestive comfort",
-    description:
-      "How comfortable your digestion feels today, including bloating, cramps, and regularity.",
-    ...scaleTracker(),
-  },
-  {
+    shortLabel: "Cardio",
+    description: "Minutes of steady aerobic work at a sustainable pace.",
+    group: "Training",
+    unit: "minutes",
+    max: 120,
+    defaultValue: 30,
+  }),
+  durationMetric({
     key: "endurance_enhancing",
-    label: "Endurance duration",
-    description:
-      "How long you can sustain continuous aerobic effort at your target training intensity.",
-    ...numberTracker({ unit: "minutes", min: 0, max: 240, defaultValue: 20 }),
-  },
-  {
+    label: "Endurance training duration",
+    shortLabel: "Endurance",
+    description: "Minutes of continuous endurance effort.",
+    group: "Training",
+    unit: "minutes",
+    max: 240,
+    defaultValue: 45,
+  }),
+
+  scoreMetric({
     key: "energy",
-    label: "Daily energy",
-    description: "Your overall physical and mental energy throughout the day.",
-    ...scaleTracker({ lowLabel: "Drained", highLabel: "Energized" }),
-  },
-  {
-    key: "exercise_recovery",
-    label: "Exercise recovery quality",
-    description:
-      "How recovered your body feels between training sessions, including soreness and readiness.",
-    ...scaleTracker({ lowLabel: "Poor", highLabel: "Excellent" }),
-  },
-  {
-    key: "female_fertility",
-    label: "Female fertility signs",
-    description:
-      "Self-rated fertility-related signs such as cycle quality and ovulation indicators.",
-    ...scaleTracker({ lowLabel: "Weak signs", highLabel: "Strong signs" }),
-  },
-  {
-    key: "female_hormone_balance",
-    label: "Female hormone balance",
-    description:
-      "How balanced hormone-related symptoms feel, including cycle stability and PMS intensity.",
-    ...scaleTracker({ lowLabel: "Unbalanced", highLabel: "Balanced" }),
-  },
-  {
-    key: "female_sexual_arousal",
-    label: "Sexual wellbeing (female)",
-    description:
-      "Self-rated female sexual wellbeing including desire, arousal, and comfort.",
-    ...scaleTracker({ lowLabel: "Low", highLabel: "High" }),
-  },
-  {
-    key: "hair_health",
-    label: "Hair health",
-    description:
-      "Perceived hair quality, including strength, breakage, and shedding trends.",
-    ...scaleTracker(),
-  },
-  {
-    key: "immune_health",
-    label: "Immune resilience",
-    description:
-      "How resilient you feel against illness, including frequency and intensity of symptoms.",
-    ...scaleTracker(),
-  },
-  {
-    key: "injury_recovery",
-    label: "Injury recovery progress",
-    description:
-      "Progress of healing and functional return for a specific injury over time.",
-    ...scaleTracker({ lowLabel: "Early stage", highLabel: "Fully recovered" }),
-  },
-  {
-    key: "joint_health",
-    label: "Joint comfort and mobility",
-    description:
-      "How comfortable and mobile your joints feel during daily movement and exercise.",
-    ...scaleTracker(),
-  },
-  {
-    key: "lymphatic_swelling_support",
-    label: "Swelling and fluid retention",
-    description:
-      "How noticeable swelling, puffiness, or fluid retention feels today.",
-    ...scaleTracker({ lowLabel: "High swelling", highLabel: "No swelling" }),
-  },
-  {
-    key: "male_fertility",
-    label: "Male fertility signs",
-    description:
-      "Self-rated male fertility-related signs and reproductive wellbeing.",
-    ...scaleTracker({ lowLabel: "Weak signs", highLabel: "Strong signs" }),
-  },
-  {
-    key: "male_sexual_arousal",
-    label: "Sexual wellbeing (male)",
-    description:
-      "Self-rated male sexual wellbeing including desire, arousal, and confidence.",
-    ...scaleTracker({ lowLabel: "Low", highLabel: "High" }),
-  },
-  {
-    key: "memory_enhancing",
-    label: "Memory quality",
-    description:
-      "How reliably you recall recent information, names, and tasks.",
-    ...scaleTracker(),
-  },
-  {
+    label: "Energy levels",
+    shortLabel: "Energy",
+    description: "Overall physical and mental energy today.",
+    group: "Daily wellbeing",
+    lowLabel: "Drained",
+    highLabel: "Energized",
+  }),
+  scoreMetric({
     key: "mood",
     label: "Mood",
     description: "Your overall emotional state today.",
-    ...scaleTracker({ lowLabel: "Very low", highLabel: "Great" }),
-  },
-  {
-    key: "skin_health",
-    label: "Skin health",
-    description:
-      "Perceived skin condition, including clarity, dryness, irritation, and texture.",
-    ...scaleTracker(),
-  },
-  {
-    key: "sleep",
-    label: "Sleep duration",
-    description: "Total hours slept in your most recent sleep period.",
-    ...hoursTracker({ lowLabel: "Too little", highLabel: "Well rested" }),
-  },
-  {
-    key: "strength_enhancing",
-    label: "Estimated 1RM (main lift)",
-    description:
-      "Track estimated one-rep max for the same primary lift each time, such as squat, bench, or deadlift.",
-    ...numberTracker({
-      unit: "kg",
-      min: 0,
-      max: 400,
-      step: 0.5,
-      defaultValue: 40,
-      placeholder: "e.g. estimated 1RM in kg",
-    }),
-  },
-  {
+    group: "Daily wellbeing",
+    lowLabel: "Very low",
+    highLabel: "Great",
+  }),
+  scoreMetric({
+    key: "concentration_enhancing",
+    label: "Focus",
+    description: "How well you sustained attention without drift.",
+    group: "Cognition",
+  }),
+  scoreMetric({
+    key: "motivation",
+    label: "Motivation",
+    description: "Drive to start and continue useful work.",
+    group: "Daily wellbeing",
+  }),
+  scoreMetric({
+    key: "cognitive_support",
+    label: "Mental clarity",
+    description: "How clear and sharp your thinking felt.",
+    group: "Cognition",
+  }),
+  scoreMetric({
+    key: "productivity",
+    label: "Productivity",
+    description: "How much meaningful work you completed.",
+    group: "Daily wellbeing",
+  }),
+  scoreMetric({
+    key: "physical_resilience",
+    label: "Physical resilience",
+    description: "How robust your body felt under normal stress.",
+    group: "Recovery",
+  }),
+  scoreMetric({
+    key: "sleep_quality",
+    label: "Sleep quality",
+    description: "How restorative your sleep felt.",
+    group: "Recovery",
+    lowLabel: "Poor",
+    highLabel: "Excellent",
+  }),
+  scoreMetric({
+    key: "exercise_recovery",
+    label: "Recovery quality",
+    description: "How recovered you felt between training sessions.",
+    group: "Recovery",
+    lowLabel: "Poor",
+    highLabel: "Excellent",
+  }),
+  scoreMetric({
+    key: "workout_intensity",
+    label: "Workout intensity",
+    description: "How hard today's training session felt.",
+    group: "Training",
+  }),
+  scoreMetric({
+    key: "sociability",
+    label: "Sociability",
+    description: "Ease and desire for social interaction.",
+    group: "Daily wellbeing",
+  }),
+  scoreMetric({
+    key: "sex_drive",
+    label: "Sex drive",
+    description: "Self-rated libido today.",
+    group: "Hormones",
+  }),
+
+  pressureMetric({
     key: "stress",
     label: "Stress level",
-    description:
-      "Your perceived stress level, where lower scores indicate high stress and higher scores indicate calm.",
-    ...scaleTracker({ lowLabel: "High stress", highLabel: "Calm" }),
-  },
-  {
+    shortLabel: "Stress",
+    description: "Perceived stress load today.",
+    group: "Load",
+    lowLabel: "Calm",
+    highLabel: "High stress",
+  }),
+  pressureMetric({
+    key: "anxiety",
+    label: "Anxiety level",
+    description: "Perceived anxiety load today.",
+    group: "Load",
+    lowLabel: "Calm",
+    highLabel: "High anxiety",
+  }),
+  pressureMetric({
+    key: "cravings_intensity",
+    label: "Cravings intensity",
+    description: "How strong cravings felt today.",
+    group: "Load",
+    lowLabel: "Low",
+    highLabel: "Intense",
+  }),
+
+  severityMetric({
+    key: "anti_inflammatory",
+    label: "Inflammation",
+    description: "Soreness, stiffness, or swelling severity.",
+    group: "Symptoms",
+  }),
+  severityMetric({
+    key: "joint_health",
+    label: "Joint pain",
+    description: "Joint pain severity during daily movement.",
+    group: "Symptoms",
+  }),
+  severityMetric({
+    key: "headache_severity",
+    label: "Headache severity",
+    shortLabel: "Headache",
+    description: "Headache intensity today.",
+    group: "Symptoms",
+    highLabel: "Debilitating",
+  }),
+  severityMetric({
+    key: "skin_health",
+    label: "Skin clarity",
+    description: "Skin breakout or irritation severity.",
+    group: "Symptoms",
+    inversionHint: "0 = clear · 10 = severe breakout",
+  }),
+  severityMetric({
+    key: "digestive_health",
+    label: "Digestive comfort",
+    description: "Digestive issue severity today.",
+    group: "Symptoms",
+    inversionHint: "0 = no issues · 10 = severe issues",
+  }),
+  severityMetric({
+    key: "allergies_severity",
+    label: "Allergies severity",
+    description: "Allergy symptom severity today.",
+    group: "Symptoms",
+  }),
+  severityMetric({
+    key: "bloating",
+    label: "Bloating",
+    description: "Bloating severity today.",
+    group: "Symptoms",
+  }),
+  severityMetric({
+    key: "brain_fog",
+    label: "Brain fog",
+    description: "Mental fog severity today.",
+    group: "Symptoms",
+  }),
+
+  numericMetric({
+    key: "weight",
+    label: "Body weight",
+    description: "Body weight measured under similar conditions.",
+    group: "Measurements",
+    unit: "kg",
+    min: 30,
+    max: 250,
+    step: 0.1,
+    defaultValue: 70,
+    appleHealthSupported: true,
+  }),
+  numericMetric({
+    key: BLOOD_PRESSURE_METRIC_KEY,
+    label: "Blood pressure",
+    description: "Latest blood pressure as systolic/diastolic.",
+    group: "Measurements",
+    unit: "mmHg",
+    min: 40,
+    max: 260,
+    defaultValue: 120,
+    appleHealthSupported: true,
+    placeholder: "120/80",
+  }),
+  numericMetric({
+    key: "blood_sugar_control",
+    label: "Blood glucose",
+    description: "Latest blood glucose value.",
+    group: "Measurements",
+    unit: "mg/dL",
+    min: 40,
+    max: 400,
+    defaultValue: 95,
+    appleHealthSupported: true,
+  }),
+  numericMetric({
+    key: "cholesterol_support",
+    label: "LDL cholesterol",
+    description: "LDL cholesterol from a recent blood test.",
+    group: "Measurements",
+    unit: "mg/dL",
+    min: 40,
+    max: 300,
+    defaultValue: 130,
+    lowerIsBetter: true,
+  }),
+  numericMetric({
+    key: "strength_enhancing",
+    label: "Estimated 1RM",
+    description: "Estimated one-rep max for your main lift.",
+    group: "Measurements",
+    unit: "kg",
+    min: 0,
+    max: 400,
+    step: 0.5,
+    defaultValue: 40,
+  }),
+  numericMetric({
     key: "testosterone_enhancing",
     label: "Total testosterone",
     description: "Lab-measured total testosterone level.",
-    ...numberTracker({ unit: "ng/dL", min: 100, max: 1200, defaultValue: 500 }),
-  },
-  {
-    key: "urine_health",
-    label: "Urinary comfort",
-    description:
-      "Urinary comfort and symptom severity, including urgency, discomfort, and flow quality.",
-    ...scaleTracker(),
-  },
-  {
-    key: "weight",
-    label: "Body weight",
-    description:
-      "Body weight measured under similar conditions each time, such as morning before food.",
-    ...numberTracker({
-      unit: "kg",
-      min: 30,
-      max: 250,
-      step: 0.1,
-      defaultValue: 70,
-    }),
-  },
+    group: "Measurements",
+    unit: "ng/dL",
+    min: 100,
+    max: 1200,
+    defaultValue: 500,
+  }),
 ];
 
-export const PRESET_METRICS_BY_KEY = PRESET_METRICS.reduce((acc, metric) => {
-  acc[metric.key] = metric;
+export const PRESET_METRICS_BY_KEY = PRESET_METRICS.reduce((acc, item) => {
+  acc[item.key] = item;
   return acc;
 }, {});
 
-export const DEFAULT_METRIC_KEYS = ["sleep", "mood", "energy", "stress"];
+export const DEFAULT_METRIC_KEYS = [
+  "sleep",
+  "mood",
+  "energy",
+  "stress",
+  "headache_severity",
+];
 
 export const DEFAULT_METRICS = DEFAULT_METRIC_KEYS.map(
   (key) => PRESET_METRICS_BY_KEY[key]
 )
   .filter(Boolean)
-  .map((metric) => ({ ...metric, enabled: true }));
+  .map((item) => ({ ...item, enabled: true }));
 
-export const APPLE_HEALTH_SUPPORTED_METRIC_KEYS = [
-  "sleep",
-  "weight",
-  BLOOD_PRESSURE_METRIC_KEY,
-  "blood_sugar_control",
-];
+export const APPLE_HEALTH_SUPPORTED_METRIC_KEYS = PRESET_METRICS.filter(
+  (item) => item.appleHealthSupported
+).map((item) => item.key);
 
 export const CUSTOM_TRACKER_OPTIONS = [
   { key: TRACKER_TYPES.SCALE, label: "Scale (1-10)" },
@@ -324,10 +389,10 @@ export function toMetricKey(name) {
     .replace(/^_+|_+$/g, "");
 }
 
-export function metricTypeLabel(metric) {
-  if (!metric) return "Metric";
-  if (metric.unit) return `${metric.label} (${metric.unit})`;
-  return metric.label;
+export function metricTypeLabel(item) {
+  if (!item) return "Metric";
+  if (item.unit) return `${item.label} (${item.unit})`;
+  return item.label;
 }
 
 export function isNumericTrackerType(trackerType) {
@@ -338,33 +403,40 @@ export function isNumericTrackerType(trackerType) {
   );
 }
 
-export function isNumericMetric(metric) {
-  return isNumericTrackerType(metric?.trackerType);
+export function isNumericMetric(item) {
+  return isNumericTrackerType(item?.trackerType);
 }
 
-export function normalizeMetric(metric) {
-  if (!metric || typeof metric !== "object") return null;
-  const preset = PRESET_METRICS_BY_KEY[metric.key];
-  const base = preset ? { ...preset } : {};
+export function isPresetMetricKey(key) {
+  return Boolean(PRESET_METRICS_BY_KEY[key]);
+}
 
-  // For preset metrics, keep the latest preset metadata authoritative so label,
-  // description, tracker rules, and defaults stay current across app updates.
+export function normalizeMetric(item) {
+  if (!item || typeof item !== "object") return null;
+  const preset = PRESET_METRICS_BY_KEY[item.key];
+  const base = preset ? { ...preset } : {};
   const merged = preset
     ? {
-        ...metric,
+        ...item,
         ...base,
         key: base.key,
-        enabled: metric.enabled !== false,
+        enabled: item.enabled !== false,
       }
     : {
         ...base,
-        ...metric,
-        enabled: metric.enabled !== false,
+        ...item,
+        enabled: item.enabled !== false,
       };
 
-  const trackerType =
-    merged.trackerType ?? base.trackerType ?? TRACKER_TYPES.SCALE;
+  const trackerType = merged.trackerType ?? TRACKER_TYPES.SCALE;
   merged.trackerType = trackerType;
+  merged.inputArchetype =
+    merged.inputArchetype ??
+    (trackerType === TRACKER_TYPES.HOURS
+      ? INPUT_ARCHETYPES.DURATION
+      : trackerType === TRACKER_TYPES.NUMBER
+      ? INPUT_ARCHETYPES.NUMERIC_FREE
+      : INPUT_ARCHETYPES.SCORE_1_10);
 
   if (trackerType === TRACKER_TYPES.SCALE) {
     merged.min = Number.isFinite(merged.min) ? merged.min : 1;
@@ -372,7 +444,7 @@ export function normalizeMetric(metric) {
     merged.step = Number.isFinite(merged.step) ? merged.step : 1;
     merged.defaultValue = Number.isFinite(merged.defaultValue)
       ? merged.defaultValue
-      : 5;
+      : merged.min;
     merged.lowLabel = merged.lowLabel || "Low";
     merged.highLabel = merged.highLabel || "High";
   }
@@ -388,7 +460,7 @@ export function normalizeMetric(metric) {
 
   if (trackerType === TRACKER_TYPES.HOURS) {
     merged.min = Number.isFinite(merged.min) ? merged.min : 0;
-    merged.max = Number.isFinite(merged.max) ? merged.max : 16;
+    merged.max = Number.isFinite(merged.max) ? merged.max : 12;
     merged.step = Number.isFinite(merged.step) ? merged.step : 0.25;
     merged.unit = merged.unit || "hours";
     merged.defaultValue = Number.isFinite(merged.defaultValue)
@@ -418,26 +490,16 @@ export function makeCustomMetric(name, trackerType) {
   });
   if (!baseMetric) return null;
 
-  if (trackerType === TRACKER_TYPES.NUMBER) {
-    baseMetric.placeholder = "Enter a number";
-  }
-  if (trackerType === TRACKER_TYPES.HOURS) {
-    baseMetric.placeholder = "e.g. 7.5";
-  }
-  if (trackerType === TRACKER_TYPES.TEXT) {
-    baseMetric.placeholder = "Describe today";
-  }
-  if (trackerType === TRACKER_TYPES.SCALE) {
-    baseMetric.lowLabel = "Low";
-    baseMetric.highLabel = "High";
-  }
+  if (trackerType === TRACKER_TYPES.NUMBER) baseMetric.placeholder = "Enter a number";
+  if (trackerType === TRACKER_TYPES.HOURS) baseMetric.placeholder = "e.g. 7.5";
+  if (trackerType === TRACKER_TYPES.TEXT) baseMetric.placeholder = "Describe today";
   return baseMetric;
 }
 
-export function normalizeNumericValue(rawValue, metric) {
+export function normalizeNumericValue(rawValue, item) {
   const value = Number(rawValue);
   if (!Number.isFinite(value)) return null;
-  const normalized = normalizeMetric(metric);
+  const normalized = normalizeMetric(item);
   if (!normalized || !isNumericMetric(normalized)) return null;
   const min = Number.isFinite(normalized.min) ? normalized.min : value;
   const max = Number.isFinite(normalized.max) ? normalized.max : value;
@@ -446,8 +508,8 @@ export function normalizeNumericValue(rawValue, metric) {
   return Math.min(hi, Math.max(lo, value));
 }
 
-export function defaultEntryValue(metric) {
-  const normalized = normalizeMetric(metric);
+export function defaultEntryValue(item) {
+  const normalized = normalizeMetric(item);
   if (!normalized) return 0;
   if (normalized.trackerType === TRACKER_TYPES.TEXT) return "";
   if (Number.isFinite(normalized.defaultValue)) return normalized.defaultValue;
@@ -460,8 +522,8 @@ function trimTrailingZeros(value) {
   return String(value).replace(/\.0+$|(\.\d*[1-9])0+$/, "$1");
 }
 
-export function formatMetricValue(metric, value) {
-  const normalized = normalizeMetric(metric);
+export function formatMetricValue(item, value) {
+  const normalized = normalizeMetric(item);
   if (!normalized) return "—";
 
   if (normalized.key === BLOOD_PRESSURE_METRIC_KEY) {
@@ -490,15 +552,13 @@ export function formatMetricValue(metric, value) {
   return `${trimTrailingZeros(numericValue)}${suffix}`;
 }
 
-export function getMetricChartRange(metric, numericValues) {
-  const normalized = normalizeMetric(metric);
+export function getMetricChartRange(item, numericValues) {
+  const normalized = normalizeMetric(item);
   const values = Array.isArray(numericValues)
     ? numericValues.filter((value) => Number.isFinite(value))
     : [];
 
-  if (!values.length) {
-    return { min: 0, max: 1 };
-  }
+  if (!values.length) return { min: 0, max: 1 };
 
   const dataMin = Math.min(...values);
   const dataMax = Math.max(...values);
@@ -509,10 +569,7 @@ export function getMetricChartRange(metric, numericValues) {
     const centeredMax = Math.ceil(anchor + 10);
     const min = Math.min(centeredMin, Math.floor(dataMin));
     const max = Math.max(centeredMax, Math.ceil(dataMax));
-    return {
-      min,
-      max: max === min ? max + 1 : max,
-    };
+    return { min, max: max === min ? max + 1 : max };
   }
 
   const configuredMin = Number.isFinite(normalized?.min)
@@ -523,11 +580,7 @@ export function getMetricChartRange(metric, numericValues) {
     : dataMax;
   const min = Math.min(configuredMin, dataMin);
   const max = Math.max(configuredMax, dataMax);
-
-  return {
-    min,
-    max: max === min ? max + 1 : max,
-  };
+  return { min, max: max === min ? max + 1 : max };
 }
 
 export function parseNumericText(input) {
@@ -591,5 +644,3 @@ export function formatBloodPressureValue(value) {
   if (!normalized) return "—";
   return `${normalized.systolic}/${normalized.diastolic} mmHg`;
 }
-
-export { TRACKER_TYPES };

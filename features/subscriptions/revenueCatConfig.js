@@ -41,12 +41,6 @@ export const REVENUECAT_YEARLY_IDENTIFIER =
     revenueCatExtra?.yearlyIdentifier,
   ]) || "yearly";
 
-const testStoreApiKey =
-  firstNonEmptyString([
-    process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY,
-    revenueCatExtra?.testApiKey,
-  ]) || "test_IdnZHheVAHVneYsmEjbEJBOomhC";
-
 const appleApiKey = firstNonEmptyString([
   process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY,
   revenueCatExtra?.appleApiKey,
@@ -72,14 +66,6 @@ function getPlatformApiKey() {
 export function getRevenueCatApiKeySelection() {
   const platformApiKey = getPlatformApiKey();
 
-  if (__DEV__ && testStoreApiKey) {
-    return {
-      apiKey: testStoreApiKey,
-      mode: "test_store",
-      error: "",
-    };
-  }
-
   if (platformApiKey) {
     return {
       apiKey: platformApiKey,
@@ -102,14 +88,6 @@ export function getRevenueCatApiKeySelection() {
     Platform.OS === "ios"
       ? "EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY"
       : "EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY";
-
-  if (testStoreApiKey) {
-    return {
-      apiKey: "",
-      mode: "misconfigured_release",
-      error: `RevenueCat is still using a Test Store key. Add ${platformEnvVar} before shipping a ${platformLabel} build.`,
-    };
-  }
 
   return {
     apiKey: "",

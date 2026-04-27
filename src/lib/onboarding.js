@@ -50,11 +50,16 @@ function normalizeOnboardingDraft(draft) {
 
   const answers =
     draft.answers && typeof draft.answers === "object" ? draft.answers : {};
+  const currentStepKey =
+    typeof draft.currentStepKey === "string" && draft.currentStepKey.trim()
+      ? draft.currentStepKey.trim()
+      : null;
   const currentPageIndex = Number.isInteger(draft.currentPageIndex)
     ? Math.max(0, draft.currentPageIndex)
     : 0;
 
   return {
+    currentStepKey,
     currentPageIndex,
     answers,
     mode: normalizeOnboardingMode(draft.mode),

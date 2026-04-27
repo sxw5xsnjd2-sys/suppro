@@ -7,6 +7,7 @@ import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { HomeHeader } from "@/features/supplements/components/HomeHeader";
 import {
+  ChatFloatingButton,
   EmptyStateCard,
   EvidenceDots,
   PrimaryCard,
@@ -1024,7 +1025,11 @@ export default function HomeScreen() {
   );
 
   return (
-    <BackdropScreen header={<HomeHeader />} contentStyle={styles.content}>
+    <BackdropScreen
+      header={<HomeHeader />}
+      contentStyle={styles.content}
+      floatingSlot={<ChatFloatingButton />}
+    >
       <SectionTitle
         title={selectedDateHeading}
         style={styles.dateHeadingSection}

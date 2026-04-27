@@ -60,5 +60,7 @@ const variantStyles = StyleSheet.create({
   },
   accent: {
     backgroundColor: appTheme.colors.surfaceAccent,
+    borderWidth: 1,
+    borderColor: "rgba(20,20,20,0.08)",
   },
 });

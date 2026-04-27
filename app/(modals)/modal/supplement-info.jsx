@@ -384,8 +384,12 @@ function VerifiedInfoModal({ visible, onClose }) {
 
           <Text style={styles.verifiedSheetBody}>
             {"It's typically given to products that use well-known, widely "}
-            {"accepted ingredients, are considered safe when used as directed, "}
-            {"come from reputable brands with good manufacturing practices, and "}
+            {
+              "accepted ingredients, are considered safe when used as directed, "
+            }
+            {
+              "come from reputable brands with good manufacturing practices, and "
+            }
             {"are popular among users with consistent, positive usage."}
           </Text>
 
@@ -435,7 +439,9 @@ function BenefitRow({
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
-      accessibilityLabel={`${benefit.label}. ${open ? "Collapse" : "Expand"} evidence.`}
+      accessibilityLabel={`${benefit.label}. ${
+        open ? "Collapse" : "Expand"
+      } evidence.`}
       onPress={onPress}
       style={({ pressed }) => [
         styles.benefitRow,
@@ -638,7 +644,8 @@ export default function SupplementInfoModal() {
     }
 
     if (isTrackedScannedSource) {
-      const matchedIngredients = getTrackedScanMatchedIngredients(trackedSupplement);
+      const matchedIngredients =
+        getTrackedScanMatchedIngredients(trackedSupplement);
 
       if (!trackedSupplement || matchedIngredients.length === 0) {
         setData(null);
@@ -1127,7 +1134,9 @@ export default function SupplementInfoModal() {
 
         {!loaded ? (
           <PrimaryCard style={styles.loadingCard}>
-            <Text style={styles.loadingText}>Loading supplement details...</Text>
+            <Text style={styles.loadingText}>
+              Loading supplement details...
+            </Text>
           </PrimaryCard>
         ) : null}
 
@@ -1141,7 +1150,10 @@ export default function SupplementInfoModal() {
               ]}
             >
               {!isProductNotRecognizedFailure ? (
-                <EvidenceRatingGauge value={displayedRating} toneScore={rating} />
+                <EvidenceRatingGauge
+                  value={displayedRating}
+                  toneScore={rating}
+                />
               ) : null}
 
               {!isScanFailure && scoreAdjustmentSummary ? (
@@ -1313,7 +1325,9 @@ export default function SupplementInfoModal() {
 
               {showIngredientsSection ? (
                 <View style={styles.ingredientsSection}>
-                  <Text style={styles.ingredientsSectionTitle}>Ingredients</Text>
+                  <Text style={styles.ingredientsSectionTitle}>
+                    Ingredients
+                  </Text>
 
                   {matchedIngredients.length > 0 ? (
                     <View style={styles.ingredientsList}>
@@ -1344,12 +1358,14 @@ export default function SupplementInfoModal() {
                                 : undefined
                             }
                             disabled={!canOpenIngredient}
-                            key={`${item?.ingredientNormalized ?? ingredientName}:${
-                              item?.catalogId ?? index
-                            }:${index}`}
+                            key={`${
+                              item?.ingredientNormalized ?? ingredientName
+                            }:${item?.catalogId ?? index}:${index}`}
                             onPress={() => handleOpenIngredient(item)}
                             style={({ pressed }) => [
                               styles.ingredientRow,
+                              index < matchedIngredients.length - 1 &&
+                                styles.ingredientRowDivider,
                               canOpenIngredient &&
                                 pressed &&
                                 styles.ingredientRowPressed,
@@ -1401,17 +1417,16 @@ export default function SupplementInfoModal() {
                   )}
                 </View>
               ) : null}
-
             </PrimaryCard>
 
             {!isScanFailure
               ? detailCards.map((section) => (
-              <DetailCard
-                key={section.key}
-                icon={section.icon}
-                title={section.title}
-                body={section.body}
-              />
+                  <DetailCard
+                    key={section.key}
+                    icon={section.icon}
+                    title={section.title}
+                    body={section.body}
+                  />
                 ))
               : null}
           </>
@@ -1465,8 +1480,8 @@ const styles = StyleSheet.create({
   },
   pageTitle: {
     flexShrink: 1,
-    fontSize: 17,
-    lineHeight: 22,
+    fontSize: 22,
+    lineHeight: 26,
     fontFamily: typography.fontFamily.heading,
     color: appTheme.colors.textPrimary,
   },
@@ -1829,18 +1844,20 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   ingredientsList: {
-    gap: 10,
+    backgroundColor: appTheme.colors.surface,
   },
   ingredientRow: {
     minHeight: 54,
-    borderRadius: 16,
-    backgroundColor: "#F2F2F7",
-    paddingHorizontal: 14,
+    paddingHorizontal: 2,
     paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
+  },
+  ingredientRowDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: appTheme.colors.borderSubtle,
   },
   ingredientRowPressed: {
     opacity: 0.72,

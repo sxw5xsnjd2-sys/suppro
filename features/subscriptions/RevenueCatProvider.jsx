@@ -29,7 +29,9 @@ function getPremiumEntitlement(customerInfo) {
 }
 
 function isPremiumActive(customerInfo) {
-  return Boolean(customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_ID]);
+  return Boolean(
+    customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_ID]
+  );
 }
 
 function findYearlyPackage(offering) {
@@ -54,7 +56,9 @@ function getPreferredOffering(offerings) {
   }
 
   for (const offering of Object.values(offerings.all ?? {})) {
-    if (!orderedOfferings.some((item) => item.identifier === offering.identifier)) {
+    if (
+      !orderedOfferings.some((item) => item.identifier === offering.identifier)
+    ) {
       orderedOfferings.push(offering);
     }
   }
@@ -120,10 +124,11 @@ export function RevenueCatProvider({ children }) {
 
   const syncSubscriberAttributes = async (user) => {
     if (!hasConfiguredRef.current) return null;
+    if (!hasNonAnonymousUser(user)) return null;
 
     const displayName = getUserDisplayName({ user }) || null;
     const authProvider = getUserAuthProvider(user) || "";
-    const stableUserId = hasNonAnonymousUser(user) ? user.id : "";
+    const stableUserId = user.id;
 
     try {
       await Promise.all([
@@ -137,10 +142,7 @@ export function RevenueCatProvider({ children }) {
 
       return await Purchases.syncAttributesAndOfferingsIfNeeded();
     } catch (error) {
-      console.warn(
-        "[revenuecat] Failed to sync subscriber attributes",
-        error
-      );
+      console.warn("[revenuecat] Failed to sync subscriber attributes", error);
       return null;
     }
   };
@@ -217,17 +219,9 @@ export function RevenueCatProvider({ children }) {
       ) {
         const result = await Purchases.logIn(nextIdentifiedAppUserId);
         currentIdentifiedAppUserIdRef.current = nextIdentifiedAppUserId;
+
         if (isMountedRef.current) {
           setCustomerInfo(result.customerInfo);
-        }
-      } else if (
-        !nextIdentifiedAppUserId &&
-        currentIdentifiedAppUserIdRef.current
-      ) {
-        const nextCustomerInfo = await Purchases.logOut();
-        currentIdentifiedAppUserIdRef.current = null;
-        if (isMountedRef.current) {
-          setCustomerInfo(nextCustomerInfo);
         }
       }
 
@@ -271,7 +265,6 @@ export function RevenueCatProvider({ children }) {
         } = await supabase.auth.getSession();
         const initialUser = session?.user ?? null;
         const initialAppUserId = getRevenueCatAppUserId(initialUser);
-
         await Purchases.setLogLevel(
           REVENUECAT_DEBUG_LOGS_ENABLED
             ? Purchases.LOG_LEVEL.DEBUG
@@ -280,9 +273,9 @@ export function RevenueCatProvider({ children }) {
 
         Purchases.configure({
           apiKey: selection.apiKey,
-          appUserID: initialAppUserId,
           diagnosticsEnabled: REVENUECAT_DEBUG_LOGS_ENABLED,
           storeKitVersion: Purchases.STOREKIT_VERSION.STOREKIT_2,
+          ...(initialAppUserId ? { appUserID: initialAppUserId } : {}),
         });
 
         if (REVENUECAT_DEBUG_LOGS_ENABLED) {
@@ -295,7 +288,7 @@ export function RevenueCatProvider({ children }) {
         }
 
         hasConfiguredRef.current = true;
-        currentIdentifiedAppUserIdRef.current = initialAppUserId;
+        currentIdentifiedAppUserIdRef.current = initialAppUserId ?? null;
 
         customerInfoListener = (nextCustomerInfo) => {
           if (isMountedRef.current) {
@@ -314,10 +307,7 @@ export function RevenueCatProvider({ children }) {
       } catch (error) {
         if (isMountedRef.current) {
           setConfigurationError(
-            toRevenueCatErrorMessage(
-              error,
-              "RevenueCat failed to initialize."
-            )
+            toRevenueCatErrorMessage(error, "RevenueCat failed to initialize.")
           );
         }
       } finally {

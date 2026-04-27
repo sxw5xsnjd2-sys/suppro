@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -16,14 +17,20 @@ import {
   AppHeader,
   EmptyStateCard,
   PrimaryCard,
-  StatusPill,
 } from "@/components/common/ui";
 import { CATALOG_TYPES } from "@/features/supplements/catalog";
 import { appTheme, spacing, typography } from "@/theme";
 import { searchSupplementCatalog } from "@src/data/searchSupplementCatalog";
 
+const RECENT_SUPPLEMENT_SEARCHES_KEY = "recent-supplement-searches";
+const MAX_RECENT_SEARCHES = 5;
+
 function asString(value) {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
+function getRecentSearchKey(item) {
+  return `${item.catalogType}-${item.id}`;
 }
 
 function SearchResultCard({ item, onPress }) {
@@ -42,14 +49,51 @@ function SearchResultCard({ item, onPress }) {
             {isActiveIngredient ? "Active ingredient" : "Supplement product"}
           </Text>
         </View>
-
-        <StatusPill
-          label={isActiveIngredient ? "INGREDIENT" : "SUPPLEMENT"}
-          tone={isActiveIngredient ? "success" : "neutral"}
-          style={styles.resultBadge}
-        />
       </View>
     </PrimaryCard>
+  );
+}
+
+function RecentSearches({ items, onPress }) {
+  return (
+    <View style={styles.recentSection}>
+      <View style={styles.resultsSummaryRow}>
+        <Text style={styles.resultsSummaryTitle}>Recent searches</Text>
+      </View>
+
+      <View style={styles.recentList}>
+        {items.map((item, index) => {
+          const isActiveIngredient =
+            item.catalogType === CATALOG_TYPES.ACTIVE_INGREDIENT;
+
+          return (
+            <AppButton
+              key={getRecentSearchKey(item)}
+              onPress={() => onPress(item)}
+              variant="ghost"
+              size="md"
+              style={[
+                styles.recentRow,
+                index < items.length - 1 && styles.recentRowDivider,
+              ]}
+              contentStyle={styles.recentRowContent}
+            >
+              <View style={styles.resultCopy}>
+                <Text style={styles.resultName}>{item.name}</Text>
+                <Text style={styles.resultMeta}>
+                  {isActiveIngredient ? "Active ingredient" : "Supplement product"}
+                </Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={16}
+                color={appTheme.colors.textSecondary}
+              />
+            </AppButton>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
@@ -71,15 +115,9 @@ export default function SupplementSearchScreen() {
   const [query, setQuery] = useState(initialQuery);
   const [sections, setSections] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [recentSearches, setRecentSearches] = useState([]);
 
   const trimmedQuery = useMemo(() => query.trim(), [query]);
-  const resultCount = useMemo(
-    () => sections.reduce((sum, section) => sum + section.data.length, 0),
-    [sections]
-  );
-  const resultCountLabel = loading
-    ? "SEARCHING"
-    : `${resultCount} ${resultCount === 1 ? "MATCH" : "MATCHES"}`;
   const headerSubtitle =
     mode === "picker"
       ? "Pick an active ingredient or supplement product."
@@ -112,7 +150,69 @@ export default function SupplementSearchScreen() {
     };
   }, [trimmedQuery]);
 
+  useEffect(() => {
+    let active = true;
+
+    AsyncStorage.getItem(RECENT_SUPPLEMENT_SEARCHES_KEY)
+      .then((raw) => {
+        if (!active || !raw) {
+          return;
+        }
+
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+          return;
+        }
+
+        setRecentSearches(
+          parsed.filter(
+            (item) =>
+              item &&
+              typeof item === "object" &&
+              typeof item.id === "string" &&
+              typeof item.name === "string" &&
+              typeof item.catalogType === "string"
+          )
+        );
+      })
+      .catch((error) => {
+        console.error("Failed to load recent supplement searches", error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const persistRecentSearches = (nextItems) => {
+    setRecentSearches(nextItems);
+    AsyncStorage.setItem(
+      RECENT_SUPPLEMENT_SEARCHES_KEY,
+      JSON.stringify(nextItems)
+    ).catch((error) => {
+      console.error("Failed to save recent supplement searches", error);
+    });
+  };
+
+  const saveRecentSearch = (item) => {
+    const recentItem = {
+      id: item.id,
+      name: item.name,
+      catalogType: item.catalogType,
+    };
+    const nextItems = [
+      recentItem,
+      ...recentSearches.filter(
+        (existing) => getRecentSearchKey(existing) !== getRecentSearchKey(recentItem)
+      ),
+    ].slice(0, MAX_RECENT_SEARCHES);
+
+    persistRecentSearches(nextItems);
+  };
+
   const handleSelect = (item) => {
+    saveRecentSearch(item);
+
     if (mode === "picker") {
       router.navigate({
         pathname: "/(modals)/modal/supplement",
@@ -136,6 +236,12 @@ export default function SupplementSearchScreen() {
 
   const renderEmptyState = () => {
     if (!trimmedQuery) {
+      if (recentSearches.length > 0) {
+        return (
+          <RecentSearches items={recentSearches} onPress={handleSelect} />
+        );
+      }
+
       return (
         <EmptyStateCard
           title="Start typing to search"
@@ -228,11 +334,6 @@ export default function SupplementSearchScreen() {
               {trimmedQuery ? (
                 <View style={styles.resultsSummaryRow}>
                   <Text style={styles.resultsSummaryTitle}>Results</Text>
-                  <StatusPill
-                    label={resultCountLabel}
-                    tone="neutral"
-                    style={styles.resultsCountPill}
-                  />
                 </View>
               ) : null}
             </View>
@@ -305,11 +406,31 @@ const styles = StyleSheet.create({
     color: appTheme.colors.textHeading,
     letterSpacing: -0.4,
   },
-  resultsCountPill: {
-    backgroundColor: "rgba(255,255,255,0.42)",
+  recentSection: {
+    marginBottom: spacing.md,
+  },
+  recentList: {
+    backgroundColor: "transparent",
+    marginTop: spacing.sm,
+  },
+  recentRow: {
+    minHeight: 56,
+    borderRadius: 0,
+    paddingHorizontal: 0,
+    paddingVertical: spacing.sm,
+  },
+  recentRowDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: appTheme.colors.borderSubtle,
+  },
+  recentRowContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
   },
   stateCard: {
-    alignItems: "flex-start",
+    alignItems: "center",
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.md,
   },
@@ -318,12 +439,14 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.headingSemiBold,
     color: appTheme.colors.textStrong,
     marginBottom: spacing.xs,
+    textAlign: "center",
   },
   stateBody: {
     fontSize: 14,
     lineHeight: 21,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
+    textAlign: "center",
   },
   resultCard: {
     marginBottom: spacing.sm,
@@ -365,8 +488,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textSecondary,
-  },
-  resultBadge: {
-    marginLeft: spacing.xs,
   },
 });

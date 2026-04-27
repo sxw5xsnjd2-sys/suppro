@@ -4,14 +4,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   APPLE_HEALTH_ENTRY_SOURCE,
   APPLE_HEALTH_SUPPORTED_METRIC_KEYS,
-  DEFAULT_METRICS,
   MANUAL_ENTRY_SOURCE,
   PRESET_METRICS_BY_KEY,
   normalizeMetric,
 } from "./metricDefinitions";
 import { normalizeHealthEntry } from "./selectors";
 
-const HEALTH_STORE_VERSION = 2;
+const HEALTH_STORE_VERSION = 4;
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -78,7 +77,7 @@ function uniqueEntries(entries) {
 }
 
 function normalizeMetrics(metrics) {
-  const baseMetrics = Array.isArray(metrics) && metrics.length ? metrics : DEFAULT_METRICS;
+  const baseMetrics = Array.isArray(metrics) ? metrics : [];
   const nextByKey = new Map();
 
   baseMetrics.forEach((metric) => {
@@ -115,7 +114,7 @@ function enablePresetMetrics(metrics, metricKeys) {
 function buildInitialState() {
   return {
     entries: [],
-    metrics: DEFAULT_METRICS.map((metric) => ({ ...metric })),
+    metrics: [],
     connection: "disconnected",
     connectionError: "",
     sourceSettings: {},
@@ -125,9 +124,7 @@ function buildInitialState() {
 
 function migrateHealthState(persistedState) {
   const baseState = buildInitialState();
-  const nextState = isPlainObject(persistedState)
-    ? persistedState
-    : {};
+  const nextState = isPlainObject(persistedState) ? persistedState : {};
 
   return {
     ...baseState,
@@ -203,7 +200,7 @@ function sanitizeHealthStoreValue(parsed) {
 
   const state = {
     entries: Array.isArray(parsed.state.entries) ? parsed.state.entries : [],
-    metrics: Array.isArray(parsed.state.metrics) ? parsed.state.metrics : DEFAULT_METRICS,
+    metrics: Array.isArray(parsed.state.metrics) ? parsed.state.metrics : [],
     connection: normalizeConnection(parsed.state.connection),
     connectionError:
       typeof parsed.state.connectionError === "string"
@@ -288,6 +285,20 @@ export const useHealthStore = create()(
           metrics: (state.metrics ?? []).map((metric) =>
             metric.key === key ? { ...metric, enabled: true } : metric
           ),
+        })),
+
+      disableMetric: (key) =>
+        set((state) => ({
+          metrics: (state.metrics ?? []).map((metric) =>
+            metric.key === key ? { ...metric, enabled: false } : metric
+          ),
+          sourceSettings: isPlainObject(state.sourceSettings)
+            ? Object.fromEntries(
+                Object.entries(state.sourceSettings).filter(
+                  ([metricKey]) => metricKey !== key
+                )
+              )
+            : {},
         })),
 
       deleteMetric: (key) =>

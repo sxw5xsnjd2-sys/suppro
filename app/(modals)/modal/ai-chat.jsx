@@ -41,6 +41,11 @@ const MAX_CONTEXT_ENTRIES = 200;
 const MAX_CONVERSATION_MESSAGES = 12;
 const MAX_SUPPLEMENTS_PER_BENEFIT = 5;
 const CHAT_ACTION_BAR_HEIGHT = 40;
+const BENEFIT_TONE_RANK = {
+  gold: 0,
+  silver: 1,
+  bronze: 2,
+};
 
 function stripBasicMarkdown(value) {
   if (typeof value !== "string" || !value) {
@@ -55,10 +60,11 @@ function stripBasicMarkdown(value) {
 
 function buildEvidenceCatalog(rows) {
   const byBenefit = {};
+  const benefitRoutes = {};
   const bySupplement = {};
   const normalizedRows = (rows ?? [])
     .filter((row) => row && row.id)
-    .map((row) => {
+    .map((row, index) => {
       const fallbackBenefitName = Array.isArray(row.supplement_benefits)
         ? row.supplement_benefits.find(
             (item) => typeof item?.supplement_name === "string"
@@ -73,21 +79,41 @@ function buildEvidenceCatalog(rows) {
           ? fallbackBenefitName.trim()
           : null;
 
+      const benefitEntries = Array.isArray(row.supplement_benefits)
+        ? row.supplement_benefits
+            .map((item) => {
+              const label =
+                typeof item?.label === "string" ? item.label.trim() : "";
+              const rankingScore = Number.isFinite(item?.score)
+                ? item.score
+                : Number.isFinite(item?.benefit_score)
+                ? item.benefit_score
+                : Number.isFinite(item?.ranking_score)
+                ? item.ranking_score
+                : null;
+
+              if (!label) return null;
+
+              return {
+                label,
+                rankingScore,
+                icon: item?.icon ?? null,
+              };
+            })
+            .filter(Boolean)
+        : [];
+
       return {
         id: row.id,
+        sourceIndex: index,
         name,
         evidenceScore:
           typeof row.evidence_score === "number" &&
           Number.isFinite(row.evidence_score)
             ? row.evidence_score
             : null,
-        benefits: Array.isArray(row.supplement_benefits)
-          ? row.supplement_benefits
-              .map((item) =>
-                typeof item?.label === "string" ? item.label.trim() : ""
-              )
-              .filter(Boolean)
-          : [],
+        benefits: benefitEntries.map((item) => item.label),
+        benefitEntries,
       };
     })
     .filter((row) => typeof row.name === "string" && row.name);
@@ -100,19 +126,49 @@ function buildEvidenceCatalog(rows) {
       benefits: row.benefits,
     };
 
-    row.benefits.forEach((benefit) => {
-      if (!byBenefit[benefit]) byBenefit[benefit] = [];
-      byBenefit[benefit].push({
+    row.benefitEntries.forEach((benefit) => {
+      if (!byBenefit[benefit.label]) byBenefit[benefit.label] = [];
+      byBenefit[benefit.label].push({
         id: row.id,
         name: row.name,
         evidenceScore: row.evidenceScore,
+        rankingScore: benefit.rankingScore,
+        icon: benefit.icon,
+        sourceIndex: row.sourceIndex,
       });
     });
   });
 
   Object.keys(byBenefit).forEach((benefit) => {
+    benefitRoutes[benefit] = `/benefit-ranking?label=${encodeURIComponent(
+      benefit
+    )}`;
     byBenefit[benefit] = byBenefit[benefit]
-      .sort((a, b) => (b.evidenceScore ?? -1) - (a.evidenceScore ?? -1))
+      .sort((a, b) => {
+        const rankingDelta = (b.rankingScore ?? -1) - (a.rankingScore ?? -1);
+        if (rankingDelta !== 0) {
+          return rankingDelta;
+        }
+
+        const toneDelta =
+          (BENEFIT_TONE_RANK[a.icon] ?? Number.MAX_SAFE_INTEGER) -
+          (BENEFIT_TONE_RANK[b.icon] ?? Number.MAX_SAFE_INTEGER);
+        if (toneDelta !== 0) {
+          return toneDelta;
+        }
+
+        const evidenceDelta = (b.evidenceScore ?? -1) - (a.evidenceScore ?? -1);
+        if (evidenceDelta !== 0) {
+          return evidenceDelta;
+        }
+
+        const nameDelta = String(a.name).localeCompare(String(b.name));
+        if (nameDelta !== 0) {
+          return nameDelta;
+        }
+
+        return (a.sourceIndex ?? 0) - (b.sourceIndex ?? 0);
+      })
       .slice(0, MAX_SUPPLEMENTS_PER_BENEFIT);
   });
 
@@ -130,6 +186,7 @@ function buildEvidenceCatalog(rows) {
   return {
     topOverall,
     byBenefit,
+    benefitRoutes,
     bySupplement,
   };
 }
@@ -342,6 +399,7 @@ export function AiChatScreen({ presentation = "screen" }) {
   const [evidenceCatalog, setEvidenceCatalog] = useState({
     topOverall: [],
     byBenefit: {},
+    benefitRoutes: {},
     bySupplement: {},
   });
   const scrollRef = useRef(null);
@@ -372,7 +430,7 @@ export function AiChatScreen({ presentation = "screen" }) {
     publicSupabase
       .from("supplements")
       .select(
-        "id, name, evidence_score, supplement_benefits(label, supplement_name)"
+        "id, name, evidence_score, supplement_benefits(label, supplement_name, score, icon)"
       )
       .eq("status", "approved")
       .limit(500)
@@ -386,6 +444,7 @@ export function AiChatScreen({ presentation = "screen" }) {
           setEvidenceCatalog({
             topOverall: [],
             byBenefit: {},
+            benefitRoutes: {},
             bySupplement: {},
           });
           return;

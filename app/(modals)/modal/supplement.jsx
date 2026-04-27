@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
@@ -19,7 +20,7 @@ import {
   AppSectionCard,
   PrimaryCard,
 } from "@/components/common/ui";
-import { appTheme, spacing, typography } from "@/theme";
+import { appTheme, shadows, spacing, typography } from "@/theme";
 import { SUPPLEMENT_ROUTES } from "@/features/supplements/types";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { Icon } from "@/features/supplements/icons/Icon";
@@ -635,6 +636,15 @@ export default function SupplementModal() {
                   pressed && styles.pressedOption,
                 ]}
               >
+                {route === option.key ? (
+                  <LinearGradient
+                    pointerEvents="none"
+                    colors={appTheme.tabBar.fabGradient}
+                    start={{ x: 0.5, y: 0 }}
+                    end={{ x: 0.5, y: 1 }}
+                    style={styles.routeOptionGradient}
+                  />
+                ) : null}
                 <View
                   style={[
                     styles.routeIconWrap,
@@ -744,6 +754,15 @@ export default function SupplementModal() {
                       pressed && styles.pressedOption,
                     ]}
                   >
+                    {active ? (
+                      <LinearGradient
+                        pointerEvents="none"
+                        colors={appTheme.tabBar.fabGradient}
+                        start={{ x: 0.5, y: 0 }}
+                        end={{ x: 0.5, y: 1 }}
+                        style={styles.dayPillGradient}
+                      />
+                    ) : null}
                     <Text
                       style={[styles.dayText, active && styles.dayTextActive]}
                     >
@@ -776,6 +795,15 @@ export default function SupplementModal() {
                       pressed && styles.pressedOption,
                     ]}
                   >
+                    {option.minutes === timeMinutes ? (
+                      <LinearGradient
+                        pointerEvents="none"
+                        colors={appTheme.tabBar.fabGradient}
+                        start={{ x: 0.5, y: 0 }}
+                        end={{ x: 0.5, y: 1 }}
+                        style={styles.timeOptionGradient}
+                      />
+                    ) : null}
                     <Text
                       style={[
                         styles.timeText,
@@ -941,10 +969,17 @@ const styles = StyleSheet.create({
     borderColor: appTheme.colors.borderSubtle,
   },
   routeOptionActive: {
-    backgroundColor: "rgba(255,255,255,0.86)",
+    backgroundColor: "transparent",
     borderColor: "rgba(20,20,20,0.14)",
+    ...shadows.card,
+  },
+  routeOptionGradient: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 999,
   },
   routeIconWrap: {
+    position: "relative",
+    zIndex: 1,
     width: 26,
     height: 26,
     borderRadius: 13,
@@ -956,6 +991,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
   },
   routeLabel: {
+    position: "relative",
+    zIndex: 1,
     fontSize: 13,
     fontFamily: typography.fontFamily.bodyMedium,
     color: appTheme.colors.textSecondary,
@@ -1010,10 +1047,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   dayPillActive: {
-    backgroundColor: appTheme.colors.surfaceAccent,
+    backgroundColor: "transparent",
     borderColor: "rgba(20,20,20,0.14)",
+    ...shadows.card,
+  },
+  dayPillGradient: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 20,
   },
   dayText: {
+    position: "relative",
+    zIndex: 1,
     fontSize: 14,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textSecondary,
@@ -1042,9 +1086,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   timeOptionActive: {
-    backgroundColor: appTheme.colors.surfaceAccent,
+    backgroundColor: "transparent",
+    ...shadows.card,
+  },
+  timeOptionGradient: {
+    ...StyleSheet.absoluteFillObject,
   },
   timeText: {
+    position: "relative",
+    zIndex: 1,
     fontSize: 16,
     lineHeight: 20,
     fontFamily: typography.fontFamily.body,

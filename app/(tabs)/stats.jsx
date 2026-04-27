@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
@@ -8,7 +7,6 @@ import {
   AppButton,
   AppHeader,
   EvidenceDots,
-  PrimaryCard,
   SectionTitle,
   StatusPill,
 } from "@/components/common/ui";
@@ -248,24 +246,30 @@ function StatPanel({ label, value, meta, style, valueStyle }) {
   );
 }
 
-function EvidenceGroupPanel({ title, count, items, tone }) {
+function EvidenceGroupPanel({ title, items, tone, noTopDivider = false }) {
   return (
-    <View style={[styles.evidencePanel, evidencePanelToneStyles[tone]]}>
+    <View
+      style={[
+        styles.evidencePanel,
+        evidencePanelToneStyles[tone],
+        noTopDivider && styles.panelNoTopDivider,
+      ]}
+    >
       <View style={styles.evidencePanelHeader}>
         <Text style={[styles.evidencePanelTitle, evidenceTitleToneStyles[tone]]}>
           {title}
         </Text>
-        <StatusPill
-          label={`${count} ${count === 1 ? "ITEM" : "ITEMS"}`}
-          tone="neutral"
-          style={styles.evidencePanelPill}
-          textStyle={styles.evidencePanelPillText}
-        />
       </View>
 
       {items.length ? (
-        items.map((item) => (
-          <View key={item.id} style={styles.evidenceItemRow}>
+        items.map((item, index) => (
+          <View
+            key={item.id}
+            style={[
+              styles.evidenceItemRow,
+              index > 0 && styles.listDivider,
+            ]}
+          >
             <View style={styles.evidenceItemCopy}>
               <Text style={styles.evidenceItemName}>{item.name}</Text>
               <Text style={styles.evidenceItemMeta}>
@@ -292,8 +296,14 @@ function MetricInsightPanel({ title, items, emptyText, tone }) {
       </Text>
 
       {items.length ? (
-        items.map((item) => (
-          <View key={item.key} style={styles.metricInsightItem}>
+        items.map((item, index) => (
+          <View
+            key={item.key}
+            style={[
+              styles.metricInsightItem,
+              index > 0 && styles.listDivider,
+            ]}
+          >
             <Text style={styles.metricInsightStrong}>{item.label}</Text>
             <Text style={styles.metricInsightText}>{item.summary}</Text>
           </View>
@@ -305,7 +315,7 @@ function MetricInsightPanel({ title, items, emptyText, tone }) {
   );
 }
 
-export default function StatsScreen() {
+export function StatsContent({ presentation = "screen" }) {
   const isFocused = useIsFocused();
   const supplements = useSupplementsStore((s) => s.supplements);
   const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
@@ -553,71 +563,19 @@ export default function StatsScreen() {
     [metricImprovement]
   );
 
-  return (
-    <BackdropScreen
-      header={
-        <AppHeader
-          leftSlot={
-            <AppButton
-              label="Back"
-              onPress={() => router.back()}
-              variant="ghost"
-              size="sm"
-              textStyle={styles.headerBackText}
-              accessibilityLabel="Go back"
-            />
-          }
-          title="STATS"
-          titleStyle={styles.headerTitle}
-          titleAccessory={
-            <StatusPill
-              label={(currentPeriod?.label ?? "Weekly").toUpperCase()}
-              tone="neutral"
-              style={styles.headerPeriodPill}
-            />
-          }
-          bottomSlot={
-            <Text style={styles.headerSubtitle}>
-              Supplement performance insights
-            </Text>
-          }
-          bottomSlotStyle={styles.headerBottom}
-        />
-      }
-      scrollContentStyle={styles.scrollContent}
-      contentStyle={styles.content}
-      bottomInsetOffset={100}
-      minBottomPadding={120}
-    >
-      <PrimaryCard style={styles.filterCard}>
-        <SectionTitle
-          title="Time Window"
-          subtitle="Choose the period for these insights."
-          action={
-            <StatusPill
-              label={`${periodDays} ${periodDays === 1 ? "DAY" : "DAYS"}`}
-              tone="neutral"
-            />
-          }
-          style={styles.sectionHeader}
-        />
+  const isInline = presentation === "inline";
+  const content = (
+    <>
+      <View style={styles.sectionBlock}>
         <PeriodSelector period={period} onChange={setPeriod} />
-      </PrimaryCard>
+      </View>
 
-      <PrimaryCard style={styles.heroCard}>
-        <View pointerEvents="none" style={styles.heroGradientWrap}>
-          <LinearGradient
-            colors={[...appTheme.tabBar.fabGradient, "#FFFFFF"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.heroGradient}
-          />
-        </View>
+      <View style={styles.sectionDivider} />
 
+      <View style={styles.sectionBlock}>
         <SectionTitle
           title="Adherence Overview"
           subtitle="How consistently you followed your routine in this period."
-          action={<StatusPill label={`${adherenceScore}%`} tone="highlight" />}
           style={styles.sectionHeader}
         />
 
@@ -637,6 +595,8 @@ export default function StatsScreen() {
           />
         </View>
 
+        <View style={styles.sectionDivider} />
+
         <View style={styles.heroBottomRow}>
           <StatPanel
             label="Current streak"
@@ -649,53 +609,43 @@ export default function StatsScreen() {
             style={styles.heroTertiaryPanel}
           />
         </View>
-      </PrimaryCard>
+      </View>
 
-      <PrimaryCard style={styles.sectionCard}>
+      <View style={styles.sectionDivider} />
+
+      <View style={styles.sectionBlock}>
         <SectionTitle
           title="Supplement Evidence"
           subtitle="How much of your active stack is backed by stronger evidence."
-          action={
-            <StatusPill
-              label={`${activeSupplements.length} ACTIVE`}
-              tone="neutral"
-            />
-          }
           style={styles.sectionHeader}
         />
 
         <View style={styles.sectionStack}>
           <EvidenceGroupPanel
             title="High Evidence"
-            count={evidenceGroups.high.length}
             items={evidenceGroups.high}
             tone="high"
+            noTopDivider
           />
           <EvidenceGroupPanel
             title="Good Evidence"
-            count={evidenceGroups.good.length}
             items={evidenceGroups.good}
             tone="good"
           />
           <EvidenceGroupPanel
             title="Poor or Unrated"
-            count={evidenceGroups.poor.length}
             items={evidenceGroups.poor}
             tone="poor"
           />
         </View>
-      </PrimaryCard>
+      </View>
 
-      <PrimaryCard style={styles.sectionCard}>
+      <View style={styles.sectionDivider} />
+
+      <View style={styles.sectionBlock}>
         <SectionTitle
           title="Health Metrics"
           subtitle="Trend direction across tracked metrics in this period."
-          action={
-            <StatusPill
-              label={`${metricImprovement.items.length} TRACKED`}
-              tone="neutral"
-            />
-          }
           style={styles.sectionHeader}
         />
 
@@ -703,7 +653,7 @@ export default function StatsScreen() {
           <StatPanel
             label="Improved"
             value={String(metricImprovement.improvedCount)}
-            style={styles.metricCountPanel}
+            style={[styles.metricCountPanel, styles.metricCountPanelFirst]}
           />
           <StatPanel
             label="Stable"
@@ -738,9 +688,59 @@ export default function StatsScreen() {
             tone="negative"
           />
         </View>
-      </PrimaryCard>
+      </View>
+    </>
+  );
+
+  if (isInline) {
+    return content;
+  }
+
+  return (
+    <BackdropScreen
+      headerBehavior="collapsible"
+      collapsedTitle="STATS"
+      header={
+        <AppHeader
+          leftSlot={
+            <AppButton
+              label="Back"
+              onPress={() => router.back()}
+              variant="ghost"
+              size="sm"
+              textStyle={styles.headerBackText}
+              accessibilityLabel="Go back"
+            />
+          }
+          title="STATS"
+          titleStyle={styles.headerTitle}
+          titleAccessory={
+            <StatusPill
+              label={(currentPeriod?.label ?? "Weekly").toUpperCase()}
+              tone="neutral"
+              style={styles.headerPeriodPill}
+            />
+          }
+          bottomSlot={
+            <Text style={styles.headerSubtitle}>
+              Supplement performance insights
+            </Text>
+          }
+          bottomSlotStyle={styles.headerBottom}
+        />
+      }
+      scrollContentStyle={styles.scrollContent}
+      contentStyle={styles.content}
+      bottomInsetOffset={100}
+      minBottomPadding={120}
+    >
+      {content}
     </BackdropScreen>
   );
+}
+
+export default function StatsScreen() {
+  return <StatsContent />;
 }
 
 const styles = StyleSheet.create({
@@ -749,6 +749,13 @@ const styles = StyleSheet.create({
   },
   content: {
     gap: spacing.md,
+  },
+  sectionBlock: {
+    paddingVertical: spacing.xs,
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: appTheme.colors.borderSubtle,
   },
   headerBackText: {
     fontSize: 15,
@@ -777,10 +784,6 @@ const styles = StyleSheet.create({
   },
   sectionHeader: {
     marginBottom: spacing.md,
-  },
-  filterCard: {
-    paddingHorizontal: appTheme.card.paddingSpacious,
-    paddingVertical: appTheme.card.paddingSpacious,
   },
   filterRow: {
     flexDirection: "row",
@@ -813,18 +816,6 @@ const styles = StyleSheet.create({
   filterTextActive: {
     color: "#FFFFFF",
   },
-  heroCard: {
-    overflow: "hidden",
-    paddingHorizontal: appTheme.card.paddingSpacious,
-    paddingVertical: appTheme.card.paddingSpacious,
-  },
-  heroGradientWrap: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  heroGradient: {
-    flex: 1,
-    opacity: 0.84,
-  },
   heroTopRow: {
     flexDirection: "row",
     gap: spacing.sm,
@@ -834,35 +825,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.sm,
   },
-  sectionCard: {
-    paddingHorizontal: appTheme.card.paddingSpacious,
-    paddingVertical: appTheme.card.paddingSpacious,
-  },
   sectionStack: {
     gap: spacing.sm,
   },
   statPanel: {
     flex: 1,
-    borderRadius: 18,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    backgroundColor: "rgba(255,255,255,0.72)",
-    borderWidth: 1,
-    borderColor: appTheme.colors.borderSubtle,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   statPanelLarge: {
-    minHeight: 148,
+    minHeight: 124,
     justifyContent: "space-between",
   },
-  heroPrimaryPanel: {
-    backgroundColor: "rgba(255,255,255,0.88)",
-  },
-  heroSecondaryPanel: {
-    backgroundColor: "rgba(248,241,231,0.9)",
-  },
-  heroTertiaryPanel: {
-    backgroundColor: "rgba(255,255,255,0.72)",
-  },
+  heroPrimaryPanel: {},
+  heroSecondaryPanel: {},
+  heroTertiaryPanel: {},
   statLabel: {
     fontSize: 12,
     lineHeight: 18,
@@ -891,10 +868,8 @@ const styles = StyleSheet.create({
     color: appTheme.colors.textSecondary,
   },
   evidencePanel: {
-    borderRadius: 18,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: 0,
     paddingVertical: spacing.md,
-    borderWidth: 1,
   },
   evidencePanelHeader: {
     flexDirection: "row",
@@ -910,19 +885,13 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.headingSemiBold,
     letterSpacing: -0.3,
   },
-  evidencePanelPill: {
-    backgroundColor: "rgba(255,255,255,0.58)",
-  },
-  evidencePanelPillText: {
-    color: appTheme.colors.textStrong,
-  },
   evidenceItemRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing.sm,
-    paddingTop: spacing.xs,
-    paddingBottom: spacing.xs,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
   },
   evidenceItemCopy: {
     flex: 1,
@@ -956,7 +925,13 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   metricCountPanel: {
-    backgroundColor: appTheme.colors.surfaceMuted,
+    borderLeftWidth: 1,
+    borderLeftColor: appTheme.colors.borderSubtle,
+    paddingLeft: spacing.md,
+  },
+  metricCountPanelFirst: {
+    borderLeftWidth: 0,
+    paddingLeft: 0,
   },
   helperText: {
     marginBottom: spacing.sm,
@@ -966,10 +941,8 @@ const styles = StyleSheet.create({
     color: appTheme.colors.textSecondary,
   },
   metricInsightPanel: {
-    borderRadius: 18,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: 0,
     paddingVertical: spacing.md,
-    borderWidth: 1,
   },
   metricInsightTitle: {
     fontSize: 13,
@@ -979,6 +952,7 @@ const styles = StyleSheet.create({
   },
   metricInsightItem: {
     marginTop: spacing.sm,
+    paddingTop: spacing.sm,
   },
   metricInsightStrong: {
     fontSize: 14,
@@ -993,20 +967,28 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textSecondary,
   },
+  listDivider: {
+    borderTopWidth: 1,
+    borderTopColor: appTheme.colors.borderSubtle,
+  },
+  panelNoTopDivider: {
+    borderTopWidth: 0,
+    paddingTop: 0,
+  },
 });
 
 const evidencePanelToneStyles = StyleSheet.create({
   high: {
-    backgroundColor: "rgba(39,174,96,0.10)",
-    borderColor: "rgba(39,174,96,0.18)",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(39,174,96,0.18)",
   },
   good: {
-    backgroundColor: "rgba(245,166,35,0.10)",
-    borderColor: "rgba(245,166,35,0.18)",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(245,166,35,0.18)",
   },
   poor: {
-    backgroundColor: "rgba(201,87,87,0.10)",
-    borderColor: "rgba(201,87,87,0.18)",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(201,87,87,0.18)",
   },
 });
 
@@ -1024,12 +1006,12 @@ const evidenceTitleToneStyles = StyleSheet.create({
 
 const metricInsightToneStyles = StyleSheet.create({
   positive: {
-    backgroundColor: "rgba(39,174,96,0.10)",
-    borderColor: "rgba(39,174,96,0.18)",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(39,174,96,0.18)",
   },
   negative: {
-    backgroundColor: "rgba(201,87,87,0.10)",
-    borderColor: "rgba(201,87,87,0.18)",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(201,87,87,0.18)",
   },
 });
 

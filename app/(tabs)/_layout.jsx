@@ -6,10 +6,10 @@ import { appTheme, typography } from "@/theme";
 import HomeIcon from "@/assets/icons/tab/home.svg";
 import SupplementsIcon from "@/assets/icons/tab/supplements.svg";
 import HealthIcon from "@/assets/icons/tab/health.svg";
-import MessagesIcon from "@/assets/icons/tab/messages.svg";
 import QrScanIcon from "@/assets/icons/tab/qr-scan.svg";
+import AccountIcon from "@/assets/icons/profile/account.svg";
 
-const VISIBLE_TABS = ["index", "supplements", "health", "ai"];
+const VISIBLE_TABS = ["index", "supplements", "health", "profile"];
 
 function TabIcon({ routeName, color }) {
   const iconProps = {
@@ -24,7 +24,7 @@ function TabIcon({ routeName, color }) {
   if (routeName === "index") return <HomeIcon {...iconProps} />;
   if (routeName === "supplements") return <SupplementsIcon {...iconProps} />;
   if (routeName === "health") return <HealthIcon {...iconProps} />;
-  return <MessagesIcon {...iconProps} />;
+  return <AccountIcon {...iconProps} />;
 }
 
 function TabItem({ route, label, focused, navigation }) {
@@ -187,7 +187,7 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="ai"
           options={{
-            title: "Chat",
+            href: null,
           }}
         />
 
@@ -200,7 +200,7 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="profile"
           options={{
-            href: null,
+            title: "Me",
           }}
         />
       </Tabs>
