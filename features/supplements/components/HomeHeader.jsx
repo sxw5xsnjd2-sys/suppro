@@ -11,6 +11,7 @@ import {
 import { AppButton, AppHeader } from "@/components/common/ui";
 import { appTheme, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
+import { isSupplementScheduledOnDate } from "@/features/supplements/schedule";
 
 const PAGE_SIDE_PADDING = appTheme.screen.sidePadding;
 const PILL_HEIGHT = appTheme.header.progressPillHeight;
@@ -78,21 +79,6 @@ const formatDayLabel = (date) =>
     .toUpperCase();
 
 const formatDayNumber = (date) => String(parseLocalISODate(date).getDate());
-
-function isScheduledOnDate(supplement, date) {
-  if (supplement?.startDate && date < supplement.startDate) return false;
-  if (supplement?.endDate && date > supplement.endDate) return false;
-
-  const dayOfWeek = parseLocalISODate(date).getDay();
-  if (
-    Array.isArray(supplement?.daysOfWeek) &&
-    supplement.daysOfWeek.length > 0
-  ) {
-    return supplement.daysOfWeek.includes(dayOfWeek);
-  }
-
-  return true;
-}
 
 function ProgressPill({ active, progress }) {
   const animatedValue = useRef(new Animated.Value(progress)).current;
@@ -172,7 +158,7 @@ export function HomeHeader({ onLayout }) {
     () =>
       weekDates.reduce((acc, date) => {
         const plannedSupplements = (supplements ?? []).filter((supplement) =>
-          isScheduledOnDate(supplement, date)
+          isSupplementScheduledOnDate(supplement, date)
         );
         const takenLookup = takenTimesByDate?.[date] ?? {};
         const takenCount = plannedSupplements.reduce(

@@ -7,6 +7,7 @@ import {
   isLegacyCustomCatalogId,
 } from "@/features/supplements/catalog";
 import { cleanupLegacyHeartFlags } from "@/features/supplements/favouritesStorage";
+import { normalizeSupplementSchedule } from "@/features/supplements/schedule";
 import { getSupplementLinkedIngredients } from "@/features/supplements/trackedScanContext";
 /* ----------------------------------------
    Helpers
@@ -88,6 +89,9 @@ export const useSupplementsStore = create()(persist((set) => ({
             ...state.supplements,
             {
                 ...s,
+                ...normalizeSupplementSchedule(s, {
+                    anchorDate: s.scheduleAnchorDate ?? s.startDate ?? today(),
+                }),
                 catalogType: s.catalogType ?? getCatalogType(s.catalogId),
                 startDate: s.startDate ?? today(),
                 endDate: s.endDate ?? null,
@@ -192,6 +196,21 @@ export const useSupplementsStore = create()(persist((set) => ({
             }
             if (updated.endDate === undefined) {
                 updated = { ...updated, endDate: null };
+                didMigrate = true;
+            }
+            const normalizedSchedule = normalizeSupplementSchedule(updated, {
+                anchorDate: updated.scheduleAnchorDate ?? updated.startDate ?? today(),
+            });
+            if (JSON.stringify({
+                frequency: updated.frequency,
+                frequencyLabel: updated.frequencyLabel,
+                scheduleType: updated.scheduleType,
+                daysOfWeek: updated.daysOfWeek,
+                intervalDays: updated.intervalDays,
+                scheduleAnchorDate: updated.scheduleAnchorDate,
+            }) !==
+                JSON.stringify(normalizedSchedule)) {
+                updated = { ...updated, ...normalizedSchedule };
                 didMigrate = true;
             }
             const derivedCatalogType = getCatalogType(updated.catalogId);

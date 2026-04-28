@@ -1,12 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import Svg, { Circle } from "react-native-svg";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import {
   AppButton,
   AppHeader,
-  EvidenceDots,
   SectionTitle,
   StatusPill,
 } from "@/components/common/ui";
@@ -15,10 +22,8 @@ import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
 import { getEffectiveEntries } from "@/features/health/selectors";
 import { getTrackedSupplementEvidenceScores } from "@/features/supplements/getTrackedSupplementEvidenceScores";
-import {
-  isNumericMetric,
-  normalizeMetric,
-} from "@/features/health/metricDefinitions";
+import { isSupplementScheduledOnDate } from "@/features/supplements/schedule";
+import { computeMetricImprovement } from "@/features/health/metricTrends";
 
 const PERIOD_FILTERS = [
   { key: "daily", label: "Daily", days: 1 },
@@ -26,11 +31,41 @@ const PERIOD_FILTERS = [
   { key: "monthly", label: "Monthly", days: 30 },
 ];
 
-const LOWER_IS_BETTER_KEYS = new Set([
-  "blood_sugar_control",
-  "cholesterol_support",
-  "weight",
-]);
+const ADHERENCE_ARC_SIZE = 140;
+const ADHERENCE_ARC_STROKE = 10;
+const ADHERENCE_ARC_RADIUS =
+  (ADHERENCE_ARC_SIZE - ADHERENCE_ARC_STROKE) / 2;
+const ADHERENCE_ARC_CIRCUMFERENCE = 2 * Math.PI * ADHERENCE_ARC_RADIUS;
+const ADHERENCE_ROSE = "#A6685B";
+const ADHERENCE_CHIP_BG = "rgba(232,204,224,0.32)";
+const GLASS_CARD_BORDER = "rgba(255,255,255,0.8)";
+const GLASS_CARD_BG = "rgba(255,255,255,0.7)";
+const INSET_DIVIDER = "rgba(26,24,32,0.05)";
+const EMPTY_MUTED = "#8B8595";
+const METRIC_LABEL_MUTED = "#A19BAB";
+
+const tierToneConfig = {
+  high: {
+    badgeBg: "#E5F1E2",
+    accent: "#3D8A53",
+  },
+  good: {
+    badgeBg: "#F8E8D2",
+    accent: "#A8742B",
+  },
+  poor: {
+    badgeBg: "#F8DDD2",
+    accent: "#A6685B",
+  },
+  up: {
+    badgeBg: "#E5F1E2",
+    accent: "#3D8A53",
+  },
+  down: {
+    badgeBg: "#F8DDD2",
+    accent: "#A6685B",
+  },
+};
 
 function toISODate(date) {
   const year = date.getFullYear();
@@ -67,11 +102,6 @@ function toPercent(taken, planned) {
   return Math.round((taken / planned) * 100);
 }
 
-function average(values) {
-  if (!values.length) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
 function formatNumber(value) {
   if (!Number.isFinite(value)) return "—";
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -82,127 +112,6 @@ function evidenceBucketForScore(score) {
   if (score >= 75) return "high";
   if (score >= 50) return "good";
   return "poor";
-}
-
-function computeMetricImprovement(
-  healthMetrics,
-  healthEntries,
-  periodStart,
-  today
-) {
-  const normalizedMetrics = (healthMetrics ?? [])
-    .map((metric) => normalizeMetric(metric))
-    .filter(Boolean)
-    .filter((metric) => metric.enabled !== false);
-
-  const items = normalizedMetrics
-    .map((metric) => {
-      const entries = (healthEntries ?? [])
-        .filter(
-          (entry) =>
-            entry.type === metric.key &&
-            typeof entry.date === "string" &&
-            entry.date >= periodStart &&
-            entry.date <= today
-        )
-        .sort((a, b) => a.date.localeCompare(b.date));
-
-      if (entries.length === 0) return null;
-
-      if (!isNumericMetric(metric)) {
-        return {
-          key: metric.key,
-          label: metric.label,
-          kind: "text",
-          entryCount: entries.length,
-          latestDate: entries[entries.length - 1].date,
-        };
-      }
-
-      const values = entries
-        .map((entry) => Number(entry.value))
-        .filter((value) => Number.isFinite(value));
-      if (values.length === 0) return null;
-      if (values.length === 1) {
-        return {
-          key: metric.key,
-          label: metric.label,
-          kind: "numeric",
-          metric,
-          sampleSize: 1,
-          earlyAverage: values[0],
-          recentAverage: values[0],
-          delta: 0,
-          trend: "stable",
-          directionDelta: 0,
-        };
-      }
-
-      const splitIndex = Math.max(1, Math.floor(values.length / 2));
-      const earlyValues = values.slice(0, splitIndex);
-      const recentValues = values.slice(splitIndex);
-      const earlyAverage = average(earlyValues);
-      const recentAverage = average(recentValues);
-      const delta = recentAverage - earlyAverage;
-
-      const configuredRange =
-        Number.isFinite(metric.min) && Number.isFinite(metric.max)
-          ? Math.abs(metric.max - metric.min)
-          : null;
-      const dynamicRange = Math.max(...values) - Math.min(...values);
-      const thresholdBase =
-        configuredRange && configuredRange > 0
-          ? configuredRange * 0.05
-          : dynamicRange * 0.2;
-      const threshold = Math.max(
-        thresholdBase || 0,
-        Math.abs(earlyAverage) * 0.03,
-        0.1
-      );
-
-      const directionDelta = LOWER_IS_BETTER_KEYS.has(metric.key)
-        ? -delta
-        : delta;
-      const trend =
-        directionDelta > threshold
-          ? "improved"
-          : directionDelta < -threshold
-          ? "declined"
-          : "stable";
-
-      return {
-        key: metric.key,
-        label: metric.label,
-        kind: "numeric",
-        metric,
-        sampleSize: values.length,
-        earlyAverage,
-        recentAverage,
-        delta,
-        trend,
-        directionDelta,
-      };
-    })
-    .filter(Boolean);
-
-  const improvedCount = items.filter(
-    (item) => item.kind === "numeric" && item.trend === "improved"
-  ).length;
-  const stableCount = items.filter(
-    (item) => item.kind === "numeric" && item.trend === "stable"
-  ).length;
-  const declinedCount = items.filter(
-    (item) => item.kind === "numeric" && item.trend === "declined"
-  ).length;
-  const textCount = items.filter((item) => item.kind === "text").length;
-
-  return {
-    items,
-    improvedCount,
-    stableCount,
-    declinedCount,
-    textCount,
-  };
 }
 
 function PeriodSelector({ period, onChange }) {
@@ -236,87 +145,169 @@ function PeriodSelector({ period, onChange }) {
   );
 }
 
-function StatPanel({ label, value, meta, style, valueStyle }) {
+function AdherenceArc({ score, taken, planned }) {
+  const progress = Math.min(Math.max(score, 0), 100) / 100;
+  const strokeDashoffset =
+    ADHERENCE_ARC_CIRCUMFERENCE * (1 - progress);
+  const doseCaption = `${taken}/${planned || 0} doses taken`;
+
   return (
-    <View style={[styles.statPanel, style]}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={[styles.statValue, valueStyle]}>{value}</Text>
-      {meta ? <Text style={styles.statMeta}>{meta}</Text> : null}
+    <View
+      accessible
+      accessibilityRole="image"
+      accessibilityLabel={`${score}% adherence, ${taken} of ${planned} doses taken`}
+      style={styles.adherenceArcWrap}
+    >
+      <Svg
+        width={ADHERENCE_ARC_SIZE}
+        height={ADHERENCE_ARC_SIZE}
+        viewBox={`0 0 ${ADHERENCE_ARC_SIZE} ${ADHERENCE_ARC_SIZE}`}
+      >
+        <Circle
+          cx={ADHERENCE_ARC_SIZE / 2}
+          cy={ADHERENCE_ARC_SIZE / 2}
+          r={ADHERENCE_ARC_RADIUS}
+          fill="none"
+          stroke="rgba(26,24,32,0.06)"
+          strokeWidth={ADHERENCE_ARC_STROKE}
+        />
+        {progress > 0 ? (
+          <Circle
+            cx={ADHERENCE_ARC_SIZE / 2}
+            cy={ADHERENCE_ARC_SIZE / 2}
+            r={ADHERENCE_ARC_RADIUS}
+            fill="none"
+            stroke={ADHERENCE_ROSE}
+            strokeWidth={ADHERENCE_ARC_STROKE}
+            strokeLinecap="round"
+            strokeDasharray={`${ADHERENCE_ARC_CIRCUMFERENCE} ${ADHERENCE_ARC_CIRCUMFERENCE}`}
+            strokeDashoffset={strokeDashoffset}
+            transform={`rotate(-90 ${ADHERENCE_ARC_SIZE / 2} ${ADHERENCE_ARC_SIZE / 2})`}
+          />
+        ) : null}
+      </Svg>
+      <View pointerEvents="none" style={styles.adherenceArcCenter}>
+        <Text style={styles.adherenceArcValue}>{score}%</Text>
+        <Text style={styles.adherenceArcCaption}>{doseCaption}</Text>
+      </View>
     </View>
   );
 }
 
-function EvidenceGroupPanel({ title, items, tone, noTopDivider = false }) {
+function AdherenceMiniMetric({
+  label,
+  value,
+  meta,
+  metaStyle,
+  iconName,
+}) {
   return (
-    <View
-      style={[
-        styles.evidencePanel,
-        evidencePanelToneStyles[tone],
-        noTopDivider && styles.panelNoTopDivider,
-      ]}
-    >
-      <View style={styles.evidencePanelHeader}>
-        <Text style={[styles.evidencePanelTitle, evidenceTitleToneStyles[tone]]}>
-          {title}
+    <View style={styles.adherenceMetricRow}>
+      <View style={styles.adherenceMetricCopy}>
+        <Text style={styles.adherenceMetricLabel}>{label}</Text>
+        <Text style={styles.adherenceMetricValue}>{value}</Text>
+        {meta ? (
+          <Text style={[styles.adherenceMetricMeta, metaStyle]}>{meta}</Text>
+        ) : null}
+      </View>
+      {iconName ? (
+        <View style={styles.adherenceGlyphChip}>
+          <Ionicons name={iconName} size={15} color={ADHERENCE_ROSE} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function DensityCapsules({ count, color }) {
+  const filledCount = Math.min(Math.max(count, 0), 5);
+
+  return (
+    <View style={styles.densityCapsules}>
+      {Array.from({ length: 5 }).map((_, index) => (
+        <View
+          key={index}
+          style={[
+            styles.densityCapsule,
+            index < filledCount
+              ? { backgroundColor: color }
+              : styles.densityCapsuleInactive,
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+function QualitativeTierRow({
+  title,
+  detail,
+  count,
+  tone,
+  empty = false,
+  detailNumberOfLines,
+}) {
+  const toneConfig = tierToneConfig[tone];
+
+  return (
+    <View style={styles.qualitativeRow}>
+      <View
+        style={[
+          styles.qualitativeBadge,
+          { backgroundColor: toneConfig.badgeBg },
+        ]}
+      >
+        <Text
+          style={[
+            styles.qualitativeBadgeValue,
+            { color: toneConfig.accent },
+          ]}
+        >
+          {count}
         </Text>
       </View>
 
-      {items.length ? (
-        items.map((item, index) => (
-          <View
-            key={item.id}
-            style={[
-              styles.evidenceItemRow,
-              index > 0 && styles.listDivider,
-            ]}
-          >
-            <View style={styles.evidenceItemCopy}>
-              <Text style={styles.evidenceItemName}>{item.name}</Text>
-              <Text style={styles.evidenceItemMeta}>
-                {Number.isFinite(item.score)
-                  ? `${Math.round(item.score)}/100`
-                  : "Unrated"}
-              </Text>
-            </View>
-            <EvidenceDots score={item.score} style={styles.evidenceDots} />
-          </View>
-        ))
-      ) : (
-        <Text style={styles.evidenceEmpty}>None right now</Text>
-      )}
+      <View style={styles.qualitativeCopy}>
+        <Text style={[styles.qualitativeTitle, { color: toneConfig.accent }]}>
+          {title}
+        </Text>
+        <Text
+          numberOfLines={detailNumberOfLines}
+          style={[
+            styles.qualitativeDetail,
+            empty && styles.qualitativeDetailEmpty,
+          ]}
+        >
+          {detail}
+        </Text>
+      </View>
+
+      <DensityCapsules count={count} color={toneConfig.accent} />
     </View>
   );
 }
 
-function MetricInsightPanel({ title, items, emptyText, tone }) {
+function InsetDivider() {
   return (
-    <View style={[styles.metricInsightPanel, metricInsightToneStyles[tone]]}>
-      <Text style={[styles.metricInsightTitle, metricInsightTextToneStyles[tone]]}>
-        {title}
-      </Text>
+    <View style={styles.insetDividerWrap}>
+      <View style={styles.insetDivider} />
+    </View>
+  );
+}
 
-      {items.length ? (
-        items.map((item, index) => (
-          <View
-            key={item.key}
-            style={[
-              styles.metricInsightItem,
-              index > 0 && styles.listDivider,
-            ]}
-          >
-            <Text style={styles.metricInsightStrong}>{item.label}</Text>
-            <Text style={styles.metricInsightText}>{item.summary}</Text>
-          </View>
-        ))
-      ) : (
-        <Text style={styles.metricInsightText}>{emptyText}</Text>
-      )}
+function TrendStatCell({ label, value, arrow, tone }) {
+  return (
+    <View style={styles.trendStatCell}>
+      <Text style={[styles.trendStatArrow, { color: tone }]}>{arrow}</Text>
+      <Text style={styles.trendStatValue}>{value}</Text>
+      <Text style={styles.trendStatLabel}>{label}</Text>
     </View>
   );
 }
 
 export function StatsContent({ presentation = "screen" }) {
   const isFocused = useIsFocused();
+  const { width } = useWindowDimensions();
   const supplements = useSupplementsStore((s) => s.supplements);
   const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
   const healthEntries = useHealthStore((s) => getEffectiveEntries(s));
@@ -382,17 +373,9 @@ export function StatsContent({ presentation = "screen" }) {
     allDates.forEach((date) => {
       const dayOfWeek = parseISODate(date).getDay();
       const dayTakenMap = takenTimesByDate?.[date] ?? {};
-      const plannedSupplements = (supplements ?? []).filter((supplement) => {
-        if (supplement?.startDate && date < supplement.startDate) return false;
-        if (supplement?.endDate && date > supplement.endDate) return false;
-        if (
-          Array.isArray(supplement?.daysOfWeek) &&
-          supplement.daysOfWeek.length > 0
-        ) {
-          return supplement.daysOfWeek.includes(dayOfWeek);
-        }
-        return true;
-      });
+      const plannedSupplements = (supplements ?? []).filter((supplement) =>
+        isSupplementScheduledOnDate(supplement, date)
+      );
       const takenCount = plannedSupplements.reduce(
         (count, supplement) => (dayTakenMap[supplement.id] ? count + 1 : count),
         0
@@ -464,6 +447,8 @@ export function StatsContent({ presentation = "screen" }) {
       : missedDelta < 0
       ? `${Math.abs(missedDelta)} fewer than previous period`
       : `${missedDelta} more than previous period`;
+  const missedTrendIsPositive = missedTrendText.startsWith("↓");
+  const stacksAdherenceCard = width < 360;
 
   const streakStats = useMemo(() => {
     let longestStreak = 0;
@@ -496,9 +481,13 @@ export function StatsContent({ presentation = "screen" }) {
         healthMetrics,
         healthEntries,
         periodDates[0] ?? today,
-        today
+        today,
+        {
+          previousPeriodStart: previousPeriodDates[0],
+          previousPeriodEnd: previousPeriodDates[previousPeriodDates.length - 1],
+        }
       ),
-    [healthMetrics, healthEntries, periodDates, today]
+    [healthMetrics, healthEntries, periodDates, previousPeriodDates, today]
   );
 
   const activeSupplements = useMemo(
@@ -579,35 +568,48 @@ export function StatsContent({ presentation = "screen" }) {
           style={styles.sectionHeader}
         />
 
-        <View style={styles.heroTopRow}>
-          <StatPanel
-            label="Adherence score"
-            value={`${adherenceScore}%`}
-            meta={`${currentSummary.taken}/${currentSummary.planned || 0} doses taken`}
-            style={[styles.statPanelLarge, styles.heroPrimaryPanel]}
-            valueStyle={styles.statValueLarge}
-          />
-          <StatPanel
-            label="Missed doses"
-            value={String(currentSummary.missed)}
-            meta={missedTrendText}
-            style={[styles.statPanelLarge, styles.heroSecondaryPanel]}
-          />
-        </View>
+        <View
+          style={[
+            styles.adherenceHeroCard,
+            stacksAdherenceCard && styles.adherenceHeroCardStacked,
+          ]}
+        >
+          <View pointerEvents="none" style={styles.adherenceCardHighlight} />
 
-        <View style={styles.sectionDivider} />
+          <View
+            style={[
+              styles.adherenceArcColumn,
+              stacksAdherenceCard && styles.adherenceArcColumnStacked,
+            ]}
+          >
+            <Text style={styles.adherenceMetricLabel}>Adherence score</Text>
+            <AdherenceArc
+              score={adherenceScore}
+              taken={currentSummary.taken}
+              planned={currentSummary.planned}
+            />
+          </View>
 
-        <View style={styles.heroBottomRow}>
-          <StatPanel
-            label="Current streak"
-            value={`${streakStats.currentStreak} days`}
-            style={styles.heroTertiaryPanel}
-          />
-          <StatPanel
-            label="Longest streak"
-            value={`${streakStats.longestStreak} days`}
-            style={styles.heroTertiaryPanel}
-          />
+          <View style={styles.adherenceMetricStack}>
+            <AdherenceMiniMetric
+              label="Missed doses"
+              value={String(currentSummary.missed)}
+              meta={missedTrendText}
+              metaStyle={
+                missedTrendIsPositive && styles.adherenceMetricMetaPositive
+              }
+            />
+            <AdherenceMiniMetric
+              label="Current streak"
+              value={`${streakStats.currentStreak} days`}
+              iconName="flame"
+            />
+            <AdherenceMiniMetric
+              label="Longest streak"
+              value={`${streakStats.longestStreak} days`}
+              iconName="sparkles"
+            />
+          </View>
         </View>
       </View>
 
@@ -620,22 +622,44 @@ export function StatsContent({ presentation = "screen" }) {
           style={styles.sectionHeader}
         />
 
-        <View style={styles.sectionStack}>
-          <EvidenceGroupPanel
+        <View style={styles.glassCard}>
+          <QualitativeTierRow
             title="High Evidence"
-            items={evidenceGroups.high}
+            detail={
+              evidenceGroups.high.length
+                ? evidenceGroups.high.map((item) => item.name).join(", ")
+                : "None right now"
+            }
+            count={evidenceGroups.high.length}
             tone="high"
-            noTopDivider
+            empty={evidenceGroups.high.length === 0}
+            detailNumberOfLines={evidenceGroups.high.length ? 2 : undefined}
           />
-          <EvidenceGroupPanel
+          <InsetDivider />
+          <QualitativeTierRow
             title="Good Evidence"
-            items={evidenceGroups.good}
+            detail={
+              evidenceGroups.good.length
+                ? evidenceGroups.good.map((item) => item.name).join(", ")
+                : "None right now"
+            }
+            count={evidenceGroups.good.length}
             tone="good"
+            empty={evidenceGroups.good.length === 0}
+            detailNumberOfLines={evidenceGroups.good.length ? 2 : undefined}
           />
-          <EvidenceGroupPanel
+          <InsetDivider />
+          <QualitativeTierRow
             title="Poor or Unrated"
-            items={evidenceGroups.poor}
+            detail={
+              evidenceGroups.poor.length
+                ? evidenceGroups.poor.map((item) => item.name).join(", ")
+                : "None right now"
+            }
+            count={evidenceGroups.poor.length}
             tone="poor"
+            empty={evidenceGroups.poor.length === 0}
+            detailNumberOfLines={evidenceGroups.poor.length ? 2 : undefined}
           />
         </View>
       </View>
@@ -649,21 +673,53 @@ export function StatsContent({ presentation = "screen" }) {
           style={styles.sectionHeader}
         />
 
-        <View style={styles.metricCountsRow}>
-          <StatPanel
+        <View style={styles.glassCard}>
+          <View style={styles.metricCountsGrid}>
+            <TrendStatCell
             label="Improved"
-            value={String(metricImprovement.improvedCount)}
-            style={[styles.metricCountPanel, styles.metricCountPanelFirst]}
-          />
-          <StatPanel
+              value={String(metricImprovement.improvedCount)}
+              arrow="↗"
+              tone={tierToneConfig.up.accent}
+            />
+            <TrendStatCell
             label="Stable"
             value={String(metricImprovement.stableCount)}
-            style={styles.metricCountPanel}
-          />
-          <StatPanel
+              arrow="→"
+              tone={METRIC_LABEL_MUTED}
+            />
+            <TrendStatCell
             label="Declined"
             value={String(metricImprovement.declinedCount)}
-            style={styles.metricCountPanel}
+              arrow="↘"
+              tone={tierToneConfig.down.accent}
+            />
+          </View>
+
+          <InsetDivider />
+          <QualitativeTierRow
+            title="Improving"
+            detail={
+              topImprovingMetrics.length
+                ? topImprovingMetrics.map((item) => item.summary).join(" • ")
+                : "No clear improving metrics yet in this period."
+            }
+            count={metricImprovement.improvedCount}
+            tone="up"
+            empty={topImprovingMetrics.length === 0}
+            detailNumberOfLines={topImprovingMetrics.length ? 3 : undefined}
+          />
+          <InsetDivider />
+          <QualitativeTierRow
+            title="Needs attention"
+            detail={
+              topDecliningMetrics.length
+                ? topDecliningMetrics.map((item) => item.summary).join(" • ")
+                : "No clear declining metrics in this period."
+            }
+            count={metricImprovement.declinedCount}
+            tone="down"
+            empty={topDecliningMetrics.length === 0}
+            detailNumberOfLines={topDecliningMetrics.length ? 3 : undefined}
           />
         </View>
 
@@ -673,21 +729,12 @@ export function StatsContent({ presentation = "screen" }) {
             tracked.
           </Text>
         ) : null}
-
-        <View style={styles.sectionStack}>
-          <MetricInsightPanel
-            title="Improving"
-            items={topImprovingMetrics}
-            emptyText="No clear improving metrics yet in this period."
-            tone="positive"
-          />
-          <MetricInsightPanel
-            title="Needs attention"
-            items={topDecliningMetrics}
-            emptyText="No clear declining metrics in this period."
-            tone="negative"
-          />
-        </View>
+        {metricImprovement.insufficientCount > 0 ? (
+          <Text style={styles.helperText}>
+            {metricImprovement.insufficientCount} metric(s) need another entry
+            before a trend can be classified.
+          </Text>
+        ) : null}
       </View>
     </>
   );
@@ -816,210 +863,242 @@ const styles = StyleSheet.create({
   filterTextActive: {
     color: "#FFFFFF",
   },
-  heroTopRow: {
+  adherenceHeroCard: {
+    position: "relative",
     flexDirection: "row",
+    gap: spacing.md,
+    padding: appTheme.card.padding,
+    borderRadius: appTheme.card.radius,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.8)",
+    backgroundColor: "rgba(255,255,255,0.7)",
+    shadowColor: "#1A1820",
+    shadowOpacity: 0.05,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+  },
+  adherenceHeroCardStacked: {
+    flexDirection: "column",
+  },
+  adherenceCardHighlight: {
+    position: "absolute",
+    top: 1,
+    left: appTheme.card.radius,
+    right: appTheme.card.radius,
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.86)",
+  },
+  adherenceArcColumn: {
+    flex: 1.1,
+    alignItems: "center",
+    justifyContent: "center",
     gap: spacing.sm,
-    marginBottom: spacing.sm,
+    minWidth: 0,
   },
-  heroBottomRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
+  adherenceArcColumnStacked: {
+    alignSelf: "center",
   },
-  sectionStack: {
-    gap: spacing.sm,
+  adherenceArcWrap: {
+    width: ADHERENCE_ARC_SIZE,
+    height: ADHERENCE_ARC_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  statPanel: {
-    flex: 1,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+  adherenceArcCenter: {
+    position: "absolute",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
   },
-  statPanelLarge: {
-    minHeight: 124,
-    justifyContent: "space-between",
-  },
-  heroPrimaryPanel: {},
-  heroSecondaryPanel: {},
-  heroTertiaryPanel: {},
-  statLabel: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.heading,
-    color: appTheme.colors.textTertiary,
-    letterSpacing: -0.2,
-  },
-  statValue: {
-    marginTop: 6,
-    fontSize: 24,
-    lineHeight: 28,
-    fontFamily: typography.fontFamily.headingSemiBold,
+  adherenceArcValue: {
+    fontSize: 40,
+    lineHeight: 40,
+    fontFamily: typography.display.fontFamily,
+    fontWeight: typography.display.fontWeight,
     color: appTheme.colors.textHeading,
-    letterSpacing: -0.5,
+    letterSpacing: -1.2,
   },
-  statValueLarge: {
-    fontSize: 34,
-    lineHeight: 36,
-    fontFamily: typography.fontFamily.headingBlack,
+  adherenceArcCaption: {
+    marginTop: 7,
+    textAlign: "center",
+    fontSize: 9,
+    lineHeight: 12,
+    fontFamily: typography.fontFamily.monoMedium,
+    color: appTheme.colors.textMuted,
+    letterSpacing: 1.26,
+    textTransform: "uppercase",
   },
-  statMeta: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
-  },
-  evidencePanel: {
-    paddingHorizontal: 0,
-    paddingVertical: spacing.md,
-  },
-  evidencePanelHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  evidencePanelTitle: {
+  adherenceMetricStack: {
     flex: 1,
-    fontSize: 17,
-    lineHeight: 20,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    letterSpacing: -0.3,
+    minWidth: 0,
+    justifyContent: "center",
+    gap: spacing.md,
   },
-  evidenceItemRow: {
+  adherenceMetricRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing.sm,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
   },
-  evidenceItemCopy: {
+  adherenceMetricCopy: {
     flex: 1,
     minWidth: 0,
   },
-  evidenceItemName: {
-    fontSize: 14,
-    lineHeight: 19,
-    fontFamily: typography.fontFamily.bodySemiBold,
-    color: appTheme.colors.textHeading,
+  adherenceMetricLabel: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontFamily: typography.fontFamily.monoMedium,
+    color: appTheme.colors.textMuted,
+    letterSpacing: 1.26,
+    textTransform: "uppercase",
   },
-  evidenceItemMeta: {
-    marginTop: 2,
+  adherenceMetricValue: {
+    marginTop: 5,
+    fontSize: typography.title.fontSize,
+    lineHeight: 24,
+    fontFamily: typography.title.fontFamily,
+    fontWeight: typography.title.fontWeight,
+    color: appTheme.colors.textHeading,
+    letterSpacing: -0.4,
+  },
+  adherenceMetricMeta: {
+    marginTop: 3,
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: appTheme.colors.textMuted,
+  },
+  adherenceMetricMetaPositive: {
+    color: appTheme.colors.success,
+  },
+  adherenceGlyphChip: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ADHERENCE_CHIP_BG,
+  },
+  glassCard: {
+    borderRadius: appTheme.card.radius,
+    borderWidth: 1,
+    borderColor: GLASS_CARD_BORDER,
+    backgroundColor: GLASS_CARD_BG,
+    shadowColor: "#1A1820",
+    shadowOpacity: 0.05,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+    overflow: "hidden",
+  },
+  insetDividerWrap: {
+    paddingHorizontal: 16,
+  },
+  insetDivider: {
+    height: 1,
+    backgroundColor: INSET_DIVIDER,
+  },
+  qualitativeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+  },
+  qualitativeBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  qualitativeBadgeValue: {
+    fontSize: 17,
+    lineHeight: 18,
+    fontFamily: typography.display.fontFamily,
+    fontWeight: typography.display.fontWeight,
+  },
+  qualitativeCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  qualitativeTitle: {
+    fontSize: 14.5,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    letterSpacing: -0.08,
+  },
+  qualitativeDetail: {
+    marginTop: 4,
     fontSize: 12,
     lineHeight: 17,
     fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
+    color: EMPTY_MUTED,
   },
-  evidenceDots: {
-    marginLeft: spacing.sm,
+  qualitativeDetailEmpty: {
+    color: EMPTY_MUTED,
   },
-  evidenceEmpty: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
+  densityCapsules: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    marginLeft: spacing.xs,
   },
-  metricCountsRow: {
+  densityCapsule: {
+    width: 4,
+    height: 14,
+    borderRadius: 999,
+  },
+  densityCapsuleInactive: {
+    backgroundColor: "rgba(26,24,32,0.06)",
+  },
+  metricCountsGrid: {
     flexDirection: "row",
     gap: spacing.sm,
-    marginBottom: spacing.sm,
+    padding: 16,
   },
-  metricCountPanel: {
-    borderLeftWidth: 1,
-    borderLeftColor: appTheme.colors.borderSubtle,
-    paddingLeft: spacing.md,
+  trendStatCell: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 108,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.5)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.85)",
   },
-  metricCountPanelFirst: {
-    borderLeftWidth: 0,
-    paddingLeft: 0,
+  trendStatArrow: {
+    fontSize: 16,
+    lineHeight: 18,
+    opacity: 0.7,
+    marginBottom: 6,
+  },
+  trendStatValue: {
+    fontSize: 28,
+    lineHeight: 28,
+    fontFamily: typography.display.fontFamily,
+    fontWeight: typography.display.fontWeight,
+    color: appTheme.colors.textHeading,
+    letterSpacing: -0.84,
+  },
+  trendStatLabel: {
+    marginTop: 8,
+    fontSize: 9,
+    lineHeight: 12,
+    fontFamily: typography.fontFamily.monoMedium,
+    color: METRIC_LABEL_MUTED,
+    textTransform: "uppercase",
+    letterSpacing: 1.26,
   },
   helperText: {
-    marginBottom: spacing.sm,
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
-  },
-  metricInsightPanel: {
-    paddingHorizontal: 0,
-    paddingVertical: spacing.md,
-  },
-  metricInsightTitle: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.heading,
-    letterSpacing: -0.2,
-  },
-  metricInsightItem: {
     marginTop: spacing.sm,
-    paddingTop: spacing.sm,
-  },
-  metricInsightStrong: {
-    fontSize: 14,
-    lineHeight: 19,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textHeading,
-  },
-  metricInsightText: {
-    marginTop: 2,
     fontSize: 13,
     lineHeight: 18,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textSecondary,
-  },
-  listDivider: {
-    borderTopWidth: 1,
-    borderTopColor: appTheme.colors.borderSubtle,
-  },
-  panelNoTopDivider: {
-    borderTopWidth: 0,
-    paddingTop: 0,
-  },
-});
-
-const evidencePanelToneStyles = StyleSheet.create({
-  high: {
-    borderTopWidth: 1,
-    borderTopColor: "rgba(39,174,96,0.18)",
-  },
-  good: {
-    borderTopWidth: 1,
-    borderTopColor: "rgba(245,166,35,0.18)",
-  },
-  poor: {
-    borderTopWidth: 1,
-    borderTopColor: "rgba(201,87,87,0.18)",
-  },
-});
-
-const evidenceTitleToneStyles = StyleSheet.create({
-  high: {
-    color: appTheme.colors.evidenceStrong,
-  },
-  good: {
-    color: appTheme.colors.evidenceModerate,
-  },
-  poor: {
-    color: appTheme.colors.danger,
-  },
-});
-
-const metricInsightToneStyles = StyleSheet.create({
-  positive: {
-    borderTopWidth: 1,
-    borderTopColor: "rgba(39,174,96,0.18)",
-  },
-  negative: {
-    borderTopWidth: 1,
-    borderTopColor: "rgba(201,87,87,0.18)",
-  },
-});
-
-const metricInsightTextToneStyles = StyleSheet.create({
-  positive: {
-    color: appTheme.colors.evidenceStrong,
-  },
-  negative: {
-    color: appTheme.colors.danger,
   },
 });

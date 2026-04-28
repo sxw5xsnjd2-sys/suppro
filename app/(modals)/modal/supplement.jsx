@@ -24,6 +24,10 @@ import { appTheme, shadows, spacing, typography } from "@/theme";
 import { SUPPLEMENT_ROUTES } from "@/features/supplements/types";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { Icon } from "@/features/supplements/icons/Icon";
+import {
+  getSupplementScheduleLabel,
+  normalizeSupplementSchedule,
+} from "@/features/supplements/schedule";
 import { useScannerStore } from "@/features/scanner/store";
 import {
   getTrackedScanMatchedIngredients,
@@ -32,6 +36,7 @@ import {
 } from "@/features/supplements/trackedScanContext";
 import { getCatalogType, CATALOG_TYPES } from "@/features/supplements/catalog";
 import { getSupplementProductLinkedIngredients } from "@src/data/getSupplement";
+import { useToastStore } from "@/features/toast/toastStore";
 
 const todayYYYYMMDD = () => {
   const now = new Date();
@@ -279,6 +284,7 @@ export default function SupplementModal() {
   const updateSupplement = useSupplementsStore(
     (state) => state.updateSupplement
   );
+  const showToast = useToastStore((s) => s.show);
   const deleteSupplement = useSupplementsStore(
     (state) => state.deleteSupplement
   );
@@ -293,6 +299,7 @@ export default function SupplementModal() {
     initialTimeIndex * TIME_ITEM_HEIGHT -
       (TIME_PICKER_HEIGHT - TIME_ITEM_HEIGHT) / 2
   );
+  const initialSchedule = normalizeSupplementSchedule(supplement ?? {});
 
   const initialScannedName = typeof initialName === "string" ? initialName : "";
   const [name, setName] = useState(supplement?.name ?? initialScannedName);
@@ -310,8 +317,13 @@ export default function SupplementModal() {
   const [endDate, setEndDate] = useState(supplement?.endDate ?? null);
   const [activeDatePicker, setActiveDatePicker] = useState(null);
   const [daysOfWeek, setDaysOfWeek] = useState(
-    supplement?.daysOfWeek ?? [0, 1, 2, 3, 4, 5, 6]
+    initialSchedule.daysOfWeek
   );
+  const [scheduleType] = useState(initialSchedule.scheduleType);
+  const [intervalDays] = useState(initialSchedule.intervalDays);
+  const [scheduleAnchorDate] = useState(initialSchedule.scheduleAnchorDate);
+  const [frequency] = useState(initialSchedule.frequency);
+  const [frequencyLabel] = useState(initialSchedule.frequencyLabel);
 
   const timeScrollRef = useRef(null);
   const hasScrolledInitial = useRef(false);
@@ -381,6 +393,29 @@ export default function SupplementModal() {
         return;
       }
 
+      const schedulePayload =
+        scheduleType === "interval"
+          ? {
+              frequency,
+              frequencyLabel,
+              scheduleType,
+              daysOfWeek: [],
+              intervalDays,
+              scheduleAnchorDate: scheduleAnchorDate || startDate,
+            }
+          : scheduleType === "custom"
+          ? {
+              frequency,
+              frequencyLabel,
+              scheduleType,
+              daysOfWeek,
+              intervalDays: null,
+              scheduleAnchorDate: null,
+            }
+          : normalizeSupplementSchedule({
+              scheduleType: "weekly",
+              daysOfWeek,
+            });
       let linkedIngredients = null;
       const payload = {
         name: trimmedName,
@@ -390,7 +425,7 @@ export default function SupplementModal() {
         route,
         time: timeLabel,
         timeMinutes,
-        daysOfWeek,
+        ...schedulePayload,
         startDate: startDateValid ? startDate : todayYYYYMMDD(),
         endDate: endDateValid ? endDate || null : null,
       };
@@ -461,6 +496,7 @@ export default function SupplementModal() {
           id: Date.now().toString(),
           ...payload,
         });
+        showToast("Added to your stack!");
       }
 
       router.back();
@@ -737,44 +773,68 @@ export default function SupplementModal() {
             </AppFormField>
           </View>
 
-          <AppFormField label="Days">
-            <View style={styles.daysRow}>
-              {DAYS.map((day) => {
-                const active = daysOfWeek.includes(day.value);
+          {scheduleType === "interval" ? (
+            <AppFormField
+              label="Schedule"
+              helperText="Interval schedules are preserved from onboarding."
+            >
+              <View style={styles.scheduleSummary}>
+                <Ionicons
+                  name="repeat-outline"
+                  size={18}
+                  color={appTheme.colors.textSecondary}
+                />
+                <Text style={styles.scheduleSummaryText}>
+                  {getSupplementScheduleLabel({
+                    scheduleType,
+                    intervalDays,
+                    scheduleAnchorDate,
+                    frequency,
+                    frequencyLabel,
+                  })}
+                </Text>
+              </View>
+            </AppFormField>
+          ) : (
+            <AppFormField label="Days">
+              <View style={styles.daysRow}>
+                {DAYS.map((day) => {
+                  const active = daysOfWeek.includes(day.value);
 
-                return (
-                  <Pressable
-                    key={day.value}
-                    accessibilityRole="button"
-                    accessibilityState={active ? { selected: true } : {}}
-                    onPress={() => toggleDay(day.value)}
-                    style={({ pressed }) => [
-                      styles.dayPill,
-                      active && styles.dayPillActive,
-                      pressed && styles.pressedOption,
-                    ]}
-                  >
-                    {active ? (
-                      <LinearGradient
-                        pointerEvents="none"
-                        colors={appTheme.tabBar.fabGradient}
-                        start={{ x: 0.5, y: 0 }}
-                        end={{ x: 0.5, y: 1 }}
-                        style={styles.dayPillGradient}
-                      />
-                    ) : null}
-                    <Text
-                      style={[styles.dayText, active && styles.dayTextActive]}
+                  return (
+                    <Pressable
+                      key={day.value}
+                      accessibilityRole="button"
+                      accessibilityState={active ? { selected: true } : {}}
+                      onPress={() => toggleDay(day.value)}
+                      style={({ pressed }) => [
+                        styles.dayPill,
+                        active && styles.dayPillActive,
+                        pressed && styles.pressedOption,
+                      ]}
                     >
-                      {day.label}
-                    </Text>
+                      {active ? (
+                        <LinearGradient
+                          pointerEvents="none"
+                          colors={appTheme.tabBar.fabGradient}
+                          start={{ x: 0.5, y: 0 }}
+                          end={{ x: 0.5, y: 1 }}
+                          style={styles.dayPillGradient}
+                        />
+                      ) : null}
+                      <Text
+                        style={[styles.dayText, active && styles.dayTextActive]}
+                      >
+                        {day.label}
+                      </Text>
 
-                    {!active ? <View style={styles.diagonalStrike} /> : null}
-                  </Pressable>
-                );
-              })}
-            </View>
-          </AppFormField>
+                      {!active ? <View style={styles.diagonalStrike} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </AppFormField>
+          )}
 
           <AppFormField label="Time">
             <View style={styles.timePicker}>
@@ -1035,6 +1095,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     gap: spacing.sm,
+  },
+  scheduleSummary: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: 18,
+    backgroundColor: appTheme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+  },
+  scheduleSummaryText: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textHeading,
   },
   dayPill: {
     width: 40,

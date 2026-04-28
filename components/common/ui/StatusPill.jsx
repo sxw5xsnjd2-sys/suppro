@@ -56,6 +56,15 @@ const toneStyles = StyleSheet.create({
   success: {
     backgroundColor: appTheme.colors.success,
   },
+  evidenceGood: {
+    backgroundColor: appTheme.colors.evidenceStrong,
+  },
+  evidenceAverage: {
+    backgroundColor: appTheme.colors.evidenceModerate,
+  },
+  evidencePoor: {
+    backgroundColor: appTheme.colors.evidenceLow,
+  },
 });
 
 const textToneStyles = StyleSheet.create({
@@ -66,6 +75,15 @@ const textToneStyles = StyleSheet.create({
     color: appTheme.colors.textStrong,
   },
   success: {
+    color: "#FFFFFF",
+  },
+  evidenceGood: {
+    color: "#FFFFFF",
+  },
+  evidenceAverage: {
+    color: appTheme.colors.evidenceBadgeText,
+  },
+  evidencePoor: {
     color: "#FFFFFF",
   },
 });

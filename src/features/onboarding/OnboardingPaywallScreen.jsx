@@ -6,15 +6,23 @@ import React, {
   useState,
 } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { AppButton, AppHeader } from "@/components/common/ui";
 import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
 import { appTheme, spacing, typography } from "@/theme";
-import { markOnboardingPremiumComplete } from "@src/lib/onboarding";
+import {
+  clearOnboardingPremiumComplete,
+  markOnboardingPremiumComplete,
+} from "@src/lib/onboarding";
 import { supabase } from "@src/lib/supabase";
 
 export default function OnboardingPaywallScreen() {
+  const params = useLocalSearchParams();
+  const originParam = Array.isArray(params.origin)
+    ? params.origin[0]
+    : params.origin;
+  const returnsToLogin = originParam === "login";
   const {
     isReady,
     isLoading,
@@ -79,10 +87,17 @@ export default function OnboardingPaywallScreen() {
     isCompletingRef.current = true;
     try {
       await markOnboardingPremiumComplete();
-      router.replace("/login?mode=create");
+      router.replace(
+        returnsToLogin ? "/login?mode=login" : "/login?mode=create"
+      );
     } finally {
       isCompletingRef.current = false;
     }
+  }, [returnsToLogin]);
+
+  const routeToLogin = useCallback(async () => {
+    await clearOnboardingPremiumComplete();
+    router.replace("/login?mode=login");
   }, []);
 
   const openPaywall = useCallback(async () => {
@@ -97,10 +112,15 @@ export default function OnboardingPaywallScreen() {
       return true;
     }
 
-    // 👇 user closed paywall
-    router.replace("/login");
+    await routeToLogin();
     return false;
-  }, [canUseRevenueCat, isBusy, presentPremiumPaywall, continueToAccount]);
+  }, [
+    canUseRevenueCat,
+    isBusy,
+    presentPremiumPaywall,
+    continueToAccount,
+    routeToLogin,
+  ]);
 
   const handleRestorePurchases = useCallback(async () => {
     if (!canUseRevenueCat || isBusy) return;
@@ -143,29 +163,34 @@ export default function OnboardingPaywallScreen() {
   }, []);
 
   useEffect(() => {
-    if (
-      !isReady ||
-      !canUseRevenueCat ||
-      premiumActive ||
-      hasOpenedRef.current ||
-      !currentOffering
-    )
+    if (!isReady || !canUseRevenueCat || hasOpenedRef.current || !currentOffering)
       return;
 
     hasOpenedRef.current = true;
 
     const run = async () => {
-      const unlocked = await presentPremiumPaywall({ ifNeeded: true });
-
-      if (unlocked) {
-        await continueToAccount();
-      } else {
-        router.replace("/login?mode=login");
+      try {
+        const unlocked = await presentPremiumPaywall({ ifNeeded: false });
+        if (unlocked) {
+          await continueToAccount();
+        } else {
+          await routeToLogin();
+        }
+      } catch {
+        await routeToLogin();
       }
     };
 
     run();
-  }, [isReady, canUseRevenueCat, premiumActive, currentOffering]);
+  }, [
+    isReady,
+    canUseRevenueCat,
+    premiumActive,
+    currentOffering,
+    continueToAccount,
+    presentPremiumPaywall,
+    routeToLogin,
+  ]);
 
   return (
     <BackdropScreen scrollable={false}>

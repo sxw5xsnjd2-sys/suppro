@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -175,6 +176,20 @@ function PlusIcon({ size = 16, color: c = appTheme.colors.textStrong }) {
   );
 }
 
+function TrashIcon({ size = 15, color: c = appTheme.colors.textTertiary }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+      <Path
+        d="M2 4h12M5 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M6 7v5M10 7v5M3 4l1 9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-9"
+        stroke={c}
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function MetricDetailScreen() {
@@ -189,6 +204,7 @@ export default function MetricDetailScreen() {
 
   const effectiveEntries = useHealthStore((state) => getEffectiveEntries(state));
   const addEntry = useHealthStore((state) => state.addEntry);
+  const deleteEntry = useHealthStore((state) => state.deleteEntry);
 
   const metricEntries = useMemo(
     () =>
@@ -348,9 +364,34 @@ export default function MetricDetailScreen() {
                   ]}
                 >
                   <Text style={styles.entryDate}>{formatShortDate(entry.date)}</Text>
-                  <Text style={styles.entryValue}>
-                    {formatEntryValue(metric, entry)}
-                  </Text>
+                  <View style={styles.entryRight}>
+                    <Text style={styles.entryValue}>
+                      {formatEntryValue(metric, entry)}
+                    </Text>
+                    <Pressable
+                      onPress={() =>
+                        Alert.alert(
+                          "Delete entry",
+                          "Remove this logged score?",
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: "Delete",
+                              style: "destructive",
+                              onPress: () => deleteEntry(entry.id),
+                            },
+                          ]
+                        )
+                      }
+                      style={({ pressed }) => [
+                        styles.deleteBtn,
+                        pressed && { opacity: 0.5 },
+                      ]}
+                      hitSlop={8}
+                    >
+                      <TrashIcon />
+                    </Pressable>
+                  </View>
                 </View>
               ))}
             </View>
@@ -532,10 +573,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: appTheme.colors.textSecondary,
   },
+  entryRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
   entryValue: {
     fontFamily: typography.fontFamily.heading,
     fontSize: 14,
     color: appTheme.colors.textPrimary,
+  },
+  deleteBtn: {
+    padding: 4,
   },
   emptyEntries: {
     backgroundColor: appTheme.colors.surface,

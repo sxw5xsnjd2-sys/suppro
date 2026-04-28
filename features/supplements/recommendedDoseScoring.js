@@ -182,6 +182,28 @@ function matchesVitaminDIdentifier(value) {
   );
 }
 
+function matchesOmega3Identifier(value) {
+  const normalized = trimString(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /\bomega[- ]?3\b|\bepa\b|\bdha\b|\bdocosahexaenoic acid\b|\beicosapentaenoic acid\b/.test(
+    normalized
+  );
+}
+
+function matchesEpaDhaComponentIdentifier(value) {
+  const normalized = trimString(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /\bepa\b|\bdha\b|\bdocosahexaenoic acid\b|\beicosapentaenoic acid\b/.test(
+    normalized
+  );
+}
+
 function isVitaminDMatch(match, supplement) {
   return [
     match?.ingredientName,
@@ -241,6 +263,72 @@ function alignDoseUnitsForIngredient({
     unit: doseScoringProfile.unit,
     convertedFromUnit: normalizedServingDose.unit,
   };
+}
+
+function shouldAggregateOmega3Dose({ match, supplement, recommendedDose }) {
+  const hasOmega3Target = [supplement?.name, recommendedDose?.sourceText].some(
+    matchesOmega3Identifier
+  );
+  const isEpaDhaComponent = [
+    match?.ingredientRaw,
+    match?.ingredientNormalized,
+    match?.catalogName,
+  ].some(matchesEpaDhaComponentIdentifier);
+
+  return hasOmega3Target && isEpaDhaComponent;
+}
+
+function buildAggregatedDoseMap(preparedMatches) {
+  const doseRowsByCatalogId = new Map();
+
+  (preparedMatches ?? []).forEach((entry) => {
+    if (!entry?.shouldAggregateOmega3Dose || !entry?.catalogId) {
+      return;
+    }
+
+    const rows = doseRowsByCatalogId.get(entry.catalogId) ?? [];
+    rows.push(entry);
+    doseRowsByCatalogId.set(entry.catalogId, rows);
+  });
+
+  const aggregatedDoseByCatalogId = new Map();
+
+  doseRowsByCatalogId.forEach((rows, catalogId) => {
+    if (rows.length < 2) {
+      return;
+    }
+
+    const validDoses = rows
+      .map((entry) => entry.alignedServingDose)
+      .filter(
+        (dose) =>
+          dose &&
+          Number.isFinite(dose.value) &&
+          typeof dose.unit === "string" &&
+          dose.unit.length > 0
+      );
+
+    if (validDoses.length !== rows.length) {
+      return;
+    }
+
+    const [firstDose] = validDoses;
+    if (!validDoses.every((dose) => dose.unit === firstDose.unit)) {
+      return;
+    }
+
+    const aggregatedValue = validDoses.reduce((sum, dose) => sum + dose.value, 0);
+
+    aggregatedDoseByCatalogId.set(catalogId, {
+      ...firstDose,
+      value: roundTo(aggregatedValue),
+      amountBasis: "per_serving",
+      multiplier: 1,
+      aggregatedFromComponents: true,
+    });
+  });
+
+  return aggregatedDoseByCatalogId;
 }
 
 export function normalizeDoseUnit(value) {
@@ -1100,7 +1188,7 @@ export function scoreMatchedIngredientsForProduct({
   supplementsByCatalogId,
   servingSizeText = null,
 }) {
-  return (matchedIngredients ?? []).map((match) => {
+  const preparedMatches = (matchedIngredients ?? []).map((match) => {
     const supplement = supplementsByCatalogId.get(match?.catalogId);
     const evidenceScore =
       typeof supplement?.evidence_score === "number" &&
@@ -1123,6 +1211,42 @@ export function scoreMatchedIngredientsForProduct({
       match,
       supplement,
     });
+
+    return {
+      match,
+      catalogId: trimString(match?.catalogId),
+      supplement,
+      evidenceScore,
+      recommendedDose,
+      doseScoringProfile,
+      servingFlags,
+      servingStatus,
+      alignedServingDose,
+      shouldAggregateOmega3Dose: shouldAggregateOmega3Dose({
+        match,
+        supplement,
+        recommendedDose,
+      }),
+    };
+  });
+
+  const aggregatedDoseByCatalogId = buildAggregatedDoseMap(preparedMatches);
+
+  return preparedMatches.map((entry) => {
+    const {
+      match,
+      catalogId,
+      supplement,
+      evidenceScore,
+      recommendedDose,
+      doseScoringProfile,
+      servingFlags,
+      servingStatus,
+      alignedServingDose,
+    } = entry;
+    const effectiveServingDose =
+      aggregatedDoseByCatalogId.get(catalogId) ?? alignedServingDose;
+
     const {
       doseFactor,
       status: comparisonStatus,
@@ -1130,7 +1254,7 @@ export function scoreMatchedIngredientsForProduct({
       scoreAdjustmentReasonCode,
       flags: comparisonFlags,
     } = compareDoseToDoseScoringProfile({
-      normalizedServingDose: alignedServingDose,
+      normalizedServingDose: effectiveServingDose,
       doseScoringProfile,
     });
 
@@ -1150,7 +1274,7 @@ export function scoreMatchedIngredientsForProduct({
     const scoreAdjustmentSummary = buildDoseComparisonSummary({
       doseBand,
       doseComparisonStatus,
-      normalizedServingDose: alignedServingDose,
+      normalizedServingDose: effectiveServingDose,
       doseScoringProfile,
     });
 
@@ -1160,7 +1284,7 @@ export function scoreMatchedIngredientsForProduct({
       adjustedEvidenceScore,
       recommendedDose,
       doseScoringProfile,
-      normalizedServingDose: alignedServingDose,
+      normalizedServingDose: effectiveServingDose,
       doseFactor,
       doseBand,
       doseStatusLabel: buildDoseStatusLabel({

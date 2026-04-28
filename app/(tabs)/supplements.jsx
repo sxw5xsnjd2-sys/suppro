@@ -1,5 +1,12 @@
-import React, { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
@@ -7,9 +14,49 @@ import {
   AppHeader,
   ChatFloatingButton,
   EmptyStateCard,
+  PrimaryCard,
 } from "@/components/common/ui";
+import { BenefitIconBadge } from "@/features/supplements/components/BenefitIconBadge";
+import {
+  getBenefitIconComponent,
+} from "@/features/supplements/benefits";
 import { appTheme, spacing, typography } from "@/theme";
 import { supabase } from "@src/lib/supabase";
+
+const BENEFIT_BADGE_COLORS = {
+  "Anti-aging": "#F2E4D8",
+  "Anti-inflammatory": "#F4DDD6",
+  "Blood pressure control": "#DDEAF4",
+  "Blood sugar control": "#E7E4F7",
+  "Bone health": "#E7F0E1",
+  "Cardiovascular health": "#DCEAF2",
+  "Cholesterol support": "#E0EDF5",
+  "Cognitive support": "#E5E0F4",
+  "Concentration enhancing": "#E6DFF6",
+  "Digestive health": "#E6F1DF",
+  "Endurance enhancing": "#F6E3D3",
+  "Energy enhancing": "#F7E7D1",
+  "Exercise recovery": "#F4E0D4",
+  "Female fertility": "#F3DCE6",
+  "Female hormone balance": "#F1D9E3",
+  "Female sexual arousal": "#F4D9E1",
+  "Hair health": "#EFE6D8",
+  "Immune health": "#E1EEDB",
+  "Injury recovery": "#F2DED4",
+  "Joint health": "#E7ECD8",
+  "Lymphatic/swelling support": "#DFEFE5",
+  "Male fertility": "#DCE4F3",
+  "Male sexual performance": "#E2DDF5",
+  "Memory enhancing": "#E4DEF3",
+  "Mood support": "#EADCF2",
+  "Skin health": "#F2E2D8",
+  "Sleep support": "#E7E1F4",
+  "Stress relief": "#ECDFF1",
+  "Strength enhancing": "#F4E1D5",
+  "Testosterone boosting": "#E3DDF2",
+  "Urine system health": "#DFEEE8",
+  "Weight management": "#F4E8CF",
+};
 
 function normalizeBenefits(rows) {
   const byLabel = {};
@@ -45,6 +92,10 @@ function normalizeBenefits(rows) {
 }
 
 function BenefitListItem({ item, showBorder }) {
+  const Icon = getBenefitIconComponent(item.label);
+  const badgeColor =
+    BENEFIT_BADGE_COLORS[item.label] ?? appTheme.colors.iconSurfaceMuted;
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -63,7 +114,47 @@ function BenefitListItem({ item, showBorder }) {
       ]}
     >
       <View style={styles.benefitLeft}>
+        <BenefitIconBadge
+          label={item.label}
+          color={badgeColor}
+          Icon={Icon}
+          size={18}
+          containerSize={32}
+          borderRadius={10}
+        />
         <Text style={styles.benefitLabel}>{item.label}</Text>
+      </View>
+
+      <Ionicons
+        name="chevron-forward"
+        size={18}
+        color={appTheme.colors.textSecondary}
+      />
+    </Pressable>
+  );
+}
+
+function SupplementResultItem({ item, showBorder }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={item.name}
+      accessibilityHint={`Open supplement details for ${item.name}.`}
+      onPress={() =>
+        router.push({
+          pathname: "/(modals)/modal/supplement-info",
+          params: { id: item.id, name: item.name },
+        })
+      }
+      style={({ pressed }) => [
+        styles.searchResultItem,
+        showBorder && styles.searchResultBorder,
+        pressed && styles.searchResultPressed,
+      ]}
+    >
+      <View style={styles.searchResultCopy}>
+        <Text style={styles.searchResultName}>{item.name}</Text>
+        <Text style={styles.searchResultMeta}>Supplement</Text>
       </View>
 
       <Ionicons
@@ -77,8 +168,22 @@ function BenefitListItem({ item, showBorder }) {
 
 export default function SupplementsScreen() {
   const [benefits, setBenefits] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [supplementMatches, setSupplementMatches] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const trimmedQuery = searchQuery.trim();
+  const hasSearchQuery = trimmedQuery.length > 0;
+
+  const filteredBenefits = useMemo(() => {
+    if (!hasSearchQuery) return benefits;
+
+    const normalizedQuery = trimmedQuery.toLocaleLowerCase();
+    return benefits.filter((item) =>
+      item.label.toLocaleLowerCase().includes(normalizedQuery)
+    );
+  }, [benefits, hasSearchQuery, trimmedQuery]);
 
   useEffect(() => {
     let active = true;
@@ -113,24 +218,91 @@ export default function SupplementsScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!hasSearchQuery) {
+      setSupplementMatches([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    let active = true;
+    setSearchLoading(true);
+
+    supabase
+      .from("supplements")
+      .select("id, name")
+      .eq("status", "approved")
+      .ilike("name", `%${trimmedQuery}%`)
+      .order("name")
+      .limit(12)
+      .then(({ data, error }) => {
+        if (!active) return;
+
+        if (error) {
+          console.error("Failed to search ranked supplements", error);
+          setSupplementMatches([]);
+          return;
+        }
+
+        setSupplementMatches(data ?? []);
+      })
+      .finally(() => {
+        if (active) {
+          setSearchLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [hasSearchQuery, trimmedQuery]);
+
+  const showEmptySearchState =
+    hasSearchQuery &&
+    !searchLoading &&
+    filteredBenefits.length === 0 &&
+    supplementMatches.length === 0;
+
   return (
     <BackdropScreen
       bottomInsetOffset={72}
       minBottomPadding={96}
       floatingSlot={<ChatFloatingButton />}
       headerBehavior="collapsible"
-      collapsedTitle="SUPPLEMENTS"
+      collapsedTitle="SUPPLEMENT RANKINGS"
       header={
         <AppHeader
-          title="SUPPLEMENTS"
+          title="SUPPLEMENT RANKINGS"
           titleStyle={styles.headerTitle}
           bottomSlot={
-            <Text style={styles.headerSubtitle}>Check supplement rankings</Text>
+            <Text style={styles.headerSubtitle}>
+              Search ranked supplements or browse benefit rankings
+            </Text>
           }
           bottomSlotStyle={styles.headerBottom}
         />
       }
     >
+      <View style={styles.searchField}>
+        <Ionicons
+          name="search"
+          size={18}
+          color="#8B8595"
+          style={styles.searchFieldIcon}
+        />
+        <TextInput
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search supplements or benefits"
+          placeholderTextColor="#8B8595"
+          selectionColor="#A6685B"
+          style={styles.searchFieldInput}
+          autoCapitalize="words"
+          clearButtonMode="while-editing"
+          accessibilityLabel="Search supplement rankings"
+        />
+      </View>
+
       {loading ? (
         <View style={styles.stateCard}>
           <Text style={styles.stateText}>Loading ranked benefits...</Text>
@@ -151,16 +323,65 @@ export default function SupplementsScreen() {
         />
       ) : null}
 
-      {!loading && !errorMessage && benefits.length > 0 ? (
-        <View style={styles.list}>
-          {benefits.map((item, index) => (
-            <BenefitListItem
-              key={item.label}
-              item={item}
-              showBorder={index < benefits.length - 1}
+      {!loading && !errorMessage && hasSearchQuery ? (
+        <View style={styles.searchResults}>
+          <View style={styles.searchSummaryRow}>
+            <Text style={styles.searchSummaryTitle}>Search results</Text>
+            {searchLoading ? (
+              <ActivityIndicator
+                size="small"
+                color={appTheme.colors.textSecondary}
+              />
+            ) : null}
+          </View>
+
+          {supplementMatches.length > 0 ? (
+            <PrimaryCard style={styles.resultsCard}>
+              <Text style={styles.resultsSectionTitle}>Supplements</Text>
+              {supplementMatches.map((item, index) => (
+                <SupplementResultItem
+                  key={item.id}
+                  item={item}
+                  showBorder={index < supplementMatches.length - 1}
+                />
+              ))}
+            </PrimaryCard>
+          ) : null}
+
+          {filteredBenefits.length > 0 ? (
+            <PrimaryCard style={styles.resultsCard}>
+              <Text style={styles.resultsSectionTitle}>Benefits</Text>
+              {filteredBenefits.map((item, index) => (
+                <BenefitListItem
+                  key={item.label}
+                  item={item}
+                  showBorder={index < filteredBenefits.length - 1}
+                />
+              ))}
+            </PrimaryCard>
+          ) : null}
+
+          {showEmptySearchState ? (
+            <EmptyStateCard
+              title="No ranking matches"
+              description="Try a different supplement or benefit name."
             />
-          ))}
+          ) : null}
         </View>
+      ) : null}
+
+      {!loading && !errorMessage && !hasSearchQuery && benefits.length > 0 ? (
+        <PrimaryCard style={styles.resultsCard}>
+          <View style={styles.list}>
+            {benefits.map((item, index) => (
+              <BenefitListItem
+                key={item.label}
+                item={item}
+                showBorder={index < benefits.length - 1}
+              />
+            ))}
+          </View>
+        </PrimaryCard>
       ) : null}
     </BackdropScreen>
   );
@@ -178,6 +399,34 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
   },
+  searchField: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 44,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(26,24,32,0.08)",
+    shadowColor: "#1A1820",
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: spacing.md,
+  },
+  searchFieldIcon: {
+    marginRight: 8,
+  },
+  searchFieldInput: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textPrimary,
+    paddingVertical: 0,
+  },
   stateCard: {
     marginBottom: spacing.md,
     paddingHorizontal: appTheme.card.paddingSpacious,
@@ -193,6 +442,37 @@ const styles = StyleSheet.create({
   },
   list: {
     overflow: "hidden",
+  },
+  searchResults: {
+    gap: spacing.md,
+  },
+  searchSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  searchSummaryTitle: {
+    fontSize: 20,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textHeading,
+    letterSpacing: -0.4,
+  },
+  resultsCard: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    overflow: "hidden",
+  },
+  resultsSectionTitle: {
+    paddingHorizontal: appTheme.card.paddingSpacious,
+    paddingTop: appTheme.card.paddingSpacious,
+    paddingBottom: spacing.sm,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
   },
   benefitItem: {
     minHeight: 72,
@@ -215,6 +495,38 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
+  },
+  searchResultItem: {
+    minHeight: 72,
+    paddingHorizontal: appTheme.card.paddingSpacious,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+  },
+  searchResultBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: appTheme.colors.borderSubtle,
+  },
+  searchResultPressed: {
+    backgroundColor: appTheme.colors.surfaceMuted,
+  },
+  searchResultCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  searchResultName: {
+    fontSize: 16,
+    lineHeight: 21,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  searchResultMeta: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
   },
   benefitLabel: {
     flex: 1,

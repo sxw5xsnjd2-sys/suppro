@@ -2,11 +2,11 @@ import React from "react";
 import { View, Pressable, StyleSheet, Text } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Tabs, router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { appTheme, typography } from "@/theme";
 import HomeIcon from "@/assets/icons/tab/home.svg";
 import SupplementsIcon from "@/assets/icons/tab/supplements.svg";
 import HealthIcon from "@/assets/icons/tab/health.svg";
-import QrScanIcon from "@/assets/icons/tab/qr-scan.svg";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 
 const VISIBLE_TABS = ["index", "supplements", "health", "profile"];
@@ -139,13 +139,10 @@ function CustomTabBar({ state, descriptors, navigation, insets }) {
           style={styles.scanButtonInner}
         >
           <View style={styles.scanButtonContent}>
-            <QrScanIcon
-              width={28}
-              height={28}
-              style={styles.scanButtonIcon}
+            <Ionicons
+              name="barcode-outline"
+              size={40}
               color={appTheme.tabBar.plusColor}
-              fill={appTheme.tabBar.plusColor}
-              stroke={appTheme.tabBar.plusColor}
             />
           </View>
         </LinearGradient>
@@ -290,10 +287,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
-  },
-  scanButtonIcon: {
-    position: "absolute",
-    top: "50%",
-    marginTop: -14,
   },
 });

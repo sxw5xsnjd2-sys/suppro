@@ -1,11 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Linking,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -50,12 +44,18 @@ export default function ScannerScreen() {
   const hasScannedRef = useRef(false);
   const resetScan = useScannerStore((state) => state.resetScan);
   const processBarcode = useScannerStore((state) => state.processBarcode);
-  const setPermissionState = useScannerStore((state) => state.setPermissionState);
+  const setPermissionState = useScannerStore(
+    (state) => state.setPermissionState
+  );
   const scannerStatus = useScannerStore((state) => state.status);
   const scanSessionId = useScannerStore((state) => state.scanSessionId);
   const scannerError = useScannerStore((state) => state.error);
-  const sourceParam = Array.isArray(params.source) ? params.source[0] : params.source;
-  const originParam = Array.isArray(params.origin) ? params.origin[0] : params.origin;
+  const sourceParam = Array.isArray(params.source)
+    ? params.source[0]
+    : params.source;
+  const originParam = Array.isArray(params.origin)
+    ? params.origin[0]
+    : params.origin;
   const scannerOrigin =
     sourceParam === "onboarding" || originParam === "onboarding"
       ? "onboarding"
@@ -74,7 +74,10 @@ export default function ScannerScreen() {
 
   useEffect(() => {
     if (!cameraModuleError) return;
-    console.warn("[scanner] expo-camera native module is unavailable", cameraModuleError);
+    console.warn(
+      "[scanner] expo-camera native module is unavailable",
+      cameraModuleError
+    );
   }, []);
 
   useEffect(() => {
@@ -86,12 +89,15 @@ export default function ScannerScreen() {
   }, [isFocused, permission, requestPermission]);
 
   const permissionDenied = useMemo(() => {
-    return permission && !permission.granted && permission.status !== "undetermined";
+    return (
+      permission && !permission.granted && permission.status !== "undetermined"
+    );
   }, [permission]);
   const showProductNotFoundPopup = scannerStatus === "not_found";
   const showScannerErrorPopup = scannerStatus === "error";
   const productNotFoundMessage =
-    (typeof scannerError?.message === "string" && scannerError.message.trim()) ||
+    (typeof scannerError?.message === "string" &&
+      scannerError.message.trim()) ||
     "Sorry, we couldn't find that product, please take pictures to add it to the app";
   const scannerErrorMessage = "We couldn't connect, please try again";
 
@@ -141,7 +147,10 @@ export default function ScannerScreen() {
       return;
     }
 
-    if (nextScanState.status === "not_found" || nextScanState.status === "error") {
+    if (
+      nextScanState.status === "not_found" ||
+      nextScanState.status === "error"
+    ) {
       return;
     }
 
@@ -170,7 +179,11 @@ export default function ScannerScreen() {
     );
   }
 
-  if (!permission || (permissionDenied && permission.canAskAgain)) {
+  if (
+    !permission ||
+    permission.status === "undetermined" ||
+    (permissionDenied && permission.canAskAgain)
+  ) {
     return (
       <ScannerFallback
         title="Camera access needed"
@@ -219,23 +232,8 @@ export default function ScannerScreen() {
           <View style={styles.scanFrame} />
           <Text style={styles.title}>Scan a barcode</Text>
           <Text style={styles.description}>
-            Center the barcode inside the frame. We&apos;ll fetch the product
-            and match its ingredients against your supplement catalog.
+            Center the barcode inside the frame. We&apos;ll do the rest.
           </Text>
-        </View>
-
-        <View style={styles.bottomBar}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Cancel scan"
-            onPress={leaveScannerScreen}
-            style={({ pressed }) => [
-              styles.cancelButton,
-              pressed && styles.cancelButtonPressed,
-            ]}
-          >
-            <Text style={styles.cancelButtonText}>Cancel</Text>
-          </Pressable>
         </View>
       </View>
 
@@ -327,12 +325,7 @@ export default function ScannerScreen() {
   );
 }
 
-function ScannerFallback({
-  title,
-  description,
-  primaryLabel,
-  onPrimaryPress,
-}) {
+function ScannerFallback({ title, description, primaryLabel, onPrimaryPress }) {
   return (
     <View style={styles.fallbackScreen}>
       <PrimaryCard style={styles.fallbackCard}>
@@ -344,7 +337,11 @@ function ScannerFallback({
             variant="primary"
             onPress={onPrimaryPress}
           />
-          <AppButton label="Back" variant="ghost" onPress={leaveScannerScreen} />
+          <AppButton
+            label="Back"
+            variant="ghost"
+            onPress={leaveScannerScreen}
+          />
         </View>
       </PrimaryCard>
     </View>
@@ -358,13 +355,15 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
-    justifyContent: "space-between",
+    justifyContent: "center",
+    alignItems: "center",
     backgroundColor: "rgba(5,5,5,0.28)",
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.xl * 1.6,
-    paddingBottom: spacing.xl,
   },
   topBar: {
+    position: "absolute",
+    top: spacing.xl * 1.6,
+    left: spacing.md,
     alignItems: "flex-start",
   },
   closeButton: {
@@ -376,6 +375,7 @@ const styles = StyleSheet.create({
   centerContent: {
     alignItems: "center",
     gap: spacing.md,
+    width: "100%",
   },
   scanFrame: {
     width: 260,
@@ -398,27 +398,6 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: "rgba(255,255,255,0.82)",
     fontFamily: typography.fontFamily.body,
-  },
-  bottomBar: {
-    alignItems: "center",
-  },
-  cancelButton: {
-    minWidth: 140,
-    borderRadius: 999,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm + 2,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-  },
-  cancelButtonPressed: {
-    opacity: 0.76,
-  },
-  cancelButtonText: {
-    textAlign: "center",
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontFamily: typography.fontFamily.headingSemiBold,
   },
   fallbackScreen: {
     flex: 1,

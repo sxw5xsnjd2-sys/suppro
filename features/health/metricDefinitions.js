@@ -331,6 +331,7 @@ export const PRESET_METRICS = [
   numericMetric({
     key: "strength_enhancing",
     label: "Estimated 1RM",
+    shortLabel: "Strength",
     description: "Estimated one-rep max for your main lift.",
     group: "Measurements",
     unit: "kg",

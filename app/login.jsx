@@ -24,6 +24,7 @@ import { supabase } from "@src/lib/supabase";
 import {
   clearOnboardingDraft,
   getQuestionnaireAnswers,
+  hasCompletedOnboardingPremium,
   hasCompletedQuestionnaire,
 } from "@src/lib/onboarding";
 import {
@@ -210,17 +211,58 @@ export default function LoginScreen() {
   };
 
   const ensureCanCreateAccount = async () => {
-    if (questionnaireComplete === true) return true;
-    if (questionnaireComplete === false) {
+    const [questionnaireDone, premiumDone] = await Promise.all([
+      hasCompletedQuestionnaire(),
+      hasCompletedOnboardingPremium(),
+    ]);
+
+    setQuestionnaireComplete(questionnaireDone);
+
+    if (!questionnaireDone) {
+      setQuestionnaireComplete(false);
       redirectToOnboarding();
       return false;
     }
 
-    const completed = await hasCompletedQuestionnaire();
-    setQuestionnaireComplete(completed);
-    if (!completed) {
+    if (!premiumDone) {
+      setQuestionnaireComplete(true);
+      router.replace(
+        "/onboarding?mode=first_run&step=paywall&origin=create"
+      );
+      return false;
+    }
+
+    if (questionnaireComplete !== true) {
+      setQuestionnaireComplete(true);
+    }
+
+    return true;
+  };
+
+  const ensureCanLogIn = async () => {
+    const [questionnaireDone, premiumDone] = await Promise.all([
+      hasCompletedQuestionnaire(),
+      hasCompletedOnboardingPremium(),
+    ]);
+
+    setQuestionnaireComplete(questionnaireDone);
+
+    if (!questionnaireDone) {
+      setQuestionnaireComplete(false);
       redirectToOnboarding();
       return false;
+    }
+
+    if (!premiumDone) {
+      setQuestionnaireComplete(true);
+      router.replace(
+        "/onboarding?mode=first_run&step=paywall&origin=login"
+      );
+      return false;
+    }
+
+    if (questionnaireComplete !== true) {
+      setQuestionnaireComplete(true);
     }
 
     return true;
@@ -255,6 +297,10 @@ export default function LoginScreen() {
     setSaving(true);
 
     try {
+      if (!(await ensureCanLogIn())) {
+        return;
+      }
+
       const { error } = await supabase.auth.signInWithPassword({
         email: normalizeEmail(email),
         password,
@@ -339,6 +385,10 @@ export default function LoginScreen() {
 
     try {
       if (isCreateMode && !(await ensureCanCreateAccount())) {
+        return;
+      }
+
+      if (!isCreateMode && !(await ensureCanLogIn())) {
         return;
       }
 

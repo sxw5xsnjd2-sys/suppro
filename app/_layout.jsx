@@ -29,10 +29,12 @@ import {
 } from "@expo-google-fonts/geist-mono";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { syncSupplementsStoreAccountScope } from "@/features/supplements/store";
+import { GlobalToast } from "@/components/common/ui/GlobalToast";
 import {
   getOnboardingGateState,
   subscribeOnboardingGateChange,
 } from "@src/lib/onboarding";
+import { provisionOnboardingSelections } from "@src/lib/onboardingProvisioning";
 import { supabase } from "@src/lib/supabase";
 
 SplashScreen.preventAutoHideAsync();
@@ -52,6 +54,7 @@ async function resolveAccountScopedStores(sessionUser) {
   }
 
   await syncSupplementsStoreAccountScope(user);
+  return user;
 }
 
 function LoadingScreen({ overlay = false }) {
@@ -102,10 +105,15 @@ function RootNavigator() {
       gateRequestRef.current = requestId;
 
       try {
-        await resolveAccountScopedStores(sessionUser);
+        const scopedUser = await resolveAccountScopedStores(sessionUser);
         const nextState = await getOnboardingGateState();
         if (mounted && requestId === gateRequestRef.current) {
           setGateState(nextState);
+        }
+        if (nextState === "complete") {
+          provisionOnboardingSelections(scopedUser).catch((error) => {
+            console.error("Failed to provision onboarding selections", error);
+          });
         }
       } catch (error) {
         console.error("Failed to resolve onboarding gate", error);
@@ -169,8 +177,7 @@ function RootNavigator() {
         (isOnboardingRoute &&
           !isRetakeOnboarding &&
           (!stepParam || isBuildingOnboardingRoute)) ||
-        isOnboardingScannerFlow ||
-        (isLoginRoute && modeParam === "login")
+        isOnboardingScannerFlow
       );
     }
 
@@ -178,12 +185,17 @@ function RootNavigator() {
       return isLoginRoute && modeParam !== "login";
     }
 
-    if (!isOnboardingRoute || isRetakeOnboarding) {
-      return isOnboardingScannerFlow;
+    if (gateState === "needs_paywall") {
+      return (
+        (isOnboardingRoute &&
+          !isRetakeOnboarding &&
+          (stepParam === "paywall" || isBuildingOnboardingRoute)) ||
+        (isLoginRoute && modeParam === "login")
+      );
     }
 
-    if (gateState === "needs_paywall") {
-      return stepParam === "paywall" || isBuildingOnboardingRoute;
+    if (!isOnboardingRoute || isRetakeOnboarding) {
+      return isOnboardingScannerFlow;
     }
 
     return false;
@@ -260,9 +272,11 @@ function RootNavigator() {
         <Stack.Screen name="benefit-ranking" options={{ headerShown: false }} />
         <Stack.Screen name="account" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
+        <Stack.Screen name="connections" options={{ headerShown: false }} />
         <Stack.Screen name="favourites" options={{ headerShown: false }} />
         <Stack.Screen name="health" options={{ headerShown: false }} />
       </Stack>
+      <GlobalToast />
       {isRedirectingToAllowedRoute ? <LoadingScreen overlay /> : undefined}
     </>
   );

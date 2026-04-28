@@ -24,6 +24,7 @@ import { AppButton, AppHeader, PrimaryCard } from "@/components/common/ui";
 import { appTheme, spacing, typography } from "@/theme";
 import { useChatStore } from "@/features/ai/store";
 import { useSupplementsStore } from "@/features/supplements/store";
+import { isSupplementScheduledOnDate } from "@/features/supplements/schedule";
 import { useHealthStore } from "@/features/health/store";
 import { normalizeMetric } from "@/features/health/metricDefinitions";
 import {
@@ -226,19 +227,6 @@ function toPercent(taken, planned) {
   return Math.round((taken / planned) * 100);
 }
 
-function isScheduledOnDate(supplement, date) {
-  if (supplement?.startDate && date < supplement.startDate) return false;
-  if (supplement?.endDate && date > supplement.endDate) return false;
-  if (
-    !Array.isArray(supplement?.daysOfWeek) ||
-    supplement.daysOfWeek.length === 0
-  ) {
-    return true;
-  }
-  const dayOfWeek = parseISODate(date).getDay();
-  return supplement.daysOfWeek.includes(dayOfWeek);
-}
-
 function buildChatStatsInput(
   supplements,
   takenTimesByDate,
@@ -258,7 +246,7 @@ function buildChatStatsInput(
   periodDates.forEach((date) => {
     const dayTakenMap = takenTimesByDate?.[date] ?? {};
     const plannedSupplements = (supplements ?? []).filter((supplement) =>
-      isScheduledOnDate(supplement, date)
+      isSupplementScheduledOnDate(supplement, date)
     );
     planned += plannedSupplements.length;
     plannedSupplements.forEach((supplement) => {
@@ -276,6 +264,10 @@ function buildChatStatsInput(
     daysOfWeek: Array.isArray(supplement.daysOfWeek)
       ? supplement.daysOfWeek
       : [0, 1, 2, 3, 4, 5, 6],
+    frequencyLabel: supplement.frequencyLabel ?? null,
+    scheduleType: supplement.scheduleType ?? null,
+    intervalDays: supplement.intervalDays ?? null,
+    scheduleAnchorDate: supplement.scheduleAnchorDate ?? null,
     startDate: supplement.startDate ?? null,
     endDate: supplement.endDate ?? null,
     catalogId: supplement.catalogId ?? null,

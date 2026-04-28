@@ -8,6 +8,16 @@ export function getEvidenceDisplay(score) {
       count: 0,
       color: appTheme.colors.evidenceUnknown,
       badgeLabel: null,
+      badgeTone: "neutral",
+    };
+  }
+
+  if (score >= 90) {
+    return {
+      count: 3,
+      color: appTheme.colors.evidenceStrong,
+      badgeLabel: "STRONG EVIDENCE",
+      badgeTone: "highlight",
     };
   }
 
@@ -15,7 +25,8 @@ export function getEvidenceDisplay(score) {
     return {
       count: 3,
       color: appTheme.colors.evidenceStrong,
-      badgeLabel: "STRONG EVIDENCE",
+      badgeLabel: "GOOD EVIDENCE",
+      badgeTone: "evidenceGood",
     };
   }
 
@@ -23,14 +34,16 @@ export function getEvidenceDisplay(score) {
     return {
       count: 2,
       color: appTheme.colors.evidenceModerate,
-      badgeLabel: null,
+      badgeLabel: "MODERATE EVIDENCE",
+      badgeTone: "evidenceAverage",
     };
   }
 
   return {
     count: 1,
     color: appTheme.colors.evidenceLow,
-    badgeLabel: null,
+    badgeLabel: "POOR EVIDENCE",
+    badgeTone: "evidencePoor",
   };
 }
 
@@ -47,9 +60,7 @@ export function EvidenceDots({ score, muted = false, style }) {
             key={index}
             style={[
               styles.dot,
-              active
-                ? { backgroundColor: activeColor }
-                : styles.inactiveDot,
+              active ? { backgroundColor: activeColor } : styles.inactiveDot,
             ]}
           />
         );

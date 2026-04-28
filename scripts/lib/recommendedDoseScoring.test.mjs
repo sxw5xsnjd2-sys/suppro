@@ -24,6 +24,7 @@ const { computeBlendEvidenceScore } = await importLocalJsModule(
 
 function createSupplement({
   id,
+  name = id,
   evidenceScore,
   minValue = null,
   maxValue = null,
@@ -53,6 +54,7 @@ function createSupplement({
   return [
     id,
     {
+      name,
       evidence_score: evidenceScore,
       recommended_dose_status:
         recommendedDoseStatus ??
@@ -97,6 +99,51 @@ test("normalizes per-capsule doses using serving size text", () => {
   assert.equal(ingredient.doseFactor, 1);
   assert.equal(ingredient.adjustedEvidenceScore, 90);
   assert.equal(ingredient.doseBand, "optimal");
+});
+
+test("aggregates DHA and EPA against a shared omega-3 target", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "omega3",
+      name: "Omega-3 fatty acids",
+      evidenceScore: 95,
+      minValue: 1000,
+      maxValue: 2000,
+    }),
+  ]);
+
+  const [dha, epa] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        ingredientRaw: "Docosahexaenoic Acid",
+        ingredientNormalized: "docosahexaenoic acid",
+        catalogId: "omega3",
+        catalogName: "Docosahexaenoic Acid",
+        dosageValue: 300,
+        dosageUnit: "mg",
+        amountBasis: "per_serving",
+      },
+      {
+        ingredientRaw: "Eicosapentaenoic Acid",
+        ingredientNormalized: "eicosapentaenoic acid",
+        catalogId: "omega3",
+        catalogName: "Eicosapentaenoic Acid",
+        dosageValue: 400,
+        dosageUnit: "mg",
+        amountBasis: "per_serving",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(dha.normalizedServingDose?.value, 700);
+  assert.equal(epa.normalizedServingDose?.value, 700);
+  assert.equal(dha.normalizedServingDose?.unit, "mg");
+  assert.equal(epa.normalizedServingDose?.unit, "mg");
+  assert.equal(dha.doseComparisonStatus, "effective_below_target");
+  assert.equal(epa.doseComparisonStatus, "effective_below_target");
+  assert.equal(dha.doseStatusLabel, "Effective, slightly below target");
+  assert.equal(epa.doseStatusLabel, "Effective, slightly below target");
 });
 
 test("keeps per-tablet and per-serving amounts directly comparable", () => {

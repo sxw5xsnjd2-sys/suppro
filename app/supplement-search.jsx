@@ -314,16 +314,17 @@ export default function SupplementSearchScreen() {
               <View style={styles.searchField}>
                 <Ionicons
                   name="search"
-                  size={20}
-                  color={appTheme.input.icon}
+                  size={18}
+                  color="#8B8595"
                   style={styles.searchFieldIcon}
                 />
                 <TextInput
                   value={query}
                   onChangeText={setQuery}
                   placeholder="Search ingredients and supplements"
-                  placeholderTextColor={appTheme.input.placeholder}
-                  style={styles.searchFieldInput}
+                  placeholderTextColor="#8B8595"
+                  selectionColor="#A6685B"
+                  style={styles.searchInput}
                   clearButtonMode="while-editing"
                   autoFocus
                   autoCapitalize="words"
@@ -378,20 +379,29 @@ const styles = StyleSheet.create({
   searchField: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: appTheme.input.height,
-    borderRadius: appTheme.input.radius,
-    backgroundColor: appTheme.input.background,
-    paddingHorizontal: 14,
+    minHeight: 44,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(26,24,32,0.08)",
+    shadowColor: "#1A1820",
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   searchFieldIcon: {
     marginRight: 8,
   },
-  searchFieldInput: {
+  searchInput: {
     flex: 1,
-    fontSize: 16,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 18,
     fontFamily: typography.fontFamily.body,
-    color: appTheme.input.text,
+    color: appTheme.colors.textPrimary,
+    paddingVertical: 0,
   },
   resultsSummaryRow: {
     marginTop: spacing.md,

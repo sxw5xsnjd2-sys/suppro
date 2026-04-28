@@ -109,6 +109,11 @@ export async function markOnboardingPremiumComplete() {
   notifyOnboardingGateChange();
 }
 
+export async function clearOnboardingPremiumComplete() {
+  await AsyncStorage.removeItem(ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY);
+  notifyOnboardingGateChange();
+}
+
 export async function getOnboardingGateState() {
   const answers = await getQuestionnaireAnswers();
 

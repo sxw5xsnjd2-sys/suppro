@@ -42,6 +42,10 @@ import {
 } from "@/features/supplements/catalog";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { getTrackedScanMatchedIngredients } from "@/features/supplements/trackedScanContext";
+import {
+  isSupplementHearted,
+  setSupplementHearted,
+} from "@/features/supplements/favouritesStorage";
 import { appTheme, typography } from "@/theme";
 import { getSupplementById } from "@src/data/getSupplement";
 import { supabase } from "@src/lib/supabase";
@@ -548,6 +552,8 @@ export default function SupplementInfoModal() {
   const [openBenefitId, setOpenBenefitId] = useState(null);
   const [showAllBenefits, setShowAllBenefits] = useState(false);
   const [verifiedInfoVisible, setVerifiedInfoVisible] = useState(false);
+  const [isFavourite, setIsFavourite] = useState(false);
+  const [showFavouriteToast, setShowFavouriteToast] = useState(false);
   const isLiveScanSource = source === "scanned";
   const isTrackedScannedSource = source === "tracked-scanned";
   const isScanStyledSource = isLiveScanSource || isTrackedScannedSource;
@@ -846,6 +852,13 @@ export default function SupplementInfoModal() {
   const showIngredientsSection =
     !isScanFailure &&
     (matchedIngredients.length > 0 || isSupplementProductDetail);
+  const favouriteSupplementId =
+    !isScanFailure && typeof data?.id === "string" && data.id.trim()
+      ? data.id.trim()
+      : !isScanFailure && !isScanStyledSource && id
+      ? id
+      : "";
+  const canFavourite = Boolean(favouriteSupplementId);
 
   const detailCards = [
     {
@@ -966,6 +979,62 @@ export default function SupplementInfoModal() {
     });
   };
 
+  const handleFavourite = async () => {
+    if (!canFavourite || isFavourite) {
+      return;
+    }
+
+    try {
+      await setSupplementHearted(favouriteSupplementId, true);
+      setIsFavourite(true);
+      setShowFavouriteToast(true);
+    } catch (error) {
+      console.error("Failed to save favourite supplement", error);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    if (!canFavourite) {
+      setIsFavourite(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    isSupplementHearted(favouriteSupplementId)
+      .then((hearted) => {
+        if (active) {
+          setIsFavourite(Boolean(hearted));
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to load favourite state", error);
+        if (active) {
+          setIsFavourite(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [canFavourite, favouriteSupplementId]);
+
+  useEffect(() => {
+    if (!showFavouriteToast) {
+      return undefined;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setShowFavouriteToast(false);
+    }, 1800);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [showFavouriteToast]);
+
   if (loaded && isProductNotRecognizedFailure) {
     return (
       <View style={[styles.screenRoot, styles.notRecognizedScreenRoot]}>
@@ -1054,51 +1123,90 @@ export default function SupplementInfoModal() {
         style={StyleSheet.absoluteFill}
       />
 
+      {/* Fixed close button — stays visible while scrolling */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Close supplement info"
+        hitSlop={8}
+        onPress={handleClose}
+        style={({ pressed }) => [
+          styles.closeButton,
+          { top: 16 },
+          pressed && styles.closeButtonPressed,
+        ]}
+      >
+        <Ionicons
+          name="close"
+          size={18}
+          color={appTheme.colors.textStrong}
+        />
+      </Pressable>
+
+      {showFavouriteToast ? (
+        <View
+          pointerEvents="none"
+          style={[styles.toastWrap, { bottom: Math.max(insets.bottom + 20, 32) }]}
+        >
+          <View style={styles.toast}>
+            <Ionicons name="heart" size={14} color="#FFFFFF" />
+            <Text style={styles.toastText}>Added to favourites!</Text>
+          </View>
+        </View>
+      ) : null}
+
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
           {
-            paddingTop: insets.top + 14,
+            paddingTop: 16,
             paddingBottom: Math.max(insets.bottom + 28, 36),
           },
         ]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerBlock}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close supplement info"
-            hitSlop={8}
-            onPress={handleClose}
-            style={({ pressed }) => [
-              styles.closeButton,
-              pressed && styles.closeButtonPressed,
-            ]}
-          >
-            <Ionicons
-              name="close"
-              size={18}
-              color={appTheme.colors.textStrong}
-            />
-          </Pressable>
 
           {!isProductNotRecognizedFailure ? (
             <View style={styles.titleRow}>
               <Text style={styles.pageTitle}>{fallbackName}</Text>
-              {isVerified ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Verified supplement information"
-                  hitSlop={8}
-                  onPress={() => setVerifiedInfoVisible(true)}
-                  style={({ pressed }) => [
-                    styles.verifiedBadgeButton,
-                    pressed && styles.verifiedBadgeButtonPressed,
-                  ]}
-                >
-                  <ShieldTrustIcon width={16} height={16} />
-                </Pressable>
-              ) : null}
+              <View style={styles.titleActions}>
+                {isVerified ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Verified supplement information"
+                    hitSlop={8}
+                    onPress={() => setVerifiedInfoVisible(true)}
+                    style={({ pressed }) => [
+                      styles.verifiedBadgeButton,
+                      pressed && styles.verifiedBadgeButtonPressed,
+                    ]}
+                  >
+                    <ShieldTrustIcon width={16} height={16} />
+                  </Pressable>
+                ) : null}
+                {canFavourite ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      isFavourite ? "Saved to favourites" : "Add to favourites"
+                    }
+                    accessibilityState={isFavourite ? { selected: true } : {}}
+                    hitSlop={8}
+                    onPress={handleFavourite}
+                    style={({ pressed }) => [
+                      styles.favouriteButton,
+                      isFavourite && styles.favouriteButtonActive,
+                      pressed && styles.closeButtonPressed,
+                    ]}
+                  >
+                    <Ionicons
+                      name={isFavourite ? "heart" : "heart-outline"}
+                      size={16}
+                      color={isFavourite ? "#A6685B" : appTheme.colors.textStrong}
+                    />
+                  </Pressable>
+                ) : null}
+              </View>
             </View>
           ) : null}
 
@@ -1455,28 +1563,73 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   headerBlock: {
-    position: "relative",
-    paddingRight: 44,
     marginBottom: 18,
+    paddingTop: 42,
+    paddingRight: 46,
+  },
+  favouriteButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.52)",
+  },
+  favouriteButtonActive: {
+    backgroundColor: "rgba(255,255,255,0.72)",
   },
   closeButton: {
     position: "absolute",
-    top: 0,
-    right: 0,
+    right: 20,
     width: 30,
     height: 30,
     borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.52)",
+    zIndex: 10,
   },
   closeButtonPressed: {
     opacity: 0.72,
   },
+  toastWrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 20,
+  },
+  toast: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(23,21,27,0.92)",
+    shadowColor: "#1A1820",
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  toastText: {
+    fontSize: 13,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "#FFFFFF",
+  },
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
     paddingTop: 2,
+  },
+  titleActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
   },
   pageTitle: {
     flexShrink: 1,

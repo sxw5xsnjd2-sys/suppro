@@ -26,8 +26,24 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { StatusBar } from "expo-status-bar";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import Svg, {
+  Circle,
+  Defs,
+  LinearGradient as SvgLinearGradient,
+  Path,
+  Stop,
+} from "react-native-svg";
 import { router, useLocalSearchParams } from "expo-router";
-import { PRESET_METRICS_BY_KEY } from "@/features/health/metricDefinitions";
+import {
+  PRESET_METRICS,
+  PRESET_METRICS_BY_KEY,
+} from "@/features/health/metricDefinitions";
+import {
+  SUPPLEMENT_SCHEDULE_PRESETS,
+  buildScheduleFromPreset,
+  getSupplementScheduleLabel,
+  normalizeSupplementSchedule,
+} from "@/features/supplements/schedule";
 import { appTheme, typography } from "@/theme";
 import SupproLogo from "@/assets/icons/Supprologo.png";
 import { supabase } from "@src/lib/supabase";
@@ -52,7 +68,6 @@ import {
   OnboardingShell,
   OptionRow,
   QuestionHero,
-  SectionEyebrow,
   onboardingV6,
 } from "./v6Primitives";
 
@@ -152,18 +167,10 @@ const CONFIDENCE_OPTIONS = [
   { value: "expert", label: "Expert" },
 ];
 
-const METRIC_OPTIONS = [
-  { value: "sleep", label: "Sleep quality" },
-  { value: "energy", label: "Energy" },
-  { value: "concentration_enhancing", label: "Focus" },
-  { value: "mood", label: "Mood" },
-  { value: "exercise_recovery", label: "Soreness" },
-  { value: "digestive_health", label: "Digestion" },
-  { value: "strength_enhancing", label: "Strength" },
-  { value: "skin_health", label: "Skin health" },
-  { value: "hair_health", label: "Hair health" },
-  { value: "libido", label: "Libido" },
-].filter((option) => PRESET_METRICS_BY_KEY[option.value]);
+const METRIC_OPTIONS = PRESET_METRICS.map((metric) => ({
+  value: metric.key,
+  label: metric.shortLabel || metric.label,
+})).filter((option) => PRESET_METRICS_BY_KEY[option.value]);
 
 const LIFE_STAGE_OPTIONS = [
   { value: "none", label: "None" },
@@ -223,13 +230,13 @@ const PRIORITY_OPTIONS = [
 const CAUTION_OPTIONS = [
   {
     value: "very_cautious",
-    label: "Very cautious",
+    label: "Well-established only",
     cautionLevel: "ultra_conservative",
   },
   { value: "balanced", label: "Balanced", cautionLevel: "balanced" },
   {
     value: "adventurous",
-    label: "Adventurous",
+    label: "Open to promising new options",
     cautionLevel: "results_optimised",
   },
 ];
@@ -241,23 +248,134 @@ const TIMING_OPTIONS = [
   { value: "whenever", label: "Whenever I remember" },
 ];
 
-const FREQUENCY_OPTIONS = [
-  { value: "1", label: "1 time / day" },
-  { value: "2", label: "2 times / day" },
-  { value: "3", label: "3 times / day" },
-  { value: "4_plus", label: "4+ times / day" },
-];
-
 const LOADER_LINES = [
   "Collecting your answers",
-  "Cross-referencing 2,341 supplements",
+  "Cross-referencing 10,432 supplements",
   "Flagging interactions",
-  "Finalizing your stack",
 ];
-const LOADER_LINE_DURATIONS = [900, 900, 1000, 1300];
+const LOADER_LINE_DURATIONS = [900, 900, 1000];
+
+const HELPER_STEP_KEYS = [
+  "helperEvidence",
+  "helperSymptom",
+  "helperRanked",
+  "helperSources",
+];
+const HELPER_CTA_LABELS = [
+  "Show me more",
+  "Keep going",
+  "Almost there",
+  "Show me my stack",
+];
+const ANNUAL_SUPPLEMENT_WASTE_GBP = 589;
+const REGION_TO_CURRENCY = {
+  AE: "AED",
+  AU: "AUD",
+  BR: "BRL",
+  CA: "CAD",
+  CH: "CHF",
+  CN: "CNY",
+  CZ: "CZK",
+  DE: "EUR",
+  DK: "DKK",
+  ES: "EUR",
+  FR: "EUR",
+  GB: "GBP",
+  HK: "HKD",
+  HU: "HUF",
+  IE: "EUR",
+  IN: "INR",
+  IT: "EUR",
+  JP: "JPY",
+  MX: "MXN",
+  NL: "EUR",
+  NO: "NOK",
+  NZ: "NZD",
+  PL: "PLN",
+  PT: "EUR",
+  RO: "RON",
+  SE: "SEK",
+  SG: "SGD",
+  US: "USD",
+  ZA: "ZAR",
+};
+const GBP_EXCHANGE_RATES = {
+  AED: 4.97,
+  AUD: 2.07,
+  BRL: 7.31,
+  CAD: 1.86,
+  CHF: 1.12,
+  CNY: 9.82,
+  CZK: 29.2,
+  DKK: 8.72,
+  EUR: 1.17,
+  GBP: 1,
+  HKD: 10.52,
+  HUF: 469,
+  INR: 113.2,
+  JPY: 203.1,
+  MXN: 25.9,
+  NOK: 13.95,
+  NZD: 2.23,
+  PLN: 5.02,
+  RON: 5.82,
+  SEK: 13.07,
+  SGD: 1.74,
+  USD: 1.354,
+  ZAR: 25.3,
+};
 
 function normalizeOnboardingMode(mode) {
   return mode === "retake" ? "retake" : "first_run";
+}
+
+function getDeviceLocale() {
+  try {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+    return typeof locale === "string" && locale.trim() ? locale : "en-GB";
+  } catch {
+    return "en-GB";
+  }
+}
+
+function getRegionFromLocale(locale) {
+  if (!locale || typeof locale !== "string") return null;
+
+  try {
+    if (typeof Intl.Locale === "function") {
+      const region = new Intl.Locale(locale).region;
+      if (region) return region.toUpperCase();
+    }
+  } catch {
+    // Fall through to string parsing.
+  }
+
+  const match = locale.match(/-([a-z]{2}|\d{3})(?:-|$)/i);
+  return match ? match[1].toUpperCase() : null;
+}
+
+function getLocalizedAnnualWasteLabel() {
+  const locale = getDeviceLocale();
+  const region = getRegionFromLocale(locale);
+  const currency = REGION_TO_CURRENCY[region] || "GBP";
+  const exchangeRate = GBP_EXCHANGE_RATES[currency] || 1;
+  const amount = Math.round(ANNUAL_SUPPLEMENT_WASTE_GBP * exchangeRate);
+
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  } catch {
+    return new Intl.NumberFormat("en-GB", {
+      style: "currency",
+      currency: "GBP",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(ANNUAL_SUPPLEMENT_WASTE_GBP);
+  }
 }
 
 function defaultBirthDate() {
@@ -318,11 +436,12 @@ function normalizePositiveNumber(value) {
 }
 
 function createSupplementRow() {
+  const schedule = buildScheduleFromPreset("daily");
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name: "",
     dose: "",
-    frequency: "",
+    ...schedule,
   };
 }
 
@@ -334,12 +453,15 @@ function normalizeSupplementRows(value) {
   if (!Array.isArray(value)) return [];
   return value
     .filter((row) => row && typeof row === "object")
-    .map((row) => ({
-      id: row.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: String(row.name || ""),
-      dose: String(row.dose || ""),
-      frequency: String(row.frequency || ""),
-    }));
+    .map((row) => {
+      const schedule = normalizeSupplementSchedule(row);
+      return {
+        id: row.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: String(row.name || ""),
+        dose: String(row.dose || ""),
+        ...schedule,
+      };
+    });
 }
 
 function createInitialAnswers() {
@@ -365,7 +487,7 @@ function createInitialAnswers() {
     conditions: [],
     conditionsText: "",
     dietary: [],
-    lifeStage: "none",
+    lifeStage: "",
     pregnancyStatus: "",
     evidencePreference: "",
     priorityPreference: "",
@@ -435,13 +557,19 @@ function mergeStoredAnswers(base, stored) {
   if (!["kg", "lb"].includes(merged.weightUnit)) {
     merged.weightUnit = "kg";
   }
+  if (merged.lifeStage === "none" && !merged.pregnancyStatus) {
+    merged.lifeStage = "";
+  }
   if (!merged.lifeStage) {
     merged.lifeStage =
       merged.pregnancyStatus === "pregnant" ||
       merged.pregnancyStatus === "trying_to_conceive" ||
       merged.pregnancyStatus === "breastfeeding"
         ? merged.pregnancyStatus
-        : "none";
+        : merged.pregnancyStatus === "no" ||
+          merged.pregnancyStatus === "not_applicable"
+        ? "none"
+        : "";
   }
   merged.confidence = CONFIDENCE_OPTIONS.some(
     (option) => option.value === merged.confidence
@@ -460,8 +588,8 @@ function mergeStoredAnswers(base, stored) {
   )
     ? merged.supplementTiming
     : TIMING_OPTIONS.some((option) => option.value === merged.adherencePlan)
-      ? merged.adherencePlan
-      : "";
+    ? merged.adherencePlan
+    : "";
   merged.consentAnalytics = Boolean(stored.consentAnalytics);
 
   return merged;
@@ -514,13 +642,17 @@ function answersReducer(state, action) {
   }
 }
 
+function shouldAskPregnancyQuestion(sexAtBirth) {
+  return sexAtBirth === "female" || sexAtBirth === "prefer_not_to_say";
+}
+
 function getVisibleStepKeys(answers) {
   return STEP_KEYS.filter((key) => {
     if (key === "meds" || key === "conditions") {
       return false;
     }
     if (key === "lifeStage") {
-      return answers.sexAtBirth === "female";
+      return shouldAskPregnancyQuestion(answers.sexAtBirth);
     }
     return true;
   });
@@ -609,10 +741,7 @@ function buildQuestionnairePayload(answers) {
 
   const supplementsDetails = supplementRows
     .map((row) => {
-      const frequencyLabel =
-        FREQUENCY_OPTIONS.find((option) => option.value === row.frequency)
-          ?.label || row.frequency;
-      return [row.name.trim(), row.dose.trim(), frequencyLabel]
+      return [row.name.trim(), row.dose.trim(), getSupplementScheduleLabel(row)]
         .filter(Boolean)
         .join(" - ");
     })
@@ -635,12 +764,11 @@ function buildQuestionnairePayload(answers) {
     conditions: [],
     conditionsText: "",
     adherencePlan: answers.supplementTiming,
-    pregnancyStatus:
-      answers.sexAtBirth === "female"
-        ? answers.lifeStage === "none"
-          ? "no"
-          : answers.lifeStage
-        : "not_applicable",
+    pregnancyStatus: shouldAskPregnancyQuestion(answers.sexAtBirth)
+      ? answers.lifeStage === "none"
+        ? "no"
+        : answers.lifeStage
+      : "not_applicable",
     metricInitialValues: {},
   };
 }
@@ -1059,27 +1187,54 @@ function DatePickerCards({ value, onChangePart }) {
 function SupplementManualSheet({ visible, rows, onAdd, onRemove, onClose }) {
   const [name, setName] = useState("");
   const [dose, setDose] = useState("");
-  const [frequency, setFrequency] = useState("");
+  const [schedulePreset, setSchedulePreset] = useState("daily");
+  const [customFrequency, setCustomFrequency] = useState("");
 
   useEffect(() => {
     if (!visible) return;
     setName("");
     setDose("");
-    setFrequency("");
+    setSchedulePreset("daily");
+    setCustomFrequency("");
   }, [visible]);
 
   const canAdd = Boolean(name.trim());
   const addRow = () => {
-    if (!canAdd) return;
+    if (!canAdd) return false;
+    const customPreset =
+      schedulePreset === "custom"
+        ? SUPPLEMENT_SCHEDULE_PRESETS.find(
+            (preset) =>
+              preset.value !== "custom" &&
+              preset.label.toLowerCase() ===
+                customFrequency.trim().toLowerCase()
+          )
+        : null;
+    const schedule = buildScheduleFromPreset(
+      customPreset?.value ?? schedulePreset,
+      {
+        anchorDate: toISODate(new Date()),
+        customLabel: customFrequency,
+      }
+    );
     onAdd({
       ...createSupplementRow(),
       name: name.trim(),
       dose: dose.trim(),
-      frequency,
+      ...schedule,
     });
     setName("");
     setDose("");
-    setFrequency("");
+    setSchedulePreset("daily");
+    setCustomFrequency("");
+    return true;
+  };
+
+  const handleDone = () => {
+    if (canAdd) {
+      addRow();
+    }
+    onClose();
   };
 
   return (
@@ -1095,86 +1250,108 @@ function SupplementManualSheet({ visible, rows, onAdd, onRemove, onClose }) {
       >
         <Pressable style={styles.sheetFill} onPress={onClose} />
         <View style={styles.manualSheetCard}>
-          <View style={styles.sheetHandle} />
-          <View style={styles.sheetTitleRow}>
-            <Text style={styles.sheetTitle}>Add supplement</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close manual supplement entry"
-              onPress={onClose}
-              hitSlop={8}
-            >
-              <Ionicons name="close" size={22} color={onboardingV6.ink} />
-            </Pressable>
-          </View>
-
-          <View style={styles.inputStack}>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="Supplement name"
-              placeholderTextColor={onboardingV6.faint}
-              style={styles.textInput}
-            />
-            <TextInput
-              value={dose}
-              onChangeText={setDose}
-              placeholder="Dose, optional"
-              placeholderTextColor={onboardingV6.faint}
-              style={styles.textInput}
-            />
-          </View>
-
-          <View style={styles.frequencyWrap}>
-            {FREQUENCY_OPTIONS.map((option) => (
-              <ChipPill
-                key={option.value}
-                label={option.label}
-                selected={frequency === option.value}
-                onPress={() => setFrequency(option.value)}
-              />
-            ))}
-          </View>
-
-          {rows.length ? (
-            <View style={styles.addedList}>
-              {rows.map((row) => (
-                <View key={row.id} style={styles.addedRow}>
-                  <View style={styles.addedCopy}>
-                    <Text style={styles.addedName} numberOfLines={1}>
-                      {row.name}
-                    </Text>
-                    <Text style={styles.addedMeta} numberOfLines={1}>
-                      {[row.dose, row.frequency].filter(Boolean).join(" - ")}
-                    </Text>
-                  </View>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Remove ${row.name}`}
-                    onPress={() => onRemove(row.id)}
-                    hitSlop={8}
-                  >
-                    <Ionicons
-                      name="close"
-                      size={18}
-                      color={onboardingV6.muted}
-                    />
-                  </Pressable>
-                </View>
-              ))}
+          <View style={styles.manualSheetHeader}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetTitleRow}>
+              <Text style={styles.sheetTitle}>Add supplement</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close manual supplement entry"
+                onPress={onClose}
+                hitSlop={8}
+              >
+                <Ionicons name="close" size={22} color={onboardingV6.ink} />
+              </Pressable>
             </View>
-          ) : null}
+          </View>
+
+          <ScrollView
+            style={styles.manualSheetScroll}
+            contentContainerStyle={styles.manualSheetScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.inputStack}>
+              <TextInput
+                value={name}
+                onChangeText={setName}
+                placeholder="Supplement name"
+                placeholderTextColor={onboardingV6.faint}
+                style={styles.textInput}
+              />
+              <TextInput
+                value={dose}
+                onChangeText={setDose}
+                placeholder="Dosage, e.g. 5g"
+                placeholderTextColor={onboardingV6.faint}
+                style={styles.textInput}
+              />
+            </View>
+
+            <View style={styles.frequencySection}>
+              <Text style={styles.frequencyLabel}>How often?</Text>
+              <View style={styles.frequencyWrap}>
+                {SUPPLEMENT_SCHEDULE_PRESETS.map((option) => (
+                  <ChipPill
+                    key={option.value}
+                    label={option.label}
+                    selected={schedulePreset === option.value}
+                    onPress={() => setSchedulePreset(option.value)}
+                  />
+                ))}
+              </View>
+              {schedulePreset === "custom" ? (
+                <TextInput
+                  value={customFrequency}
+                  onChangeText={setCustomFrequency}
+                  placeholder="e.g. Mondays and Thursdays"
+                  placeholderTextColor={onboardingV6.faint}
+                  style={styles.textInput}
+                />
+              ) : null}
+            </View>
+
+            {rows.length ? (
+              <View style={styles.addedList}>
+                {rows.map((row) => (
+                  <View key={row.id} style={styles.addedRow}>
+                    <View style={styles.addedCopy}>
+                      <Text style={styles.addedName} numberOfLines={1}>
+                        {row.name}
+                      </Text>
+                      <Text style={styles.addedMeta} numberOfLines={1}>
+                        {[row.dose, getSupplementScheduleLabel(row)]
+                          .filter(Boolean)
+                          .join(" - ")}
+                      </Text>
+                    </View>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove ${row.name}`}
+                      onPress={() => onRemove(row.id)}
+                      hitSlop={8}
+                    >
+                      <Ionicons
+                        name="close"
+                        size={18}
+                        color={onboardingV6.muted}
+                      />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </ScrollView>
 
           <View style={styles.sheetActions}>
             <GhostButton
-              label="Done"
-              onPress={onClose}
+              label="Add another"
+              onPress={addRow}
               style={styles.sheetAction}
             />
             <OnboardingCTA
-              label="Add"
-              onPress={addRow}
-              disabled={!canAdd}
+              label="Done"
+              onPress={handleDone}
               style={styles.sheetAction}
             />
           </View>
@@ -1226,9 +1403,10 @@ function LoaderScreen({ onComplete }) {
       <View style={styles.loaderSpacer} />
       <View style={styles.loaderList}>
         {LOADER_LINES.map((line, index) => {
-          const lineStart = LOADER_LINE_DURATIONS
-            .slice(0, index)
-            .reduce((sum, duration) => sum + duration, 0);
+          const lineStart = LOADER_LINE_DURATIONS.slice(0, index).reduce(
+            (sum, duration) => sum + duration,
+            0
+          );
           const rawProgress = clamp(
             (elapsedMs - lineStart) / LOADER_LINE_DURATIONS[index],
             0,
@@ -1270,6 +1448,319 @@ function LoaderScreen({ onComplete }) {
   );
 }
 
+// ─── Helper screen sub-components ────────────────────────────────────────────
+
+function HelperPager({ index, total }) {
+  return (
+    <View style={styles.helperPager}>
+      <View style={styles.helperDots}>
+        {Array.from({ length: total }).map((_, i) => (
+          <View
+            key={i}
+            style={[styles.helperDot, i === index && styles.helperDotActive]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function HelperPreviewCard({ children }) {
+  return <View style={styles.helperCard}>{children}</View>;
+}
+
+const EVIDENCE_ARC_R = 92;
+const EVIDENCE_CX = 120;
+const EVIDENCE_CY = 122;
+const EVIDENCE_ARC_LEN = Math.PI * EVIDENCE_ARC_R;
+
+function EvidenceDial({ rating = 90 }) {
+  const angle = Math.PI + (rating / 100) * Math.PI;
+  const tipX = EVIDENCE_CX + EVIDENCE_ARC_R * Math.cos(angle);
+  const tipY = EVIDENCE_CY + EVIDENCE_ARC_R * Math.sin(angle);
+  const filled = EVIDENCE_ARC_LEN * (rating / 100);
+
+  return (
+    <View style={styles.dialWrapper}>
+      <Svg
+        width={240}
+        height={140}
+        viewBox="0 0 240 140"
+        style={styles.dialSvg}
+      >
+        <Defs>
+          <SvgLinearGradient id="evGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <Stop offset="0%" stopColor="#F4E1B5" />
+            <Stop offset="35%" stopColor="#F4D77E" />
+            <Stop offset="70%" stopColor="#7BCB6B" />
+            <Stop offset="100%" stopColor="#3FA94E" />
+          </SvgLinearGradient>
+        </Defs>
+        <Path
+          d="M 28 122 A 92 92 0 0 1 212 122"
+          stroke="#ECE7E2"
+          strokeWidth={22}
+          strokeLinecap="round"
+          fill="none"
+        />
+        <Path
+          d="M 28 122 A 92 92 0 0 1 212 122"
+          stroke="url(#evGrad)"
+          strokeWidth={22}
+          strokeLinecap="round"
+          fill="none"
+          strokeDasharray={[filled, EVIDENCE_ARC_LEN]}
+        />
+        <Circle cx={tipX} cy={tipY} r={9} fill="#3FA94E" />
+        <Circle
+          cx={tipX}
+          cy={tipY}
+          r={9}
+          fill="none"
+          stroke="#FFFFFF"
+          strokeWidth={2.5}
+        />
+      </Svg>
+      <View style={styles.dialLabel}>
+        <Text style={styles.dialCaption}>Evidence Rating</Text>
+        <View style={styles.dialScoreRow}>
+          <Text style={styles.dialScore}>{rating}</Text>
+          <Text style={styles.dialDenom}>/100</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function HelperH1Content() {
+  return (
+    <>
+      <View style={styles.helperCardTitleRow}>
+        <Text style={styles.helperCardTitle}>Creatine Monohydrate</Text>
+        <Svg width={16} height={16} viewBox="0 0 16 16">
+          <Circle cx={8} cy={8} r={8} fill="#2F8FE6" />
+          <Path
+            d="M 4.5 8 L 7 10.5 L 11.5 5.5"
+            stroke="#FFFFFF"
+            strokeWidth={1.8}
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </Svg>
+      </View>
+      <EvidenceDial rating={90} />
+      <View style={styles.helperStatusPill}>
+        <Svg width={14} height={14} viewBox="0 0 14 14">
+          <Circle cx={7} cy={7} r={6} fill="#3FA94E" />
+          <Path
+            d="M 4 7 L 6 9 L 10 5"
+            stroke="#FFFFFF"
+            strokeWidth={1.6}
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </Svg>
+        <Text style={styles.helperStatusText}>
+          Strong evidence – keep taking
+        </Text>
+      </View>
+    </>
+  );
+}
+
+const SYMPTOM_ROWS = [
+  { label: "Anti-aging" },
+  { label: "Anti-inflammatory" },
+  { label: "Blood pressure control", active: true },
+  { label: "Blood sugar control" },
+  { label: "Bone health" },
+  { label: "Cardiovascular health" },
+];
+
+function HelperSymptomRow({ label, active }) {
+  return (
+    <View
+      style={[styles.helperSymptomRow, active && styles.helperSymptomRowActive]}
+    >
+      <Text
+        style={[
+          styles.helperSymptomText,
+          active && styles.helperSymptomTextActive,
+        ]}
+      >
+        {label}
+      </Text>
+      <Svg
+        width={active ? 14 : 10}
+        height={active ? 14 : 10}
+        viewBox="0 0 10 10"
+      >
+        <Path
+          d="M 2 1 L 7 5 L 2 9"
+          stroke={active ? onboardingV6.ink : onboardingV6.faint}
+          strokeWidth={1.6}
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Svg>
+    </View>
+  );
+}
+
+function HelperH2Content() {
+  return (
+    <View style={styles.helperSymptomList}>
+      {SYMPTOM_ROWS.map((row) => (
+        <HelperSymptomRow
+          key={row.label}
+          label={row.label}
+          active={row.active}
+        />
+      ))}
+    </View>
+  );
+}
+
+const RANK_ROWS_DATA = [
+  { rank: 1, name: "Spirulina (Arthrospira platensis)", score: 88 },
+  { rank: 2, name: "Psyllium husk", score: 83 },
+  { rank: 3, name: "Cinnamon Extract", score: 78 },
+];
+
+function HelperRankRow({ rank, name, score }) {
+  return (
+    <View style={styles.helperRankRow}>
+      <View style={styles.helperRankTop}>
+        <View style={styles.helperRankBadge}>
+          <Text style={styles.helperRankNum}>#{rank}</Text>
+        </View>
+        <View style={styles.helperRankCopy}>
+          <Text style={styles.helperRankName} numberOfLines={1}>
+            {name}
+          </Text>
+          <Text style={styles.helperRankSub}>Rank {rank} of 26</Text>
+        </View>
+      </View>
+      <View style={styles.helperRankDivider} />
+      <Text style={styles.helperRankEvidence}>
+        {"Evidence rating: "}
+        <Text style={styles.helperRankScore}>{score}/100</Text>
+      </Text>
+    </View>
+  );
+}
+
+function HelperH3Content() {
+  return (
+    <>
+      <View style={styles.helperH3Header}>
+        <View style={styles.helperH3HeaderLeft}>
+          <Text style={styles.helperH3Title}>Cholesterol support</Text>
+          <Text style={styles.helperH3Sub}>
+            All supplements ranked for this benefit
+          </Text>
+        </View>
+        <View style={styles.helperSuppsPill}>
+          <Text style={styles.helperSuppsPillText}>26 supps</Text>
+        </View>
+      </View>
+      <View style={styles.helperRankList}>
+        {RANK_ROWS_DATA.map((row) => (
+          <HelperRankRow key={row.rank} {...row} />
+        ))}
+      </View>
+    </>
+  );
+}
+
+function HelperSourceRow({ children }) {
+  return (
+    <View style={styles.helperSourceRow}>
+      <Svg
+        width={16}
+        height={18}
+        viewBox="0 0 16 18"
+        fill="none"
+        style={styles.helperSourceIcon}
+      >
+        <Path
+          d="M 2 2 H 10 L 14 6 V 16 H 2 Z"
+          stroke={onboardingV6.muted}
+          strokeWidth={1.4}
+          strokeLinejoin="round"
+        />
+        <Path
+          d="M 10 2 V 6 H 14"
+          stroke={onboardingV6.muted}
+          strokeWidth={1.4}
+          strokeLinejoin="round"
+        />
+        <Path
+          d="M 5 9 H 11 M 5 12 H 11 M 5 15 H 9"
+          stroke={onboardingV6.muted}
+          strokeWidth={1.2}
+          strokeLinecap="round"
+        />
+      </Svg>
+      <Text style={styles.helperSourceText}>{children}</Text>
+    </View>
+  );
+}
+
+function HelperH4Content() {
+  return (
+    <>
+      <View style={styles.helperH4Header}>
+        <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M 12 20 C 4 14 2 10 2 6.5 C 2 4 4 2 6.5 2 C 8.5 2 11 3.5 12 6 C 13 3.5 15.5 2 17.5 2 C 20 2 22 4 22 6.5 C 22 10 20 14 12 20 Z"
+            stroke={onboardingV6.ink}
+            strokeWidth={1.6}
+            strokeLinejoin="round"
+          />
+          <Path
+            d="M 9 11 L 11.5 13 L 15 9"
+            stroke={onboardingV6.ink}
+            strokeWidth={1.6}
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </Svg>
+        <View style={styles.helperH4TitleBlock}>
+          <Text style={styles.helperH4Title} numberOfLines={1}>
+            Cardiovascular health
+          </Text>
+          <Text style={styles.helperH4Sub} numberOfLines={1}>
+            #1 in cardiovascular health
+          </Text>
+        </View>
+        <View style={styles.helperEvidenceBar} />
+      </View>
+      <View style={styles.helperSourceList}>
+        <HelperSourceRow>
+          {"Khan et al. (2021), eClinicalMedicine"}
+        </HelperSourceRow>
+        <HelperSourceRow>
+          {
+            '"Effect of omega-3 fatty acids on cardiovascular outcomes: a meta-analysis of RCTs."'
+          }
+        </HelperSourceRow>
+        <HelperSourceRow>
+          {
+            "38 trials · 149,051 participants. Omega-3 supplementation significantly reduced cardiovascular mortality and heart attacks."
+          }
+        </HelperSourceRow>
+      </View>
+    </>
+  );
+}
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
 export default function QuestionnaireScreen({ standalone = false } = {}) {
   const params = useLocalSearchParams();
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
@@ -1283,6 +1774,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
   const autoAdvanceTimeoutRef = useRef(null);
   const nameInputRef = useRef(null);
   const successInputRef = useRef(null);
+  const signupCompletedRef = useRef(false);
   const [{ stepKey, answers }, dispatch] = useReducer(answersReducer, {
     stepKey: "welcome",
     answers: createInitialAnswers(),
@@ -1292,6 +1784,10 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
   const progress = useMemo(
     () => getProgress(stepKey, visibleStepKeys),
     [stepKey, visibleStepKeys]
+  );
+  const localizedAnnualWasteLabel = useMemo(
+    () => getLocalizedAnnualWasteLabel(),
+    []
   );
   const isStrictFirstRun = standalone && draftMode === "first_run";
 
@@ -1341,6 +1837,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
 
   useEffect(() => {
     if (!hydrated || stepKey === BUILDING_STEP_KEY) return;
+    if (HELPER_STEP_KEYS.includes(stepKey)) return;
     void saveOnboardingDraft({
       currentStepKey: stepKey,
       currentPageIndex: Math.max(0, ALL_STEP_KEYS.indexOf(stepKey)),
@@ -1353,6 +1850,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
 
   useEffect(() => {
     if (!hydrated || stepKey === BUILDING_STEP_KEY) return;
+    if (HELPER_STEP_KEYS.includes(stepKey)) return;
     const coerced = coerceVisibleStepKey(stepKey, visibleStepKeys);
     if (coerced !== stepKey) {
       dispatch({ type: "setStep", stepKey: coerced });
@@ -1388,6 +1886,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
 
   const goBack = useCallback(() => {
     if (stepKey === BUILDING_STEP_KEY) return true;
+    if (HELPER_STEP_KEYS.includes(stepKey)) return true;
 
     clearAutoAdvanceTimeout();
 
@@ -1415,8 +1914,11 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     if (stepKey === "name") {
       return Boolean(answers.name.trim());
     }
+    if (stepKey === "lifeStage") {
+      return Boolean(answers.lifeStage);
+    }
     return true;
-  }, [answers.name, stepKey]);
+  }, [answers.lifeStage, answers.name, stepKey]);
 
   const continueLabel = useMemo(() => {
     if (stepKey === "landing") return "Begin";
@@ -1497,6 +1999,21 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     }
   }, [answers, draftMode, submitting]);
 
+  const routeAfterHelpers = useCallback(() => {
+    const signupCompleted = signupCompletedRef.current;
+    if (!signupCompleted) {
+      router.replace(`/onboarding?mode=${draftMode}&step=paywall`);
+      return;
+    }
+    if (standalone) {
+      router.replace("/");
+      return;
+    }
+    Alert.alert("Onboarding saved", "Your answers were saved.", [
+      { text: "Done", onPress: () => router.back() },
+    ]);
+  }, [draftMode, standalone]);
+
   const routeAfterBuilding = useCallback(async () => {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -1521,19 +2038,19 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
         return;
       }
 
-      if (!signupCompleted) {
-        router.replace(`/onboarding?mode=${draftMode}&step=paywall`);
-        return;
-      }
-
-      if (standalone) {
+      // For retake (non-standalone) go straight through without helpers.
+      if (draftMode === "retake") {
+        if (!signupCompleted) {
+          router.replace(`/onboarding?mode=${draftMode}&step=paywall`);
+          return;
+        }
         router.replace("/");
         return;
       }
 
-      Alert.alert("Onboarding saved", "Your answers were saved.", [
-        { text: "Done", onPress: () => router.back() },
-      ]);
+      // First-run: show helpers before routing to home / paywall.
+      signupCompletedRef.current = signupCompleted;
+      dispatch({ type: "setStep", stepKey: HELPER_STEP_KEYS[0] });
     } catch (error) {
       console.error("Failed to finish onboarding route", error);
       router.replace("/");
@@ -1547,7 +2064,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       setField("dateOfBirth", toISODate(defaultBirthDate()));
     }
 
-    if (stepKey === "sex" && answers.sexAtBirth !== "female") {
+    if (stepKey === "sex" && answers.sexAtBirth === "male") {
       setFields({ lifeStage: "none", pregnancyStatus: "not_applicable" });
     }
 
@@ -1714,7 +2231,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
                 style={styles.landingLogo}
               />
             </View>
-            <Text style={styles.landingTitle}>Welcome To Suppro</Text>
+            <Text style={styles.landingTitle}>Welcome to Suppro</Text>
             <Text style={styles.landingSubtitle}>
               {
                 "You should have all the information you need to create the best supplement stack for you. Let's make that happen."
@@ -1745,7 +2262,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
           <QuestionHero
             centered
             title="A few quick questions"
-            subtitle="We are going to ask you a few questions so that we can personalize your app."
+            subtitle="We are going to ask you a few questions so that we can personalise your app."
           >
             <GlyphPerson />
           </QuestionHero>
@@ -1800,11 +2317,14 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
                   const nextAnswers = {
                     ...answers,
                     sexAtBirth: option.value,
-                    ...(option.value === "female"
-                      ? {}
-                      : {
+                    ...(option.value === "male"
+                      ? {
                           lifeStage: "none",
                           pregnancyStatus: "not_applicable",
+                        }
+                      : {
+                          lifeStage: "",
+                          pregnancyStatus: "",
                         }),
                   };
                   setFields(nextAnswers);
@@ -1921,7 +2441,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
           <QuestionHero
             centered
             title="Stacks add up."
-            subtitle="The average person wastes £589 a year on supplements that don't work. We'll make sure you aren't one of them."
+            subtitle={`The average person wastes ${localizedAnnualWasteLabel} a year on supplements that don't work. We'll make sure you aren't one of them.`}
           >
             <GlyphPills />
           </QuestionHero>
@@ -1981,7 +2501,9 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
                         {row.name}
                       </Text>
                       <Text style={styles.stackRowMeta} numberOfLines={1}>
-                        {[row.dose, row.frequency].filter(Boolean).join(" - ")}
+                        {[row.dose, getSupplementScheduleLabel(row)]
+                          .filter(Boolean)
+                          .join(" - ")}
                       </Text>
                     </View>
                   </View>
@@ -2034,8 +2556,8 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
         <View style={styles.insightContent}>
           <QuestionHero
             centered
-            title="Safety, first."
-            subtitle="1 in 4 supplement combinations carry a known interaction. Check risks and interaction with Suppro."
+            title="Safety first."
+            subtitle="1 in 4 supplement combinations carry a known interaction. Check risks and interactions with Suppro."
           >
             <GlyphHeart />
           </QuestionHero>
@@ -2046,7 +2568,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     if (stepKey === "evidence") {
       return (
         <>
-          <QuestionHero title="How strict do you want the evidence bar?" />
+          <QuestionHero title="How evidence-backed should your supplements be?" />
           <View style={styles.optionStack}>
             {EVIDENCE_OPTIONS.map((option) => (
               <OptionRow
@@ -2117,7 +2639,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       return (
         <>
           <QuestionHero
-            title="How adventurous would you like to be?"
+            title="How cautious would you like to be?"
             subtitle="Some supplements have weaker evidence but interesting upside."
           />
           <View style={styles.optionStack}>
@@ -2150,7 +2672,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
         <>
           <QuestionHero title="How do you prefer to take your supplements?" />
           <View style={styles.contentBlock}>
-            <SectionEyebrow>Timing</SectionEyebrow>
             <View style={styles.inlineOptionStack}>
               {TIMING_OPTIONS.map((option) => (
                 <OptionRow
@@ -2183,7 +2704,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
           <QuestionHero centered title="One last thing." />
           <Text style={styles.consentNoticeText}>
             {
-              "Suppro is for educational purposes, not a doctor. Recommendations are general guidance - always check with a medical professional before making changes."
+              "Suppro is for educational purposes only. Recommendations are general guidance - always check with a medical professional before making changes."
             }
           </Text>
         </View>
@@ -2212,6 +2733,99 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
           scrollable={false}
         >
           <LoaderScreen onComplete={routeAfterBuilding} />
+        </OnboardingShell>
+      </>
+    );
+  }
+
+  if (HELPER_STEP_KEYS.includes(stepKey)) {
+    const helperIdx = HELPER_STEP_KEYS.indexOf(stepKey);
+    const isLastHelper = helperIdx === HELPER_STEP_KEYS.length - 1;
+
+    const handleHelperCta = () => {
+      triggerImpact();
+      if (isLastHelper) {
+        routeAfterHelpers();
+      } else {
+        dispatch({
+          type: "setStep",
+          stepKey: HELPER_STEP_KEYS[helperIdx + 1],
+        });
+      }
+    };
+
+    const helperContentMap = {
+      helperEvidence: (
+        <>
+          <QuestionHero
+            title="How effective are the supplements you're taking?"
+            subtitle="Every supplement in your stack gets a 0–100 evidence score, drawn from clinical literature and meta-analyses."
+          />
+          <View style={styles.helperCardWrap}>
+            <HelperPreviewCard>
+              <HelperH1Content />
+            </HelperPreviewCard>
+          </View>
+        </>
+      ),
+      helperSymptom: (
+        <>
+          <QuestionHero
+            title="Find the most evidence-backed supplements for your symptoms."
+            subtitle="Browse multiple benefit categories – every one ranked by what the science actually supports."
+          />
+          <View style={styles.helperCardWrap}>
+            <HelperPreviewCard>
+              <HelperH2Content />
+            </HelperPreviewCard>
+          </View>
+        </>
+      ),
+      helperRanked: (
+        <>
+          <QuestionHero
+            title="See exactly which supplements lead each benefit."
+            subtitle="For every benefit you care about, we rank every supplement by quality of evidence – so the best option is always at #1."
+          />
+          <View style={styles.helperCardWrap}>
+            <HelperPreviewCard>
+              <HelperH3Content />
+            </HelperPreviewCard>
+          </View>
+        </>
+      ),
+      helperSources: (
+        <>
+          <QuestionHero
+            title="Find the evidence behind every supplement."
+            subtitle="Tap any benefit to see the studies, sample sizes, and findings we used to rank it. No mystery, no marketing."
+          />
+          <View style={styles.helperCardWrap}>
+            <HelperPreviewCard>
+              <HelperH4Content />
+            </HelperPreviewCard>
+          </View>
+        </>
+      ),
+    };
+
+    return (
+      <>
+        <StatusBar style="dark" />
+        <OnboardingShell
+          progress={1}
+          showTopBar={false}
+          showBack={false}
+          scrollable
+          footer={
+            <OnboardingCTA
+              label={HELPER_CTA_LABELS[helperIdx]}
+              onPress={handleHelperCta}
+            />
+          }
+        >
+          <HelperPager index={helperIdx} total={HELPER_STEP_KEYS.length} />
+          {helperContentMap[stepKey]}
         </OnboardingShell>
       </>
     );
@@ -2368,7 +2982,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     maxWidth: 342,
     textAlign: "center",
-    fontSize: 20,
+    fontSize: 16,
     lineHeight: 28,
     fontFamily: typography.fontFamily.bodyMedium,
     color: onboardingV6.ink,
@@ -2767,7 +3381,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: onboardingV6.sidePadding,
     paddingTop: 10,
     paddingBottom: 24,
+  },
+  manualSheetHeader: {
+    flexShrink: 0,
+  },
+  manualSheetScroll: {
+    flexShrink: 1,
+  },
+  manualSheetScrollContent: {
     gap: 14,
+    paddingBottom: 16,
   },
   sheetHandle: {
     alignSelf: "center",
@@ -2816,6 +3439,15 @@ const styles = StyleSheet.create({
   inputStack: {
     gap: 10,
   },
+  frequencySection: {
+    gap: 10,
+  },
+  frequencyLabel: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: onboardingV6.muted,
+  },
   frequencyWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -2852,6 +3484,7 @@ const styles = StyleSheet.create({
     color: onboardingV6.muted,
   },
   sheetActions: {
+    marginTop: 14,
     flexDirection: "row",
     gap: 10,
   },
@@ -2924,5 +3557,319 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: appTheme.card.pressedOpacity,
+  },
+
+  // ─── Helper screens ─────────────────────────────────────────────────────────
+  helperPager: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  helperDots: {
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+  },
+  helperDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(46,26,82,0.18)",
+  },
+  helperDotActive: {
+    width: 18,
+    backgroundColor: onboardingV6.primaryDk,
+  },
+  helperCardWrap: {
+    paddingHorizontal: onboardingV6.sidePadding,
+    paddingTop: 18,
+    paddingBottom: 8,
+  },
+  helperCard: {
+    backgroundColor: onboardingV6.surface,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: onboardingV6.border,
+    padding: 16,
+    shadowColor: "#2E1A52",
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.28,
+    shadowRadius: 40,
+    elevation: 8,
+  },
+  // H1 – Evidence dial
+  helperCardTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  helperCardTitle: {
+    fontSize: 18,
+    lineHeight: 22,
+    letterSpacing: -0.2,
+    fontFamily: typography.fontFamily.heading,
+    color: onboardingV6.ink,
+    flex: 1,
+  },
+  dialWrapper: {
+    height: 196,
+    position: "relative",
+  },
+  dialSvg: {
+    alignSelf: "center",
+  },
+  dialLabel: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 64,
+    alignItems: "center",
+  },
+  dialCaption: {
+    fontSize: 13,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "#3FA94E",
+    letterSpacing: 0.3,
+  },
+  dialScoreRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    marginTop: 2,
+  },
+  dialScore: {
+    fontSize: 44,
+    lineHeight: 48,
+    letterSpacing: -1,
+    fontFamily: typography.fontFamily.heading,
+    color: "#3FA94E",
+  },
+  dialDenom: {
+    fontSize: 22,
+    lineHeight: 28,
+    fontFamily: typography.fontFamily.heading,
+    color: "#3FA94E",
+    opacity: 0.85,
+  },
+  helperStatusPill: {
+    marginTop: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: "#F4F8F0",
+    borderWidth: 1,
+    borderColor: "#DBE9CE",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  helperStatusText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "#2F6B4C",
+  },
+  // H2 – Symptom list
+  helperSymptomList: {
+    paddingVertical: 6,
+  },
+  helperSymptomRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    paddingVertical: 12,
+  },
+  helperSymptomRowActive: {
+    backgroundColor: onboardingV6.surface,
+    borderRadius: 18,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+    marginBottom: 4,
+    shadowColor: "#2E1A52",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.3,
+    shadowRadius: 28,
+    elevation: 6,
+  },
+  helperSymptomText: {
+    fontSize: 14.5,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: onboardingV6.muted,
+  },
+  helperSymptomTextActive: {
+    fontSize: 19,
+    lineHeight: 24,
+    fontFamily: typography.fontFamily.heading,
+    color: onboardingV6.ink,
+    letterSpacing: -0.3,
+  },
+  // H3 – Ranked stack
+  helperH3Header: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  helperH3HeaderLeft: {
+    flex: 1,
+    marginRight: 10,
+  },
+  helperH3Title: {
+    fontSize: 18,
+    lineHeight: 22,
+    letterSpacing: -0.3,
+    fontFamily: typography.fontFamily.heading,
+    color: onboardingV6.ink,
+  },
+  helperH3Sub: {
+    fontSize: 11.5,
+    lineHeight: 15,
+    fontFamily: typography.fontFamily.body,
+    color: onboardingV6.muted,
+    marginTop: 2,
+  },
+  helperSuppsPill: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: onboardingV6.surface,
+    borderWidth: 1,
+    borderColor: onboardingV6.border,
+  },
+  helperSuppsPillText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: typography.fontFamily.bodyBold,
+    color: onboardingV6.ink,
+  },
+  helperRankList: {
+    gap: 8,
+  },
+  helperRankRow: {
+    backgroundColor: onboardingV6.surface,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: onboardingV6.border,
+    shadowColor: "#2E1A52",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    elevation: 3,
+  },
+  helperRankTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  helperRankBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#F2BE2C",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#C9931A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  helperRankNum: {
+    fontSize: 16,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.heading,
+    color: onboardingV6.ink,
+  },
+  helperRankCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  helperRankName: {
+    fontSize: 14.5,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.heading,
+    color: onboardingV6.ink,
+  },
+  helperRankSub: {
+    fontSize: 11.5,
+    lineHeight: 15,
+    fontFamily: typography.fontFamily.body,
+    color: onboardingV6.muted,
+    marginTop: 1,
+  },
+  helperRankDivider: {
+    height: 1,
+    backgroundColor: onboardingV6.border,
+    marginVertical: 9,
+  },
+  helperRankEvidence: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: onboardingV6.muted,
+  },
+  helperRankScore: {
+    fontFamily: typography.fontFamily.bodyBold,
+    color: onboardingV6.ink,
+  },
+  // H4 – Evidence sources
+  helperH4Header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  helperH4TitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  helperH4Title: {
+    fontSize: 14,
+    lineHeight: 17,
+    fontFamily: typography.fontFamily.heading,
+    color: onboardingV6.ink,
+  },
+  helperH4Sub: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: typography.fontFamily.body,
+    color: onboardingV6.muted,
+    marginTop: 1,
+  },
+  helperEvidenceBar: {
+    width: 28,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#F2BE2C",
+    flexShrink: 0,
+  },
+  helperSourceList: {
+    gap: 8,
+  },
+  helperSourceRow: {
+    flexDirection: "row",
+    gap: 10,
+    backgroundColor: "#F4EFEA",
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: "flex-start",
+  },
+  helperSourceIcon: {
+    marginTop: 1,
+    flexShrink: 0,
+  },
+  helperSourceText: {
+    flex: 1,
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontFamily: typography.fontFamily.bodyMedium,
+    color: onboardingV6.ink,
   },
 });

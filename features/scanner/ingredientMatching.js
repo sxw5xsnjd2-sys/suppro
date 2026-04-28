@@ -86,6 +86,16 @@ const ALIAS_GROUPS = [
     "vitamin b6",
     "pyridoxine",
   ],
+  [
+    "omega 3 fatty acids",
+    "omega-3 fatty acids",
+    "omega 3",
+    "omega-3",
+    "dha",
+    "epa",
+    "docosahexaenoic acid",
+    "eicosapentaenoic acid",
+  ],
 ];
 
 function normalizePlainText(value) {

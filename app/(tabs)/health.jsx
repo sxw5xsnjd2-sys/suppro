@@ -224,14 +224,14 @@ export default function HealthScreen() {
   return (
     <BackdropScreen
       headerBehavior="collapsible"
-      collapsedTitle="Health"
+      collapsedTitle="HEALTH"
       bottomInsetOffset={72}
       minBottomPadding={96}
       floatingSlot={<ChatFloatingButton />}
       header={
         <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
           <View style={styles.headerTop}>
-            <Text style={styles.headerTitle}>Health</Text>
+            <Text style={styles.headerTitle}>HEALTH</Text>
             <Pressable
               onPress={() => setMetricPickerOpen(true)}
               style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.7 }]}

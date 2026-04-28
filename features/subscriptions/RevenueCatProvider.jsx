@@ -437,17 +437,27 @@ export function RevenueCatProvider({ children }) {
         return true;
       }
 
+      if (paywallResult === PAYWALL_RESULT.NOT_PRESENTED && ifNeeded) {
+        const nextCustomerInfo = await Purchases.getCustomerInfo();
+        const alreadyPremium = isPremiumActive(nextCustomerInfo);
+        if (isMountedRef.current) {
+          setCustomerInfo(nextCustomerInfo);
+          if (alreadyPremium) {
+            setActionMessage("Suppro Premium is already active.");
+          }
+        }
+        return alreadyPremium;
+      }
+
       if (isMountedRef.current) {
-        if (paywallResult === PAYWALL_RESULT.NOT_PRESENTED && premiumActive) {
-          setActionMessage("Suppro Premium is already active.");
-        } else if (paywallResult === PAYWALL_RESULT.CANCELLED) {
+        if (paywallResult === PAYWALL_RESULT.CANCELLED) {
           setActionMessage("Paywall dismissed.");
         } else if (paywallResult === PAYWALL_RESULT.ERROR) {
           setActionError("The RevenueCat paywall could not be presented.");
         }
       }
 
-      return premiumActive;
+      return false;
     } catch (error) {
       if (isMountedRef.current) {
         setActionError(

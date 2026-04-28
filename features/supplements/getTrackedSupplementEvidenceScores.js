@@ -13,6 +13,18 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function getStoredEvidenceScore(supplement) {
+  if (Number.isFinite(supplement?.evidenceScore)) {
+    return supplement.evidenceScore;
+  }
+
+  if (Number.isFinite(supplement?.evidence_score)) {
+    return supplement.evidence_score;
+  }
+
+  return null;
+}
+
 export async function getTrackedSupplementEvidenceScores(supplements) {
   const supplementList = Array.isArray(supplements) ? supplements : [];
   const officialCatalogIds = new Set();
@@ -67,10 +79,11 @@ export async function getTrackedSupplementEvidenceScores(supplements) {
 
     const catalogType =
       supplement?.catalogType ?? getCatalogType(supplement?.catalogId);
+    const storedScore = getStoredEvidenceScore(supplement);
 
     if (catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT) {
       const score = productScoreByCatalogId.get(supplement.catalogId);
-      acc[supplement.id] = Number.isFinite(score) ? score : null;
+      acc[supplement.id] = Number.isFinite(score) ? score : storedScore;
       return acc;
     }
 
@@ -82,12 +95,13 @@ export async function getTrackedSupplementEvidenceScores(supplements) {
         servingSizeText: trimString(supplement?.servingSizeText) || null,
       });
 
-      acc[supplement.id] = buildProductEvidenceScoreData(scoredIngredients).evidenceScore;
+      const score = buildProductEvidenceScoreData(scoredIngredients).evidenceScore;
+      acc[supplement.id] = Number.isFinite(score) ? score : storedScore;
       return acc;
     }
 
     const score = supplementsByCatalogId.get(supplement.catalogId)?.evidence_score;
-    acc[supplement.id] = Number.isFinite(score) ? score : null;
+    acc[supplement.id] = Number.isFinite(score) ? score : storedScore;
     return acc;
   }, {});
 }

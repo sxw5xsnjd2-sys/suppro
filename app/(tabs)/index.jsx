@@ -8,7 +8,6 @@ import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { HomeHeader } from "@/features/supplements/components/HomeHeader";
 import {
   ChatFloatingButton,
-  EmptyStateCard,
   EvidenceDots,
   PrimaryCard,
   SectionTitle,
@@ -21,12 +20,10 @@ import { useHealthStore } from "@/features/health/store";
 import { getEffectiveEntries } from "@/features/health/selectors";
 import { getTrackedSupplementEvidenceScores } from "@/features/supplements/getTrackedSupplementEvidenceScores";
 import { openTrackedSupplementInfo } from "@/features/supplements/openTrackedSupplementInfo";
+import { isSupplementScheduledOnDate } from "@/features/supplements/schedule";
 import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
-import {
-  isNumericMetric,
-  normalizeMetric,
-} from "@/features/health/metricDefinitions";
+import { computeMetricImprovement } from "@/features/health/metricTrends";
 import { Icon } from "@/features/supplements/icons/Icon";
 
 const EVIDENCE_POINTS = {
@@ -36,22 +33,88 @@ const EVIDENCE_POINTS = {
   unknown: 0,
 };
 
-const LOWER_IS_BETTER_KEYS = new Set([
-  "blood_sugar_control",
-  "cholesterol_support",
-  "weight",
-]);
 const AI_SUMMARY_CACHE_KEY = "suppro.stats.aiSummary.v1";
 const AI_SUMMARY_WINDOW_DAYS = 30;
 
+
 function EmptyState() {
   return (
-    <EmptyStateCard
-      title="No supplements due"
-      description="You don’t have anything scheduled for this date."
-    />
+    <PrimaryCard style={emptyStateStyles.card}>
+      <Text style={emptyStateStyles.title}>No supplements due</Text>
+      <Text style={emptyStateStyles.description}>
+        You don’t have anything scheduled for this date.
+      </Text>
+
+      <View style={emptyStateStyles.divider} />
+
+      <Pressable
+        onPress={() => router.push("/scanner")}
+        style={({ pressed }) => [emptyStateStyles.action, pressed && emptyStateStyles.actionPressed]}
+      >
+        <Ionicons name="barcode-outline" size={18} color={appTheme.colors.textStrong} />
+        <Text style={emptyStateStyles.actionLabel}>Scan a supplement</Text>
+      </Pressable>
+
+      <View style={emptyStateStyles.actionDivider} />
+
+      <Pressable
+        onPress={() => router.push({ pathname: "/supplement-search", params: { mode: "info" } })}
+        style={({ pressed }) => [emptyStateStyles.action, pressed && emptyStateStyles.actionPressed]}
+      >
+        <Ionicons name="search-outline" size={18} color={appTheme.colors.textStrong} />
+        <Text style={emptyStateStyles.actionLabel}>Search supplements</Text>
+      </Pressable>
+    </PrimaryCard>
   );
 }
+
+const emptyStateStyles = StyleSheet.create({
+  card: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: 4,
+    marginBottom: 10,
+  },
+  title: {
+    fontSize: 18,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
+    marginBottom: spacing.xs,
+    textAlign: "center",
+  },
+  description: {
+    fontSize: 14,
+    lineHeight: 21,
+    fontFamily: typography.fontFamily.body,
+    color: "#6F6F6F",
+    textAlign: "center",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: appTheme.colors.borderSubtle,
+    marginTop: spacing.lg,
+    marginHorizontal: -spacing.lg,
+  },
+  action: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 14,
+  },
+  actionPressed: {
+    opacity: 0.6,
+  },
+  actionDivider: {
+    height: 1,
+    backgroundColor: appTheme.colors.borderSubtle,
+    marginHorizontal: 0,
+  },
+  actionLabel: {
+    fontSize: 15,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
+  },
+});
 
 function toISODate(date) {
   const year = date.getFullYear();
@@ -102,124 +165,9 @@ function toPercent(taken, planned) {
   return Math.round((taken / planned) * 100);
 }
 
-function average(values) {
-  if (!values.length) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
 function formatNumber(value) {
   if (!Number.isFinite(value)) return "—";
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-function computeMetricImprovement(
-  healthMetrics,
-  healthEntries,
-  periodStart,
-  today
-) {
-  const normalizedMetrics = (healthMetrics ?? [])
-    .map((metric) => normalizeMetric(metric))
-    .filter(Boolean)
-    .filter((metric) => metric.enabled !== false);
-
-  const items = normalizedMetrics
-    .map((metric) => {
-      const entries = (healthEntries ?? [])
-        .filter(
-          (entry) =>
-            entry.type === metric.key &&
-            typeof entry.date === "string" &&
-            entry.date >= periodStart &&
-            entry.date <= today
-        )
-        .sort((a, b) => a.date.localeCompare(b.date));
-
-      if (entries.length === 0) return null;
-
-      if (!isNumericMetric(metric)) {
-        return {
-          key: metric.key,
-          label: metric.label,
-          kind: "text",
-        };
-      }
-
-      const values = entries
-        .map((entry) => Number(entry.value))
-        .filter((value) => Number.isFinite(value));
-      if (values.length < 2) {
-        return {
-          key: metric.key,
-          label: metric.label,
-          kind: "numeric",
-          delta: 0,
-          trend: "stable",
-          directionDelta: 0,
-        };
-      }
-
-      const splitIndex = Math.max(1, Math.floor(values.length / 2));
-      const earlyValues = values.slice(0, splitIndex);
-      const recentValues = values.slice(splitIndex);
-      const earlyAverage = average(earlyValues);
-      const recentAverage = average(recentValues);
-      const delta = recentAverage - earlyAverage;
-
-      const configuredRange =
-        Number.isFinite(metric.min) && Number.isFinite(metric.max)
-          ? Math.abs(metric.max - metric.min)
-          : null;
-      const dynamicRange = Math.max(...values) - Math.min(...values);
-      const thresholdBase =
-        configuredRange && configuredRange > 0
-          ? configuredRange * 0.05
-          : dynamicRange * 0.2;
-      const threshold = Math.max(
-        thresholdBase || 0,
-        Math.abs(earlyAverage) * 0.03,
-        0.1
-      );
-
-      const directionDelta = LOWER_IS_BETTER_KEYS.has(metric.key)
-        ? -delta
-        : delta;
-      const trend =
-        directionDelta > threshold
-          ? "improved"
-          : directionDelta < -threshold
-          ? "declined"
-          : "stable";
-
-      return {
-        key: metric.key,
-        label: metric.label,
-        kind: "numeric",
-        delta,
-        trend,
-        directionDelta,
-      };
-    })
-    .filter(Boolean);
-
-  const improvedCount = items.filter(
-    (item) => item.kind === "numeric" && item.trend === "improved"
-  ).length;
-  const stableCount = items.filter(
-    (item) => item.kind === "numeric" && item.trend === "stable"
-  ).length;
-  const declinedCount = items.filter(
-    (item) => item.kind === "numeric" && item.trend === "declined"
-  ).length;
-  const textCount = items.filter((item) => item.kind === "text").length;
-
-  return {
-    items,
-    improvedCount,
-    stableCount,
-    declinedCount,
-    textCount,
-  };
 }
 
 function sanitizeRecommendations(input) {
@@ -337,19 +285,6 @@ function buildFallbackAiSummary(input) {
   };
 }
 
-function isScheduledOnDate(supplement, date) {
-  if (supplement?.startDate && date < supplement.startDate) return false;
-  if (supplement?.endDate && date > supplement.endDate) return false;
-  const dayOfWeek = parseISODate(date).getDay();
-  if (
-    Array.isArray(supplement?.daysOfWeek) &&
-    supplement.daysOfWeek.length > 0
-  ) {
-    return supplement.daysOfWeek.includes(dayOfWeek);
-  }
-  return true;
-}
-
 function formatSelectedDateHeading(date) {
   return parseISODate(date)
     .toLocaleDateString("en-GB", { day: "numeric", month: "long" })
@@ -368,7 +303,7 @@ function AISummaryCard({
   return (
     <PrimaryCard style={styles.aiSummaryCard}>
       <View style={styles.aiSummaryHeader}>
-        <Text style={styles.aiSummaryTitle}>AI summary</Text>
+        <Text style={styles.aiSummaryTitle}>Your AI summary</Text>
         <Text style={styles.aiSummaryMeta}>
           {generatedLabel
             ? `Updated ${generatedLabel}`
@@ -426,7 +361,11 @@ function SupplementRow({
     >
       <View style={styles.supplementCardTopRow}>
         {evidence.badgeLabel ? (
-          <StatusPill label={evidence.badgeLabel} style={styles.evidenceBadge} />
+          <StatusPill
+            label={evidence.badgeLabel}
+            tone={evidence.badgeTone}
+            style={styles.evidenceBadge}
+          />
         ) : (
           <View />
         )}
@@ -445,7 +384,7 @@ function SupplementRow({
             pressed && styles.editPillPressed,
           ]}
         >
-          <Text style={styles.editPillText}>Edit</Text>
+          <Ionicons name="create-outline" size={20} color="#6B6B6B" />
         </Pressable>
       </View>
 
@@ -515,7 +454,9 @@ export default function HomeScreen() {
   const dueSupplements = useMemo(
     () =>
       supplements
-        .filter((supplement) => isScheduledOnDate(supplement, selectedDate))
+        .filter((supplement) =>
+          isSupplementScheduledOnDate(supplement, selectedDate)
+        )
         .sort((a, b) => a.timeMinutes - b.timeMinutes),
     [supplements, selectedDate]
   );
@@ -574,19 +515,11 @@ export default function HomeScreen() {
   const dayStatsByDate = useMemo(() => {
     const map = {};
     allDates.forEach((date) => {
-      const dayOfWeek = parseISODate(date).getDay();
       const dayTakenMap = takenTimesByDate?.[date] ?? {};
-      const plannedSupplements = (supplements ?? []).filter((supplement) => {
-        if (supplement?.startDate && date < supplement.startDate) return false;
-        if (supplement?.endDate && date > supplement.endDate) return false;
-        if (
-          Array.isArray(supplement?.daysOfWeek) &&
-          supplement.daysOfWeek.length > 0
-        ) {
-          return supplement.daysOfWeek.includes(dayOfWeek);
-        }
-        return true;
-      });
+      const dayOfWeek = parseISODate(date).getDay();
+      const plannedSupplements = (supplements ?? []).filter((supplement) =>
+        isSupplementScheduledOnDate(supplement, date)
+      );
       const takenCountForDate = plannedSupplements.reduce(
         (count, supplement) => (dayTakenMap[supplement.id] ? count + 1 : count),
         0
@@ -664,7 +597,9 @@ export default function HomeScreen() {
 
           if (!wasTaken) return;
 
-          const tier = evidenceTierForScore(ratingBySupplementId[supplement.id]);
+          const tier = evidenceTierForScore(
+            ratingBySupplementId[supplement.id]
+          );
           summary.evidence[tier] += 1;
           if (tier !== "unknown") {
             summary.evidence.points += EVIDENCE_POINTS[tier];
@@ -754,9 +689,14 @@ export default function HomeScreen() {
         healthMetrics,
         healthEntries,
         aiPeriodDates[0] ?? today,
-        today
+        today,
+        {
+          previousPeriodStart: aiPreviousPeriodDates[0],
+          previousPeriodEnd:
+            aiPreviousPeriodDates[aiPreviousPeriodDates.length - 1],
+        }
       ),
-    [healthMetrics, healthEntries, aiPeriodDates, today]
+    [healthMetrics, healthEntries, aiPeriodDates, aiPreviousPeriodDates, today]
   );
 
   const aiWeakestDay = useMemo(() => {
@@ -1047,8 +987,8 @@ export default function HomeScreen() {
       >
         <Ionicons
           name="search"
-          size={20}
-          color="#928780"
+          size={18}
+          color="#8B8595"
           style={styles.searchFieldIcon}
         />
         <Text style={styles.searchFieldPlaceholder}>Search supplements</Text>
@@ -1109,20 +1049,28 @@ const styles = StyleSheet.create({
   searchField: {
     flexDirection: "row",
     alignItems: "center",
-    height: appTheme.input.height,
-    borderRadius: appTheme.input.radius,
-    backgroundColor: appTheme.input.background,
-    paddingHorizontal: 14,
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.65)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.85)",
+    shadowColor: "#1A1820",
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
     marginBottom: 18,
   },
   searchFieldIcon: {
-    marginRight: 8,
+    marginRight: 0,
   },
   searchFieldPlaceholder: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 14,
     fontFamily: typography.fontFamily.body,
-    color: appTheme.input.placeholder,
+    color: "#8B8595",
   },
   aiSummaryCard: {
     paddingHorizontal: spacing.md,
@@ -1267,22 +1215,11 @@ const styles = StyleSheet.create({
     color: "#A0A0A0",
   },
   editPill: {
-    minHeight: 24,
-    paddingHorizontal: 10,
-    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: appTheme.colors.textStrong,
   },
   editPillPressed: {
     opacity: 0.8,
-  },
-  editPillText: {
-    fontSize: 11,
-    lineHeight: 13,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.surface,
-    letterSpacing: -0.1,
   },
   checkCircle: {
     width: 24,
