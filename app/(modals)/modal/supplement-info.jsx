@@ -30,9 +30,11 @@ import { leaveTopLevelScanModal } from "@/features/scanner/navigation";
 import { useScannerStore } from "@/features/scanner/store";
 import {
   buildBenefitRankings,
+  compareScanBenefits,
   compareBenefits,
   getBenefitColor,
   getBenefitIconComponent,
+  getScanBenefitProgress,
   METAL_BADGE_GRADIENTS,
   METAL_BADGE_LOCATIONS,
 } from "@/features/supplements/benefits";
@@ -46,9 +48,76 @@ import {
   isSupplementHearted,
   setSupplementHearted,
 } from "@/features/supplements/favouritesStorage";
-import { appTheme, typography } from "@/theme";
+import { appTheme, gradients, typography } from "@/theme";
 import { getSupplementById } from "@src/data/getSupplement";
 import { supabase } from "@src/lib/supabase";
+
+const DOSE_BAND_PILL_COLORS = {
+  optimal: {
+    bg: "rgba(102,177,94,0.15)",
+    border: "rgba(102,177,94,0.4)",
+    text: "#2E7728",
+  },
+  effective_below_target: {
+    bg: "rgba(239,197,82,0.15)",
+    border: "rgba(239,197,82,0.4)",
+    text: "#7A5E0A",
+  },
+  underdosed: {
+    bg: "rgba(228,120,50,0.15)",
+    border: "rgba(228,120,50,0.4)",
+    text: "#8A4010",
+  },
+  severely_underdosed: {
+    bg: "rgba(201,87,87,0.15)",
+    border: "rgba(201,87,87,0.4)",
+    text: "#8B2020",
+  },
+  above_target: {
+    bg: "rgba(124,143,183,0.15)",
+    border: "rgba(124,143,183,0.4)",
+    text: "#3A5080",
+  },
+};
+
+const DOSE_STATUS_TOOLTIP_COPY = {
+  missing_dose_scoring_profile:
+    "Dose target unavailable means we do not yet have a reliable target dose range for this ingredient, so we cannot judge this product against one.",
+  missing_actual_dose:
+    "Dose unavailable means we could not determine a usable amount per serving from this product, so we cannot compare it with the target dose.",
+  serving_size_unparseable:
+    "Dose unavailable means the serving size on this product could not be read clearly enough to calculate the ingredient amount per serving.",
+  unknown_amount_basis:
+    "Dose unavailable means the product lists an amount, but not in a form we can confidently convert into a per-serving dose.",
+  unit_mismatch:
+    "Dose unavailable means the product dose and the target dose use units we cannot reliably compare yet.",
+};
+
+const B_COMPLEX_REFERENCE_ID = "68c7b7df-68a3-4c99-81c9-a09a6af9212b";
+const B_COMPLEX_REFERENCE_NAME = "B Complex Vitamins";
+const B_COMPLEX_REFERENCE_SOURCE_NAMES = new Set([
+  "Riboflavin (Vitamin B2)",
+  "Pantothenic Acid (Vitamin B5)",
+  "Vitamin B6 (Pyridoxine / P5P / Pyridoxal-5-Phosphate)",
+]);
+const BENEFIT_SCORE_TOOLTIP_COPY = {
+  catalog:
+    "This score reflects how strong the evidence is for this supplement for this specific benefit. Gold indicates the strongest evidence tier. A fuller bar means the supplement ranks higher for this benefit, and a full bar means it ranks #1.",
+  scan: "This score estimates how well the scanned product supports this benefit. It combines the matched ingredient's evidence ranking for the benefit with how well the product dose matches the recommended effective dose. A fuller bar means stronger benefit support; lower bars can reflect weaker evidence, a lower dose, or both.",
+};
+
+function getDoseTooltipMessage(item) {
+  const summary =
+    typeof item?.scoreAdjustmentSummary === "string"
+      ? item.scoreAdjustmentSummary.trim()
+      : "";
+
+  if (summary) {
+    return summary;
+  }
+
+  return DOSE_STATUS_TOOLTIP_COPY[item?.doseComparisonStatus] ?? "";
+}
 
 const SCORE_ANIMATION_DURATION_MS = 1100;
 const EVIDENCE_GAUGE_WIDTH = 261;
@@ -269,7 +338,13 @@ function EvidenceRatingGauge({ value, toneScore }) {
   );
 }
 
-function HeaderAction({ icon, label, onPress, disabled = false }) {
+function HeaderAction({
+  icon,
+  label,
+  onPress,
+  disabled = false,
+  accent = false,
+}) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -278,12 +353,27 @@ function HeaderAction({ icon, label, onPress, disabled = false }) {
       onPress={onPress}
       style={({ pressed }) => [
         styles.headerAction,
+        accent && styles.headerActionAccent,
         pressed && styles.headerActionPressed,
         disabled && styles.headerActionDisabled,
       ]}
     >
-      <Ionicons name={icon} size={15} color={appTheme.colors.textStrong} />
-      <Text style={styles.headerActionText}>{label}</Text>
+      {accent ? (
+        <LinearGradient
+          colors={gradients.cta}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.headerActionAccentGradient}
+        >
+          <Ionicons name={icon} size={15} color="#FFFFFF" />
+          <Text style={styles.headerActionAccentText}>{label}</Text>
+        </LinearGradient>
+      ) : (
+        <>
+          <Ionicons name={icon} size={15} color={appTheme.colors.textStrong} />
+          <Text style={styles.headerActionText}>{label}</Text>
+        </>
+      )}
     </Pressable>
   );
 }
@@ -302,8 +392,38 @@ function EvidenceSnippetCard({ text }) {
   );
 }
 
-function BenefitRankingBar({ ranking, dimmed = false }) {
-  const progress = getBenefitRankingProgress(ranking);
+function BenefitRankingBar({
+  ranking,
+  dimmed = false,
+  variant = "catalog",
+  doseFactor = 1,
+}) {
+  const isScanVariant = variant === "scan";
+  const progress = isScanVariant
+    ? getScanBenefitProgress(ranking, doseFactor)
+    : getBenefitRankingProgress(ranking);
+
+  if (isScanVariant) {
+    const fillColor = "#34C759";
+    const trackColor = dimmed ? "rgba(52,199,89,0.08)" : "rgba(52,199,89,0.16)";
+
+    return (
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+        style={[styles.rankingBarTrack, { backgroundColor: trackColor }]}
+      >
+        <View
+          style={[
+            styles.rankingBarFill,
+            { backgroundColor: dimmed ? "rgba(52,199,89,0.82)" : fillColor },
+            { width: `${progress * 100}%` },
+          ]}
+        />
+      </View>
+    );
+  }
+
   const gradient = METAL_BADGE_GRADIENTS[ranking?.icon];
   const locations = METAL_BADGE_LOCATIONS[ranking?.icon];
   const fillColor = getBenefitColor(ranking?.icon);
@@ -352,6 +472,52 @@ function DetailCard({ icon, title, body }) {
       </View>
       <Text style={styles.detailCardBody}>{body}</Text>
     </PrimaryCard>
+  );
+}
+
+function BenefitSectionHeader({ tooltipText, tooltipOpen, onTooltipPress }) {
+  return (
+    <>
+      <View style={styles.benefitHeaderRow}>
+        <Text style={styles.benefitHeaderText}>Benefit</Text>
+        <View style={styles.benefitHeaderRightGroup}>
+          <Text style={styles.benefitHeaderText}>Score</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="What this score means"
+            hitSlop={8}
+            onPress={onTooltipPress}
+            style={({ pressed }) => [
+              styles.benefitHeaderHelpButton,
+              pressed && styles.benefitHeaderHelpButtonPressed,
+            ]}
+          >
+            <Ionicons
+              name="help-circle-outline"
+              size={16}
+              color={appTheme.colors.textSecondary}
+            />
+          </Pressable>
+        </View>
+      </View>
+
+      {tooltipOpen ? (
+        <View style={styles.benefitHeaderTooltipWrap}>
+          <View style={styles.benefitHeaderTooltipArrow} />
+          <View style={styles.doseTooltip}>
+            <View style={styles.doseTooltipContent}>
+              <Ionicons
+                name="information-circle-outline"
+                size={14}
+                color="#FFFFFF"
+                style={styles.doseTooltipIcon}
+              />
+              <Text style={styles.doseTooltipText}>{tooltipText}</Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
+    </>
   );
 }
 
@@ -431,6 +597,7 @@ function BenefitRow({
   onBenefitPress,
   supplementEvidence,
   showRanking = true,
+  scanSupportDriver = null,
 }) {
   const BenefitIcon = getBenefitIconComponent(benefit.label);
   const evidenceSource =
@@ -438,6 +605,11 @@ function BenefitRow({
       ? benefit.evidenceItems
       : benefit?.evidence ?? benefit?.evidence_summary ?? supplementEvidence;
   const evidenceSnippets = buildEvidenceSnippets(evidenceSource);
+  const showScanSupportBar =
+    !showRanking &&
+    ranking &&
+    Number.isFinite(scanSupportDriver?.doseFactor) &&
+    Number.isFinite(scanSupportDriver?.benefitScore);
 
   return (
     <Pressable
@@ -473,11 +645,18 @@ function BenefitRow({
         <View
           style={[
             styles.benefitRight,
-            !showRanking && styles.benefitRightCompact,
+            !showRanking && !showScanSupportBar && styles.benefitRightCompact,
           ]}
         >
           {showRanking ? (
             <BenefitRankingBar ranking={ranking} dimmed={dimmed} />
+          ) : showScanSupportBar ? (
+            <BenefitRankingBar
+              ranking={ranking}
+              dimmed={dimmed}
+              variant="scan"
+              doseFactor={scanSupportDriver.doseFactor}
+            />
           ) : null}
           <Ionicons
             name={open ? "chevron-up" : "chevron-down"}
@@ -554,6 +733,9 @@ export default function SupplementInfoModal() {
   const [verifiedInfoVisible, setVerifiedInfoVisible] = useState(false);
   const [isFavourite, setIsFavourite] = useState(false);
   const [showFavouriteToast, setShowFavouriteToast] = useState(false);
+  const [openDoseTooltipKey, setOpenDoseTooltipKey] = useState(null);
+  const [isBenefitScoreTooltipOpen, setIsBenefitScoreTooltipOpen] =
+    useState(false);
   const isLiveScanSource = source === "scanned";
   const isTrackedScannedSource = source === "tracked-scanned";
   const isScanStyledSource = isLiveScanSource || isTrackedScannedSource;
@@ -587,6 +769,8 @@ export default function SupplementInfoModal() {
     setOpenBenefitId(null);
     setShowAllBenefits(false);
     setVerifiedInfoVisible(false);
+    setOpenDoseTooltipKey(null);
+    setIsBenefitScoreTooltipOpen(false);
 
     if (isLiveScanSource) {
       const isActiveScan = isCurrentScanSession && isActiveScanStatus;
@@ -733,13 +917,6 @@ export default function SupplementInfoModal() {
     let active = true;
 
     const loadBenefitRankings = async () => {
-      if (isScanStyledSource) {
-        if (active) {
-          setBenefitRankings({});
-        }
-        return;
-      }
-
       const currentBenefits = data?.supplement_benefits ?? [];
       const labels = [
         ...new Set(
@@ -775,7 +952,7 @@ export default function SupplementInfoModal() {
     return () => {
       active = false;
     };
-  }, [data?.supplement_benefits, isScanStyledSource]);
+  }, [data?.supplement_benefits]);
 
   const rating = data?.evidence_score;
 
@@ -808,10 +985,19 @@ export default function SupplementInfoModal() {
     };
   }, [loaded, rating]);
 
-  const benefits = useMemo(
-    () => [...(data?.supplement_benefits ?? [])].sort(compareBenefits),
-    [data]
-  );
+  const benefits = useMemo(() => {
+    const nextBenefits = [...(data?.supplement_benefits ?? [])];
+    return nextBenefits.sort((left, right) =>
+      isScanStyledSource
+        ? compareScanBenefits(
+            left,
+            right,
+            benefitRankings[left?.id] ?? null,
+            benefitRankings[right?.id] ?? null
+          )
+        : compareBenefits(left, right)
+    );
+  }, [benefitRankings, data?.supplement_benefits, isScanStyledSource]);
   const matchedIngredients = useMemo(
     () => [...(data?.matchedIngredients ?? [])],
     [data]
@@ -859,6 +1045,14 @@ export default function SupplementInfoModal() {
       ? id
       : "";
   const canFavourite = Boolean(favouriteSupplementId);
+  const showBComplexReference =
+    !isScanFailure &&
+    B_COMPLEX_REFERENCE_SOURCE_NAMES.has(
+      typeof data?.name === "string" ? data.name.trim() : ""
+    );
+  const benefitScoreTooltipText = isScanStyledSource
+    ? BENEFIT_SCORE_TOOLTIP_COPY.scan
+    : BENEFIT_SCORE_TOOLTIP_COPY.catalog;
 
   const detailCards = [
     {
@@ -964,6 +1158,16 @@ export default function SupplementInfoModal() {
   const handleRescan = () => {
     resetScan();
     router.back();
+  };
+
+  const handleOpenBComplexReference = () => {
+    router.push({
+      pathname: "/modal/supplement-info",
+      params: {
+        id: B_COMPLEX_REFERENCE_ID,
+        name: B_COMPLEX_REFERENCE_NAME,
+      },
+    });
   };
 
   const handleImproveScanWithPhotos = () => {
@@ -1135,17 +1339,16 @@ export default function SupplementInfoModal() {
           pressed && styles.closeButtonPressed,
         ]}
       >
-        <Ionicons
-          name="close"
-          size={18}
-          color={appTheme.colors.textStrong}
-        />
+        <Ionicons name="close" size={18} color={appTheme.colors.textStrong} />
       </Pressable>
 
       {showFavouriteToast ? (
         <View
           pointerEvents="none"
-          style={[styles.toastWrap, { bottom: Math.max(insets.bottom + 20, 32) }]}
+          style={[
+            styles.toastWrap,
+            { bottom: Math.max(insets.bottom + 20, 32) },
+          ]}
         >
           <View style={styles.toast}>
             <Ionicons name="heart" size={14} color="#FFFFFF" />
@@ -1165,7 +1368,6 @@ export default function SupplementInfoModal() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerBlock}>
-
           {!isProductNotRecognizedFailure ? (
             <View style={styles.titleRow}>
               <Text style={styles.pageTitle}>{fallbackName}</Text>
@@ -1202,7 +1404,9 @@ export default function SupplementInfoModal() {
                     <Ionicons
                       name={isFavourite ? "heart" : "heart-outline"}
                       size={16}
-                      color={isFavourite ? "#A6685B" : appTheme.colors.textStrong}
+                      color={
+                        isFavourite ? "#A6685B" : appTheme.colors.textStrong
+                      }
                     />
                   </Pressable>
                 ) : null}
@@ -1213,28 +1417,33 @@ export default function SupplementInfoModal() {
           {canAddSupplement ||
           showShareAction ||
           (canImproveScanWithPhotos && !isProductNotRecognizedFailure) ? (
-            <View style={styles.headerActionsRow}>
+            <View style={styles.headerActionsContainer}>
               {canImproveScanWithPhotos && !isProductNotRecognizedFailure ? (
                 <HeaderAction
                   icon="camera-outline"
                   label="Improve with photos"
                   onPress={handleImproveScanWithPhotos}
+                  accent
                 />
               ) : null}
-              {canAddSupplement ? (
-                <HeaderAction
-                  icon="add"
-                  label="Add to supplements"
-                  onPress={handleAddSupplement}
-                  disabled={!canAddSupplement}
-                />
-              ) : null}
-              {showShareAction ? (
-                <HeaderAction
-                  icon="share-social-outline"
-                  label="Share"
-                  onPress={handleShare}
-                />
+              {canAddSupplement || showShareAction ? (
+                <View style={styles.headerActionsRow}>
+                  {canAddSupplement ? (
+                    <HeaderAction
+                      icon="add"
+                      label="Add to supplements"
+                      onPress={handleAddSupplement}
+                      disabled={!canAddSupplement}
+                    />
+                  ) : null}
+                  {showShareAction ? (
+                    <HeaderAction
+                      icon="share-social-outline"
+                      label="Share"
+                      onPress={handleShare}
+                    />
+                  ) : null}
+                </View>
               ) : null}
             </View>
           ) : null}
@@ -1264,10 +1473,33 @@ export default function SupplementInfoModal() {
                 />
               ) : null}
 
-              {!isScanFailure && scoreAdjustmentSummary ? (
+              {!isScanFailure &&
+              !isScanStyledSource &&
+              scoreAdjustmentSummary ? (
                 <Text style={styles.scoreAdjustmentNote}>
                   {scoreAdjustmentSummary}
                 </Text>
+              ) : null}
+
+              {showBComplexReference ? (
+                <View style={styles.referenceNoteWrap}>
+                  <Text style={styles.referenceNoteText}>
+                    For more information see our page on
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Open B Complex Vitamins"
+                    onPress={handleOpenBComplexReference}
+                    style={({ pressed }) => [
+                      styles.referenceNoteButton,
+                      pressed && styles.referenceNoteButtonPressed,
+                    ]}
+                  >
+                    <Text style={styles.referenceNoteButtonText}>
+                      B Complex Vitamins
+                    </Text>
+                  </Pressable>
+                </View>
               ) : null}
 
               {isScanFailure ? (
@@ -1339,12 +1571,14 @@ export default function SupplementInfoModal() {
                 </View>
               ) : benefits.length > 0 ? (
                 <>
-                  {showRanking ? (
-                    <View style={styles.benefitHeaderRow}>
-                      <Text style={styles.benefitHeaderText}>Benefit</Text>
-                      <Text style={styles.benefitHeaderText}>Ranking</Text>
-                    </View>
-                  ) : null}
+                  <BenefitSectionHeader
+                    tooltipText={benefitScoreTooltipText}
+                    tooltipOpen={isBenefitScoreTooltipOpen}
+                    onTooltipPress={() => {
+                      setOpenDoseTooltipKey(null);
+                      setIsBenefitScoreTooltipOpen((current) => !current);
+                    }}
+                  />
 
                   <View style={styles.benefitList}>
                     {visibleBenefits.map((benefit) => {
@@ -1360,17 +1594,24 @@ export default function SupplementInfoModal() {
                           dimmed={dimmed}
                           supplementEvidence={supplementEvidence}
                           showRanking={showRanking}
-                          onPress={() =>
+                          scanSupportDriver={
+                            isScanStyledSource
+                              ? benefit?.scanSupportDriver ?? null
+                              : null
+                          }
+                          onPress={() => {
+                            setIsBenefitScoreTooltipOpen(false);
                             setOpenBenefitId((current) =>
                               current === benefit.id ? null : benefit.id
-                            )
-                          }
-                          onBenefitPress={() =>
+                            );
+                          }}
+                          onBenefitPress={() => {
+                            setIsBenefitScoreTooltipOpen(false);
                             router.push({
                               pathname: "/benefit-ranking",
                               params: { label: benefit.label },
-                            })
-                          }
+                            });
+                          }}
                         />
                       );
                     })}
@@ -1448,11 +1689,6 @@ export default function SupplementInfoModal() {
                         const dosageDisplay = String(
                           item?.dosageDisplay ?? ""
                         ).trim();
-                        const catalogName = String(item?.catalogName ?? "");
-                        const showCatalogName =
-                          catalogName &&
-                          catalogName.trim().toLowerCase() !==
-                            ingredientName.trim().toLowerCase();
                         const canOpenIngredient = Boolean(item?.catalogId);
 
                         return (
@@ -1490,21 +1726,111 @@ export default function SupplementInfoModal() {
                                   </Text>
                                 ) : null}
                               </View>
-                              {showCatalogName ? (
-                                <Text style={styles.ingredientMeta}>
-                                  {catalogName}
-                                </Text>
-                              ) : null}
-                              {item?.doseStatusLabel ? (
-                                <Text style={styles.ingredientDoseStatus}>
-                                  {item.doseStatusLabel}
-                                </Text>
-                              ) : null}
-                              {item?.scoreAdjustmentSummary ? (
-                                <Text style={styles.ingredientDoseSummary}>
-                                  {item.scoreAdjustmentSummary}
-                                </Text>
-                              ) : null}
+                              {item?.doseStatusLabel
+                                ? (() => {
+                                    const tooltipKey = `${
+                                      item?.catalogId ?? index
+                                    }:${index}`;
+                                    const isTooltipOpen =
+                                      openDoseTooltipKey === tooltipKey;
+                                    const doseBand = item?.doseBand;
+                                    const pillColors =
+                                      DOSE_BAND_PILL_COLORS[doseBand] ?? null;
+                                    const showWarning =
+                                      doseBand === "underdosed" ||
+                                      doseBand === "severely_underdosed";
+                                    const tooltipMessage =
+                                      getDoseTooltipMessage(item);
+                                    const hasTooltip = Boolean(tooltipMessage);
+                                    return (
+                                      <View style={styles.doseStatusBlock}>
+                                        <Pressable
+                                          disabled={!hasTooltip}
+                                          onPress={
+                                            hasTooltip
+                                              ? () => {
+                                                  setIsBenefitScoreTooltipOpen(
+                                                    false
+                                                  );
+                                                  setOpenDoseTooltipKey(
+                                                    isTooltipOpen
+                                                      ? null
+                                                      : tooltipKey
+                                                  );
+                                                }
+                                              : undefined
+                                          }
+                                          style={({ pressed }) => [
+                                            styles.doseStatusPill,
+                                            pillColors && {
+                                              backgroundColor: pillColors.bg,
+                                              borderColor: pillColors.border,
+                                            },
+                                            pressed &&
+                                              styles.doseStatusPillPressed,
+                                          ]}
+                                        >
+                                          {showWarning ? (
+                                            <Ionicons
+                                              name="warning"
+                                              size={12}
+                                              color={
+                                                pillColors?.text ??
+                                                appTheme.colors.textStrong
+                                              }
+                                              style={
+                                                styles.doseStatusWarningIcon
+                                              }
+                                            />
+                                          ) : null}
+                                          <Text
+                                            style={[
+                                              styles.doseStatusPillText,
+                                              pillColors && {
+                                                color: pillColors.text,
+                                              },
+                                            ]}
+                                          >
+                                            {item.doseStatusLabel}
+                                          </Text>
+                                          {hasTooltip ? (
+                                            <Ionicons
+                                              name="information-circle-outline"
+                                              size={13}
+                                              color={
+                                                pillColors?.text ??
+                                                appTheme.colors.textSecondary
+                                              }
+                                              style={styles.doseStatusInfoIcon}
+                                            />
+                                          ) : null}
+                                        </Pressable>
+                                        {isTooltipOpen && hasTooltip ? (
+                                          <View style={styles.doseTooltip}>
+                                            <View
+                                              style={styles.doseTooltipArrow}
+                                            />
+                                            <View
+                                              style={styles.doseTooltipContent}
+                                            >
+                                              <Ionicons
+                                                name="information-circle-outline"
+                                                size={14}
+                                                color="#FFFFFF"
+                                                style={styles.doseTooltipIcon}
+                                              />
+                                              <Text
+                                                style={styles.doseTooltipText}
+                                              >
+                                                {tooltipMessage}
+                                              </Text>
+                                            </View>
+                                          </View>
+                                        ) : null}
+                                      </View>
+                                    );
+                                  })()
+                                : null}
                             </View>
 
                             {canOpenIngredient ? (
@@ -1648,11 +1974,14 @@ const styles = StyleSheet.create({
   verifiedBadgeButtonPressed: {
     opacity: 0.72,
   },
+  headerActionsContainer: {
+    gap: 8,
+    marginTop: 16,
+  },
   headerActionsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    marginTop: 16,
   },
   headerAction: {
     flexDirection: "row",
@@ -1663,6 +1992,33 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.08)",
+    overflow: "hidden",
+  },
+  headerActionAccent: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    shadowColor: "#3A5480",
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  headerActionAccentGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 40,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    gap: 7,
+  },
+  headerActionAccentText: {
+    fontSize: 13,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "#FFFFFF",
   },
   headerActionPressed: {
     opacity: 0.72,
@@ -1718,6 +2074,34 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textSecondary,
   },
+  referenceNoteWrap: {
+    marginTop: 12,
+    alignItems: "center",
+  },
+  referenceNoteText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+    textAlign: "center",
+  },
+  referenceNoteButton: {
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: "#F3E5E8",
+  },
+  referenceNoteButtonPressed: {
+    opacity: 0.72,
+  },
+  referenceNoteButtonText: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+    textDecorationLine: "underline",
+  },
   gaugeWrap: {
     width: EVIDENCE_GAUGE_WIDTH,
     height: EVIDENCE_GAUGE_FRAME_HEIGHT,
@@ -1753,14 +2137,45 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginTop: 12,
-    marginBottom: 8,
     paddingRight: 18,
+  },
+  benefitHeaderRightGroup: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   benefitHeaderText: {
     fontSize: 14,
     lineHeight: 18,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textSecondary,
+  },
+  benefitHeaderHelpButton: {
+    marginLeft: 4,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  benefitHeaderHelpButtonPressed: {
+    opacity: 0.72,
+  },
+  benefitHeaderTooltipWrap: {
+    position: "relative",
+    alignSelf: "flex-end",
+    width: 264,
+    maxWidth: "100%",
+    marginTop: 6,
+    marginBottom: 8,
+    marginRight: 2,
+    zIndex: 4,
+  },
+  benefitHeaderTooltipArrow: {
+    position: "absolute",
+    top: -5,
+    right: 18,
+    width: 10,
+    height: 10,
+    backgroundColor: appTheme.colors.textPrimary,
+    transform: [{ rotate: "45deg" }],
+    borderRadius: 2,
   },
   benefitList: {
     gap: 2,
@@ -2058,6 +2473,70 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textSecondary,
+  },
+  doseStatusBlock: {
+    marginTop: 5,
+    alignSelf: "stretch",
+  },
+  doseStatusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+    backgroundColor: appTheme.colors.surfaceMuted,
+  },
+  doseStatusPillPressed: {
+    opacity: 0.7,
+  },
+  doseStatusWarningIcon: {
+    marginRight: 1,
+  },
+  doseStatusInfoIcon: {
+    marginLeft: 1,
+  },
+  doseStatusPillText: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  doseTooltip: {
+    marginTop: 6,
+    backgroundColor: appTheme.colors.textPrimary,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    width: "100%",
+  },
+  doseTooltipContent: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  doseTooltipArrow: {
+    position: "absolute",
+    top: -5,
+    left: 14,
+    width: 10,
+    height: 10,
+    backgroundColor: appTheme.colors.textPrimary,
+    transform: [{ rotate: "45deg" }],
+    borderRadius: 2,
+  },
+  doseTooltipIcon: {
+    marginTop: 1,
+    marginRight: 6,
+  },
+  doseTooltipText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: typography.fontFamily.body,
+    color: "#FFFFFF",
   },
   detailCard: {
     borderRadius: 20,

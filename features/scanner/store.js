@@ -17,6 +17,50 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function getIngredientDisplayName(ingredient) {
+  if (typeof ingredient === "string") {
+    return trimString(ingredient);
+  }
+
+  if (!ingredient || typeof ingredient !== "object") {
+    return "";
+  }
+
+  const name =
+    trimString(ingredient.name) ||
+    trimString(ingredient.canonicalName) ||
+    trimString(ingredient.canonical_name) ||
+    trimString(ingredient.rawName) ||
+    trimString(ingredient.raw_name);
+  const dosageDisplay =
+    trimString(ingredient.dosageDisplay) ||
+    trimString(ingredient.dosage_display) ||
+    trimString(ingredient.dosageOriginalText) ||
+    trimString(ingredient.dosage_original_text);
+  const dosageValue =
+    typeof ingredient.dosageValue === "number" && Number.isFinite(ingredient.dosageValue)
+      ? ingredient.dosageValue
+      : typeof ingredient.dosage_value === "number" && Number.isFinite(ingredient.dosage_value)
+      ? ingredient.dosage_value
+      : null;
+  const dosageUnit =
+    trimString(ingredient.dosageUnit) || trimString(ingredient.dosage_unit);
+
+  if (!name) {
+    return "";
+  }
+
+  if (dosageDisplay) {
+    return `${name} ${dosageDisplay}`;
+  }
+
+  if (Number.isFinite(dosageValue) && dosageUnit) {
+    return `${name} ${dosageValue}${dosageUnit}`;
+  }
+
+  return name;
+}
+
 function buildPhotoRescueProduct({
   barcode,
   currentProduct,
@@ -34,8 +78,11 @@ function buildPhotoRescueProduct({
     trimString(currentProduct?.name) ||
     "Scanned supplement";
   const nextSourceIngredients = Array.isArray(ingredients)
-    ? ingredients.map((item) => trimString(item)).filter(Boolean)
+    ? ingredients.filter((item) => getIngredientDisplayName(item))
     : [];
+  const ingredientDisplayNames = nextSourceIngredients
+    .map((item) => getIngredientDisplayName(item))
+    .filter(Boolean);
 
   return {
     ...(currentProduct && typeof currentProduct === "object" ? currentProduct : {}),
@@ -44,7 +91,7 @@ function buildPhotoRescueProduct({
     productName: nextProductName,
     name: nextProductName,
     ingredientsText:
-      nextSourceIngredients.join(", ") || trimString(currentProduct?.ingredientsText),
+      ingredientDisplayNames.join(", ") || trimString(currentProduct?.ingredientsText),
     sourceIngredients: nextSourceIngredients,
     sourceStatus:
       typeof currentProduct?.sourceStatus === "number"

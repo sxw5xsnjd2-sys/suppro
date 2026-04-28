@@ -127,7 +127,7 @@ function questionnaireHeightCm(answers) {
   return parseHeightCm(answers.height);
 }
 
-function questionnaireWeightKg(answers) {
+export function questionnaireWeightKg(answers) {
   if (!answers || typeof answers !== "object") return null;
 
   const value = parseNumericField(answers.weightValue);

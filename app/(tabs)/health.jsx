@@ -6,6 +6,7 @@ import {
   View,
 } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
@@ -91,29 +92,53 @@ function buildDisplayRows(enabledMetrics) {
   return rows;
 }
 
-function AppleHealthPill({ isConnected, isSyncing }) {
-  let label, bg, dot;
+function AppleHealthPill({ isConnected, isSyncing, onPress }) {
+  let label, bg, textColor, iconColor;
   if (isSyncing) {
-    label = "Syncing…";
+    label = "Sync Apple Health";
     bg = colors.background.shell;
-    dot = colors.text.muted;
+    textColor = colors.text.muted;
+    iconColor = colors.text.muted;
   } else if (isConnected) {
-    label = "Apple Health";
+    label = "Apple Health connected";
     bg = "#E3F5E9";
-    dot = "#34C759";
+    textColor = "#1A7A38";
+    iconColor = "#34C759";
   } else {
-    label = "Apple Health";
+    label = "Connect Apple Health";
     bg = colors.background.shell;
-    dot = colors.text.muted;
+    textColor = appTheme.colors.textStrong;
+    iconColor = appTheme.colors.textStrong;
   }
 
   return (
-    <View style={[styles.ahPill, { backgroundColor: bg }]}>
-      <View style={[styles.ahDot, { backgroundColor: dot }]} />
-      <Text style={[styles.ahLabel, { color: isSyncing || !isConnected ? colors.text.muted : "#1A7A38" }]}>
+    <Pressable
+      onPress={onPress}
+      disabled={isSyncing}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={
+        isConnected
+          ? "Open Apple Health connection settings."
+          : "Connect Suppro to Apple Health."
+      }
+      style={({ pressed }) => [
+        styles.ahPill,
+        { backgroundColor: bg },
+        pressed && !isSyncing && styles.ahPillPressed,
+      ]}
+    >
+      <Ionicons name="logo-apple" size={14} color={iconColor} />
+      <Text style={[styles.ahLabel, { color: textColor }]}>
         {label}
       </Text>
-    </View>
+      <Ionicons
+        name="chevron-forward"
+        size={14}
+        color={textColor}
+        style={styles.ahChevron}
+      />
+    </Pressable>
   );
 }
 
@@ -145,6 +170,7 @@ export default function HealthScreen() {
     lastSyncedAt,
     isAppleHealthConnected,
     refreshAppleHealth,
+    reconnectAppleHealth,
   } = useAppleHealthConnection();
 
   const today = useMemo(() => todayYYYYMMDD(), []);
@@ -267,6 +293,13 @@ export default function HealthScreen() {
               <AppleHealthPill
                 isConnected={isAppleHealthConnected}
                 isSyncing={isSyncing}
+                onPress={() => {
+                  if (isAppleHealthConnected) {
+                    router.push("/connections");
+                    return;
+                  }
+                  reconnectAppleHealth();
+                }}
               />
             )}
           </View>
@@ -379,20 +412,23 @@ const styles = StyleSheet.create({
   ahPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 999,
     marginTop: 6,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
   },
-  ahDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+  ahPillPressed: {
+    opacity: 0.82,
   },
   ahLabel: {
     fontFamily: typography.fontFamily.heading,
     fontSize: 12,
+  },
+  ahChevron: {
+    marginLeft: 1,
   },
   halfRow: {
     flexDirection: "row",

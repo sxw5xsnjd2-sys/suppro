@@ -11,6 +11,8 @@ import { useHealthStore } from "./store";
 
 export const APPLE_HEALTH_UNAVAILABLE_MESSAGE =
   "Apple Health is unavailable on this device or in this build. Use a physical iPhone build of Suppro and make sure Health access is enabled.";
+export const APPLE_HEALTH_NO_DATA_MESSAGE =
+  "No Apple Health data was imported. Open Settings > Apple Health > Suppro and turn on all permissions, then try again.";
 
 function toLocalISODate(dateLike) {
   const parsed = new Date(dateLike);
@@ -73,6 +75,9 @@ export function useAppleHealthConnection({ showAlerts = true } = {}) {
   const sourceSettings = useHealthStore((state) => state.sourceSettings);
   const lastSyncedAt = useHealthStore((state) => state.lastSyncedAt);
   const setConnection = useHealthStore((state) => state.setConnection);
+  const disconnectAppleHealth = useHealthStore(
+    (state) => state.disconnectAppleHealth
+  );
   const mergeAppleHealthEntries = useHealthStore(
     (state) => state.mergeAppleHealthEntries
   );
@@ -113,6 +118,14 @@ export function useAppleHealthConnection({ showAlerts = true } = {}) {
         const normalizedSinceDate = toLocalISODate(sinceDate);
         const syncResult = await syncAppleHealth({ since: sinceDate });
 
+        if (
+          withPermissionPrompt &&
+          !isAppleHealthConnected &&
+          (syncResult?.entries?.length ?? 0) === 0
+        ) {
+          throw new Error(APPLE_HEALTH_NO_DATA_MESSAGE);
+        }
+
         mergeAppleHealthEntries({
           ...syncResult,
           sinceDate: normalizedSinceDate,
@@ -128,7 +141,13 @@ export function useAppleHealthConnection({ showAlerts = true } = {}) {
         setIsSyncing(false);
       }
     },
-    [lastSyncedAt, mergeAppleHealthEntries, setConnection, showAlerts]
+    [
+      isAppleHealthConnected,
+      lastSyncedAt,
+      mergeAppleHealthEntries,
+      setConnection,
+      showAlerts,
+    ]
   );
 
   const reconnectAppleHealth = useCallback(async () => {
@@ -153,6 +172,10 @@ export function useAppleHealthConnection({ showAlerts = true } = {}) {
   const refreshAppleHealth = useCallback(async () => {
     await syncFromAppleHealth();
   }, [syncFromAppleHealth]);
+
+  const disconnectFromAppleHealth = useCallback(() => {
+    disconnectAppleHealth();
+  }, [disconnectAppleHealth]);
 
   useEffect(() => {
     if (!isIOS) {
@@ -193,5 +216,6 @@ export function useAppleHealthConnection({ showAlerts = true } = {}) {
     isAppleHealthConnected,
     refreshAppleHealth,
     reconnectAppleHealth,
+    disconnectFromAppleHealth,
   };
 }

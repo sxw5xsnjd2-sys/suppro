@@ -2,11 +2,49 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeNumberString(value) {
+  const trimmed = String(value ?? "").trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(trimmed)) {
+    return trimmed.replace(/,/g, "");
+  }
+
+  if (/^\d+,\d+$/.test(trimmed) && !trimmed.includes(".")) {
+    return trimmed.replace(",", ".");
+  }
+
+  return trimmed.replace(/,/g, "");
+}
+
+function parseOptionalNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  const parsed = Number.parseFloat(normalizeNumberString(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 const DOSAGE_UNIT_PATTERN = "mg|mcg|µg|μg|ug|pg|g|kg|ml|l|iu|%";
+const AMOUNT_BASIS_VALUES = new Set([
+  "per_serving",
+  "per_capsule",
+  "per_tablet",
+  "per_softgel",
+  "per_scoop",
+  "per_drop",
+  "per_2_capsules",
+  "per_3_capsules",
+  "unknown",
+]);
 const STOPWORDS = new Set(["and", "or", "with", "from", "the", "a", "an"]);
 const NON_INGREDIENT_PATTERNS = [
   /\bnutritional information\b/i,
@@ -65,7 +103,17 @@ const ALIAS_GROUPS = [
   ["vitamin b1", "thiamine", "thiamin"],
   ["vitamin b2", "riboflavin"],
   ["vitamin b3", "niacinamide", "nicotinamide"],
-  ["vitamin b6", "pyridoxine"],
+  ["vitamin b5", "pantothenic acid", "pantothenate"],
+  [
+    "vitamin b6",
+    "pyridoxine",
+    "p5p",
+    "plp",
+    "pyridoxal phosphate",
+    "pyridoxal-5-phosphate",
+    "pyridoxal 5 phosphate",
+  ],
+  ["vitamin b7", "biotin"],
   ["vitamin b9", "folic acid", "folate"],
   ["vitamin b12", "cyanocobalamin", "methylcobalamin", "cobalamin"],
   ["vitamin d", "vitamin d3", "cholecalciferol"],
@@ -73,18 +121,13 @@ const ALIAS_GROUPS = [
   ["vitamin k", "vitamin k1", "vitamin k2", "phylloquinone", "menaquinone"],
   ["vitamin e", "alpha tocopherol", "tocopherol"],
   ["vitamin a", "retinol", "beta carotene"],
+  ["b complex", "b-complex", "b complex vitamins", "b-complex vitamins"],
   [
-    "b complex",
-    "b-complex",
-    "b complex vitamins",
-    "b-complex vitamins",
-    "vitamin b2",
-    "riboflavin",
-    "vitamin b3",
-    "niacinamide",
-    "nicotinamide",
-    "vitamin b6",
-    "pyridoxine",
+    "collagen",
+    "collagen peptides",
+    "hydrolyzed collagen",
+    "hydrolysed collagen",
+    "marine collagen",
   ],
   [
     "omega 3 fatty acids",
@@ -107,6 +150,129 @@ function normalizePlainText(value) {
     .replace(/&/g, " and ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeDosageUnit(value) {
+  const normalized = trimString(value)
+    .toLowerCase()
+    .replace(/[µμ]/g, "u");
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "ug") return "mcg";
+  if (normalized === "iu") return "IU";
+  if (normalized === "cfu") return "CFU";
+  return normalized;
+}
+
+function normalizeAmountBasis(value, hasDose) {
+  const normalized = trimString(value);
+
+  if (normalized && normalized !== "unknown" && AMOUNT_BASIS_VALUES.has(normalized)) {
+    return normalized;
+  }
+
+  return hasDose ? "per_serving" : null;
+}
+
+function getFirstValue(source, keys) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = source[key];
+    if (
+      value !== null &&
+      value !== undefined &&
+      (typeof value !== "string" || trimString(value) !== "")
+    ) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function normalizeStructuredIngredientSource(ingredient) {
+  if (!ingredient || typeof ingredient !== "object") {
+    return null;
+  }
+
+  const name =
+    trimString(
+      getFirstValue(ingredient, [
+        "name",
+        "canonicalName",
+        "canonical_name",
+        "ingredientName",
+        "raw_name",
+        "rawName",
+      ])
+    ) || "";
+  const raw =
+    trimString(
+      getFirstValue(ingredient, [
+        "raw",
+        "rawName",
+        "raw_name",
+        "name",
+        "canonicalName",
+        "canonical_name",
+      ])
+    ) || name;
+  const amount = parseOptionalNumber(
+    getFirstValue(ingredient, ["dosageValue", "dosage_value", "amount", "value"])
+  );
+  const unit = normalizeDosageUnit(
+    getFirstValue(ingredient, ["dosageUnit", "dosage_unit", "unit"])
+  );
+  const chemicalForm =
+    trimString(getFirstValue(ingredient, ["chemicalForm", "chemical_form"])) ||
+    null;
+  const dosageDisplay =
+    trimString(
+      getFirstValue(ingredient, [
+        "dosageDisplay",
+        "dosage_display",
+        "dosageOriginalText",
+        "dosage_original_text",
+      ])
+    ) || null;
+  const hasDose = Number.isFinite(amount) && Boolean(unit);
+
+  return {
+    raw,
+    name,
+    amount: hasDose ? amount : null,
+    unit: hasDose ? unit : null,
+    dosageDisplay,
+    chemicalForm,
+    amountBasis: normalizeAmountBasis(
+      getFirstValue(ingredient, ["amountBasis", "amount_basis"]),
+      hasDose
+    ),
+  };
+}
+
+function buildStructuredIngredientDisplay(ingredient) {
+  const structured = normalizeStructuredIngredientSource(ingredient);
+
+  if (!structured?.name) {
+    return "";
+  }
+
+  if (structured.dosageDisplay) {
+    return `${structured.name} ${structured.dosageDisplay}`;
+  }
+
+  if (Number.isFinite(structured.amount) && structured.unit) {
+    return `${structured.name} ${structured.amount}${structured.unit}`;
+  }
+
+  return structured.name;
 }
 
 function cleanPhrase(value) {
@@ -213,23 +379,26 @@ function addDerivedAliasForms(normalized, forms) {
     addAliases(forms, ["folic acid", "folate", "vitamin b9"]);
   }
 
-  if (
-    /\bb-?complex\b|\bb-?complex vitamins\b|\bvitamin b2\b|\briboflavin\b|\bvitamin b3\b|\bniacinamide\b|\bnicotinamide\b|\bvitamin b6\b|\bpyridoxine\b/i.test(
-      normalized
-    )
-  ) {
+  if (/\bb-?complex\b|\bb-?complex vitamins\b/i.test(normalized)) {
     addAliases(forms, [
       "b complex",
       "b-complex",
       "b complex vitamins",
       "b-complex vitamins",
-      "vitamin b2",
-      "riboflavin",
-      "vitamin b3",
-      "niacinamide",
-      "nicotinamide",
-      "vitamin b6",
-      "pyridoxine",
+    ]);
+  }
+
+  if (
+    /\bcollagen\b|\bcollagen peptides\b|\bhydroly[sz]ed collagen\b|\bmarine collagen\b/i.test(
+      normalized
+    )
+  ) {
+    addAliases(forms, [
+      "collagen",
+      "collagen peptides",
+      "hydrolyzed collagen",
+      "hydrolysed collagen",
+      "marine collagen",
     ]);
   }
 }
@@ -457,7 +626,18 @@ function dedupeIngredientCandidates(rawCandidates) {
       return;
     }
 
-    if (!deduped.has(candidate.normalized)) {
+    const existing = deduped.get(candidate.normalized);
+    const candidateHasDose =
+      Number.isFinite(candidate.amount) && Boolean(candidate.unit);
+    const existingHasDose =
+      Number.isFinite(existing?.amount) && Boolean(existing?.unit);
+
+    if (
+      !existing ||
+      (candidateHasDose && !existingHasDose) ||
+      ((candidate?.raw?.length ?? 0) < (existing?.raw?.length ?? Infinity) &&
+        candidateHasDose === existingHasDose)
+    ) {
       deduped.set(candidate.normalized, candidate);
     }
   });
@@ -480,6 +660,23 @@ function extractDelimitedIngredientCandidates(text) {
 
 function extractIngredientCandidatesFromSourceIngredients(sourceIngredients) {
   const candidates = (sourceIngredients ?? []).flatMap((ingredient) => {
+    if (ingredient && typeof ingredient === "object") {
+      const structured = normalizeStructuredIngredientSource(ingredient);
+      const candidate = toIngredientCandidate(
+        structured?.raw || buildStructuredIngredientDisplay(ingredient),
+        {
+          name: structured?.name,
+          amount: structured?.amount,
+          unit: structured?.unit,
+          dosageDisplay: structured?.dosageDisplay,
+          chemicalForm: structured?.chemicalForm,
+          amountBasis: structured?.amountBasis,
+        }
+      );
+
+      return candidate ? [candidate] : [];
+    }
+
     const prepared = prepareSupplementIngredientText(ingredient);
     if (!prepared) {
       return [];
@@ -540,7 +737,25 @@ export function extractIngredientCandidatesFromList(values) {
   return filterActiveIngredientCandidates(
     dedupeIngredientCandidates(
       (values ?? [])
-        .map((value) => toIngredientCandidate(value))
+        .map((value) => {
+          if (value && typeof value === "object") {
+            const structured = normalizeStructuredIngredientSource(value);
+
+            return toIngredientCandidate(
+              structured?.raw || buildStructuredIngredientDisplay(value),
+              {
+                name: structured?.name,
+                amount: structured?.amount,
+                unit: structured?.unit,
+                dosageDisplay: structured?.dosageDisplay,
+                chemicalForm: structured?.chemicalForm,
+                amountBasis: structured?.amountBasis,
+              }
+            );
+          }
+
+          return toIngredientCandidate(value);
+        })
         .filter(Boolean)
     )
   );
@@ -614,14 +829,8 @@ export function buildCatalogIndex(rows) {
   });
 }
 
-function isBComplexCatalogEntry(catalogEntry) {
-  return /\bb-?complex\b/i.test(catalogEntry?.normalizedName ?? "");
-}
-
-function isBComplexFamilyCandidate(candidate) {
-  return /\bvitamin b2\b|\briboflavin\b|\bvitamin b3\b|\bniacinamide\b|\bnicotinamide\b|\bvitamin b6\b|\bpyridoxine\b/i.test(
-    candidate?.normalized ?? ""
-  );
+function hasDose(match) {
+  return Number.isFinite(match?.dosageValue) && Boolean(match?.dosageUnit);
 }
 
 export function scoreIngredientMatch(candidate, catalogEntry) {
@@ -631,13 +840,6 @@ export function scoreIngredientMatch(candidate, catalogEntry) {
 
   if (getIngredientCandidateClassification(candidate) !== "active") {
     return null;
-  }
-
-  if (isBComplexFamilyCandidate(candidate) && isBComplexCatalogEntry(catalogEntry)) {
-    return {
-      matchType: "family",
-      score: 105,
-    };
   }
 
   if (candidate.normalized === catalogEntry.normalizedName) {
@@ -710,6 +912,16 @@ export function matchIngredientsToCatalog(ingredients, catalogRows) {
         matchType: scored.matchType,
         score: scored.score,
         classification: "active",
+        dosageValue: Number.isFinite(ingredient.amount)
+          ? ingredient.amount
+          : null,
+        dosageUnit: normalizeDosageUnit(ingredient.unit),
+        dosageDisplay: trimString(ingredient.dosageDisplay) || null,
+        chemicalForm: trimString(ingredient.chemicalForm) || null,
+        amountBasis: normalizeAmountBasis(
+          ingredient.amountBasis,
+          Number.isFinite(ingredient.amount) && Boolean(ingredient.unit)
+        ),
       };
 
       if (
@@ -734,6 +946,10 @@ export function matchIngredientsToCatalog(ingredients, catalogRows) {
       !existing ||
       bestForIngredient.score > existing.score ||
       (bestForIngredient.score === existing.score &&
+        hasDose(bestForIngredient) &&
+        !hasDose(existing)) ||
+      (bestForIngredient.score === existing.score &&
+        hasDose(bestForIngredient) === hasDose(existing) &&
         bestForIngredient.catalogName.localeCompare(existing.catalogName) < 0)
     ) {
       bestMatchByCatalogId.set(bestForIngredient.catalogId, bestForIngredient);

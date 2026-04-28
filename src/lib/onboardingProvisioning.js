@@ -5,6 +5,7 @@ import {
 } from "@/features/health/metricDefinitions";
 import { useHealthStore } from "@/features/health/store";
 import { useSupplementsStore } from "@/features/supplements/store";
+import { questionnaireWeightKg } from "@src/lib/account";
 import { getQuestionnaireAnswers } from "@src/lib/onboarding";
 import { hasNonAnonymousUser } from "@src/lib/authState";
 import { matchSupplementCatalogName } from "@src/data/matchSupplementCatalog";
@@ -12,6 +13,7 @@ import { getSupplementById } from "@src/data/getSupplement";
 import { normalizeSupplementSchedule } from "@/features/supplements/schedule";
 
 const PROVISIONING_KEY_PREFIX = "suppro.onboarding.provisioned.v1";
+const ONBOARDING_HEALTH_ENTRY_ID_PREFIX = "onboarding:health";
 const provisioningByUserId = new Map();
 
 function trimString(value) {
@@ -36,6 +38,20 @@ function normalizeTextKey(value) {
 
 function provisioningKeyForUser(userId) {
   return `${PROVISIONING_KEY_PREFIX}:${userId}`;
+}
+
+function onboardingHealthEntryId(metricKey, userId, completedAt) {
+  return `${ONBOARDING_HEALTH_ENTRY_ID_PREFIX}:${metricKey}:${userId}:${completedAt}`;
+}
+
+function isOnboardingHealthEntry(entry, metricKey) {
+  return (
+    entry?.type === metricKey &&
+    typeof entry?.id === "string" &&
+    entry.id.startsWith(
+      `${ONBOARDING_HEALTH_ENTRY_ID_PREFIX}:${metricKey}:`
+    )
+  );
 }
 
 function normalizeSupplementRows(rows) {
@@ -167,6 +183,54 @@ async function markProvisioned(userId, answers, result) {
   );
 }
 
+function seedWeightEntryFromOnboarding(user, answers) {
+  const weightKg = questionnaireWeightKg(answers);
+  if (!Number.isFinite(weightKg) || weightKg <= 0 || !answers?.completedAt) {
+    return;
+  }
+
+  const completedDate = String(answers.completedAt).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(completedDate)) {
+    return;
+  }
+
+  const { entries, addEntry, deleteEntry } = useHealthStore.getState();
+  const weightEntries = Array.isArray(entries)
+    ? entries.filter((entry) => entry?.type === "weight")
+    : [];
+  const nonOnboardingWeightEntries = weightEntries.filter(
+    (entry) => !isOnboardingHealthEntry(entry, "weight")
+  );
+
+  if (nonOnboardingWeightEntries.length > 0) {
+    return;
+  }
+
+  const nextEntryId = onboardingHealthEntryId("weight", user.id, answers.completedAt);
+  const existingSeedEntry = weightEntries.find((entry) => entry?.id === nextEntryId);
+  if (
+    existingSeedEntry &&
+    Number(existingSeedEntry.value) === weightKg &&
+    existingSeedEntry.date === completedDate
+  ) {
+    return;
+  }
+
+  weightEntries
+    .filter((entry) => isOnboardingHealthEntry(entry, "weight"))
+    .forEach((entry) => {
+      deleteEntry(entry.id);
+    });
+
+  addEntry({
+    id: nextEntryId,
+    type: "weight",
+    value: weightKg,
+    date: completedDate,
+    note: "From onboarding",
+  });
+}
+
 async function provisionOnboardingSelectionsForUser(user) {
   if (!hasNonAnonymousUser(user)) {
     return {
@@ -184,6 +248,8 @@ async function provisionOnboardingSelectionsForUser(user) {
       unmatchedSupplementCount: 0,
     };
   }
+
+  seedWeightEntryFromOnboarding(user, answers);
 
   if (await hasProvisionedCompletedAt(user.id, answers.completedAt)) {
     return {

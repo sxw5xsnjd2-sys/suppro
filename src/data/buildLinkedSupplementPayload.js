@@ -11,6 +11,21 @@ function normalizeTextKey(value) {
   return trimString(value).replace(/\s+/g, " ").toLowerCase();
 }
 
+function getBenefitNumericScore(benefit) {
+  if (typeof benefit?.score === "number" && Number.isFinite(benefit.score)) {
+    return benefit.score;
+  }
+
+  if (
+    typeof benefit?.benefit_score === "number" &&
+    Number.isFinite(benefit.benefit_score)
+  ) {
+    return benefit.benefit_score;
+  }
+
+  return null;
+}
+
 function buildDisplayHeading(match, supplement) {
   return (
     trimString(supplement?.name) ||
@@ -40,10 +55,77 @@ function buildSectionBody(matchedIngredients, supplementsByCatalogId, fieldName)
   return blocks.join("\n\n") || null;
 }
 
-function mergeBenefits(matchedIngredients, supplementsByCatalogId) {
+function getScanSupportDriverSelectionScore(driver) {
+  if (!Number.isFinite(driver?.benefitScore)) {
+    return null;
+  }
+
+  const doseFactor = Number.isFinite(driver?.doseFactor) ? driver.doseFactor : 1;
+  return driver.benefitScore * doseFactor;
+}
+
+function shouldReplaceScanSupportDriver(currentDriver, nextDriver) {
+  const currentSelectionScore =
+    getScanSupportDriverSelectionScore(currentDriver);
+  const nextSelectionScore = getScanSupportDriverSelectionScore(nextDriver);
+
+  if (!Number.isFinite(nextSelectionScore)) {
+    return false;
+  }
+
+  if (!Number.isFinite(currentSelectionScore)) {
+    return true;
+  }
+
+  if (nextSelectionScore !== currentSelectionScore) {
+    return nextSelectionScore > currentSelectionScore;
+  }
+
+  if (nextDriver.benefitScore !== currentDriver?.benefitScore) {
+    return nextDriver.benefitScore > currentDriver?.benefitScore;
+  }
+
+  const nextDoseFactor = Number.isFinite(nextDriver.doseFactor)
+    ? nextDriver.doseFactor
+    : 1;
+  const currentDoseFactor = Number.isFinite(currentDriver?.doseFactor)
+    ? currentDriver.doseFactor
+    : 1;
+
+  if (nextDoseFactor !== currentDoseFactor) {
+    return nextDoseFactor > currentDoseFactor;
+  }
+
+  return String(nextDriver.ingredientName ?? "").localeCompare(
+    String(currentDriver?.ingredientName ?? "")
+  ) < 0;
+}
+
+function buildScanSupportDriver(match, supplement, benefitScore) {
+  if (!Number.isFinite(benefitScore)) {
+    return null;
+  }
+
+  const ingredientName =
+    trimString(match?.ingredientName) ||
+    trimString(match?.ingredientRaw) ||
+    trimString(match?.catalogName) ||
+    trimString(supplement?.name) ||
+    "Matched ingredient";
+
+  return {
+    catalogId: trimString(match?.catalogId) || null,
+    ingredientName,
+    benefitScore,
+    doseFactor: Number.isFinite(match?.doseFactor) ? match.doseFactor : 1,
+    doseBand: trimString(match?.doseBand) || null,
+  };
+}
+
+function mergeBenefits(scoredMatchedIngredients, supplementsByCatalogId) {
   const benefitsByLabel = new Map();
 
-  (matchedIngredients ?? []).forEach((match) => {
+  (scoredMatchedIngredients ?? []).forEach((match) => {
     const supplement = supplementsByCatalogId.get(match.catalogId);
     const benefits = Array.isArray(supplement?.supplement_benefits)
       ? supplement.supplement_benefits
@@ -62,16 +144,12 @@ function mergeBenefits(matchedIngredients, supplementsByCatalogId) {
           label,
           icon: benefit?.icon ?? null,
           score: null,
+          scanSupportDriver: null,
           evidenceItems: [],
           evidenceKeys: new Set(),
         };
 
-      const nextScore =
-        typeof benefit?.score === "number"
-          ? benefit.score
-          : typeof benefit?.benefit_score === "number"
-          ? benefit.benefit_score
-          : null;
+      const nextScore = getBenefitNumericScore(benefit);
 
       if (
         Number.isFinite(nextScore) &&
@@ -81,6 +159,11 @@ function mergeBenefits(matchedIngredients, supplementsByCatalogId) {
         existing.icon = benefit?.icon ?? existing.icon;
       } else if (!existing.icon && benefit?.icon) {
         existing.icon = benefit.icon;
+      }
+
+      const nextDriver = buildScanSupportDriver(match, supplement, nextScore);
+      if (shouldReplaceScanSupportDriver(existing.scanSupportDriver, nextDriver)) {
+        existing.scanSupportDriver = nextDriver;
       }
 
       [benefit?.evidence, benefit?.evidence_summary].forEach((item) => {
@@ -105,6 +188,17 @@ function mergeBenefits(matchedIngredients, supplementsByCatalogId) {
     icon: benefit.icon,
     score: Number.isFinite(benefit.score) ? benefit.score : null,
     evidenceItems: benefit.evidenceItems,
+    ...(benefit.scanSupportDriver
+      ? {
+          scanSupportDriver: {
+            catalogId: benefit.scanSupportDriver.catalogId,
+            ingredientName: benefit.scanSupportDriver.ingredientName,
+            benefitScore: benefit.scanSupportDriver.benefitScore,
+            doseFactor: benefit.scanSupportDriver.doseFactor,
+            doseBand: benefit.scanSupportDriver.doseBand,
+          },
+        }
+      : {}),
   }));
 }
 
@@ -138,7 +232,7 @@ function buildMatchedIngredientsPayload(matchedIngredients, supplementsByCatalog
     return {
       ...match,
       ingredientName:
-        catalogName || trimString(match?.ingredientRaw) || "Matched ingredient",
+        trimString(match?.ingredientRaw) || catalogName || "Matched ingredient",
       catalogName,
     };
   });

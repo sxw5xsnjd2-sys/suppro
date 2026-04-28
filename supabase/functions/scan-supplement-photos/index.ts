@@ -504,10 +504,28 @@ function normalizeBroadIngredientName(value: unknown) {
         "menaquinone",
       ],
     },
+    {
+      broad: "omega 3 fatty acids",
+      aliases: [
+        "omega 3 fatty acids",
+        "omega-3 fatty acids",
+        "omega 3",
+        "omega-3",
+        "fish oil",
+        "dha",
+        "epa",
+        "docosahexaenoic acid",
+        "eicosapentaenoic acid",
+      ],
+    },
   ];
 
   for (const entry of synonymMaps) {
-    if (entry.aliases.some((alias) => normalized.includes(alias))) {
+    if (
+      entry.aliases.some((alias) =>
+        new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(normalized)
+      )
+    ) {
       return entry.broad;
     }
   }
@@ -2074,9 +2092,7 @@ Deno.serve(async (req) => {
       source: "photo_rescue_canonical",
       confidence:
         aiResult.naming.confidence || aiResult.classification.confidence,
-      ingredients: resolvedIngredients.activeRows
-        .map((row) => trimString(row.canonical_name))
-        .filter(Boolean),
+      ingredients: buildMasterActiveIngredients(resolvedIngredients.activeRows),
       servingSizeText: aiResult.extraction.serving_size_text,
       rawText: aiResult.productText.raw_text,
       unresolvedIngredientCount: resolvedIngredients.unresolvedRows.length,

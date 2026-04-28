@@ -30,6 +30,7 @@ const HOW_TO_USE_MULTIPLIERS = {
   billion: 1e9,
 };
 const VITAMIN_D_IU_PER_MCG = 40;
+const VITAMIN_E_MG_PER_IU = 0.67;
 const HOW_TO_USE_FORM_ONLY_PATTERNS = [
   /\bcapsule(?:s)?\b/i,
   /\btablet(?:s)?\b/i,
@@ -204,6 +205,15 @@ function matchesEpaDhaComponentIdentifier(value) {
   );
 }
 
+function matchesVitaminEIdentifier(value) {
+  const normalized = trimString(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /\bvitamin e\b|\btocopherol\b|\balpha[- ]tocopherol\b/.test(normalized);
+}
+
 function isVitaminDMatch(match, supplement) {
   return [
     match?.ingredientName,
@@ -211,6 +221,15 @@ function isVitaminDMatch(match, supplement) {
     match?.catalogName,
     supplement?.name,
   ].some(matchesVitaminDIdentifier);
+}
+
+function isVitaminEMatch(match, supplement) {
+  return [
+    match?.ingredientName,
+    match?.ingredientRaw,
+    match?.catalogName,
+    supplement?.name,
+  ].some(matchesVitaminEIdentifier);
 }
 
 function convertVitaminDDose(value, fromUnit, toUnit) {
@@ -224,6 +243,22 @@ function convertVitaminDDose(value, fromUnit, toUnit) {
 
   if (fromUnit === "IU" && toUnit === "mcg") {
     return roundTo(value / VITAMIN_D_IU_PER_MCG);
+  }
+
+  return null;
+}
+
+function convertVitaminEDose(value, fromUnit, toUnit) {
+  if (!Number.isFinite(value) || fromUnit === toUnit) {
+    return Number.isFinite(value) ? roundTo(value) : null;
+  }
+
+  if (fromUnit === "mg" && toUnit === "IU") {
+    return roundTo(value / VITAMIN_E_MG_PER_IU);
+  }
+
+  if (fromUnit === "IU" && toUnit === "mg") {
+    return roundTo(value * VITAMIN_E_MG_PER_IU);
   }
 
   return null;
@@ -243,26 +278,59 @@ function alignDoseUnitsForIngredient({
     return normalizedServingDose;
   }
 
-  if (!isVitaminDMatch(match, supplement)) {
-    return normalizedServingDose;
+  if (isVitaminDMatch(match, supplement)) {
+    const convertedValue = convertVitaminDDose(
+      normalizedServingDose.value,
+      normalizedServingDose.unit,
+      doseScoringProfile.unit
+    );
+
+    if (Number.isFinite(convertedValue)) {
+      return {
+        ...normalizedServingDose,
+        value: convertedValue,
+        unit: doseScoringProfile.unit,
+        convertedFromUnit: normalizedServingDose.unit,
+      };
+    }
   }
 
-  const convertedValue = convertVitaminDDose(
-    normalizedServingDose.value,
-    normalizedServingDose.unit,
-    doseScoringProfile.unit
-  );
+  if (isVitaminEMatch(match, supplement)) {
+    const convertedValue = convertVitaminEDose(
+      normalizedServingDose.value,
+      normalizedServingDose.unit,
+      doseScoringProfile.unit
+    );
 
-  if (!Number.isFinite(convertedValue)) {
-    return normalizedServingDose;
+    if (Number.isFinite(convertedValue)) {
+      return {
+        ...normalizedServingDose,
+        value: convertedValue,
+        unit: doseScoringProfile.unit,
+        convertedFromUnit: normalizedServingDose.unit,
+      };
+    }
   }
 
-  return {
-    ...normalizedServingDose,
-    value: convertedValue,
-    unit: doseScoringProfile.unit,
-    convertedFromUnit: normalizedServingDose.unit,
-  };
+  const isMcgMgMismatch =
+    (normalizedServingDose.unit === "mcg" && doseScoringProfile.unit === "mg") ||
+    (normalizedServingDose.unit === "mg" && doseScoringProfile.unit === "mcg");
+
+  if (isMcgMgMismatch) {
+    const factor = normalizedServingDose.unit === "mcg" ? 0.001 : 1000;
+    const convertedValue = roundTo(normalizedServingDose.value * factor);
+
+    if (Number.isFinite(convertedValue)) {
+      return {
+        ...normalizedServingDose,
+        value: convertedValue,
+        unit: doseScoringProfile.unit,
+        convertedFromUnit: normalizedServingDose.unit,
+      };
+    }
+  }
+
+  return normalizedServingDose;
 }
 
 function shouldAggregateOmega3Dose({ match, supplement, recommendedDose }) {
@@ -781,7 +849,7 @@ function getDoseScoringProfileForSupplement(supplement, recommendedDose) {
 }
 
 function extractServingSizeMultiplier(servingSizeText, amountBasis) {
-  if (amountBasis === "per_serving") {
+  if (amountBasis === "per_serving" || amountBasis === "unknown" || !amountBasis) {
     return { multiplier: 1, flags: [] };
   }
 
@@ -1236,7 +1304,6 @@ export function scoreMatchedIngredientsForProduct({
     const {
       match,
       catalogId,
-      supplement,
       evidenceScore,
       recommendedDose,
       doseScoringProfile,

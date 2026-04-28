@@ -327,10 +327,14 @@ export const useHealthStore = create()(
 
       disconnectAppleHealth: () =>
         set((state) => ({
+          entries: (state.entries ?? []).filter(
+            (entry) => entry?.source !== APPLE_HEALTH_ENTRY_SOURCE
+          ),
           connection: "disconnected",
           connectionError: "",
           sourceSettings: {},
           metrics: normalizeMetrics(state.metrics),
+          lastSyncedAt: null,
         })),
     }),
     {

@@ -18,22 +18,78 @@ function buildBarcodeLookupCandidates(barcode) {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-function dedupeStrings(values) {
-  return Array.from(new Set((values ?? []).map((value) => trimString(value)).filter(Boolean)));
+function getIngredientDisplayName(ingredient) {
+  if (typeof ingredient === "string") {
+    return trimString(ingredient);
+  }
+
+  if (!ingredient || typeof ingredient !== "object") {
+    return "";
+  }
+
+  const name = trimString(ingredient.name);
+  const dosageDisplay = trimString(ingredient.dosageDisplay);
+  const dosageValue =
+    typeof ingredient.dosageValue === "number" && Number.isFinite(ingredient.dosageValue)
+      ? ingredient.dosageValue
+      : null;
+  const dosageUnit = trimString(ingredient.dosageUnit);
+
+  if (!name) {
+    return "";
+  }
+
+  if (dosageDisplay) {
+    return `${name} ${dosageDisplay}`;
+  }
+
+  if (Number.isFinite(dosageValue) && dosageUnit) {
+    return `${name} ${dosageValue}${dosageUnit}`;
+  }
+
+  return name;
 }
 
-function extractMasterIngredientNames(activeIngredientsJson) {
+function extractMasterIngredients(activeIngredientsJson) {
   if (!Array.isArray(activeIngredientsJson)) {
     return [];
   }
 
-  return dedupeStrings(
-    activeIngredientsJson.map((item) =>
-      typeof item === "object" && item
-        ? item.name
-        : ""
-    )
-  );
+  const seen = new Set();
+  const ingredients = [];
+
+  activeIngredientsJson.forEach((item) => {
+    const ingredient =
+      item && typeof item === "object"
+        ? (() => {
+            const dosageValueRaw = item.dosageValue ?? item.dosage_value;
+            return {
+              name: trimString(item.name),
+              dosageValue:
+                typeof dosageValueRaw === "number" && Number.isFinite(dosageValueRaw)
+                  ? dosageValueRaw
+                  : null,
+              dosageUnit: trimString(item.dosageUnit ?? item.dosage_unit) || null,
+              dosageDisplay:
+                trimString(
+                  item.dosageDisplay ?? item.dosage_display ?? item.dosage_original_text
+                ) || null,
+              chemicalForm: trimString(item.chemicalForm ?? item.chemical_form) || null,
+              amountBasis: trimString(item.amountBasis ?? item.amount_basis) || null,
+            };
+          })()
+        : trimString(item);
+    const key = getIngredientDisplayName(ingredient).toLowerCase();
+
+    if (!key || seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    ingredients.push(ingredient);
+  });
+
+  return ingredients;
 }
 
 export async function fetchLocalBarcodeScanProduct(barcode) {
@@ -73,7 +129,7 @@ export async function fetchLocalBarcodeScanProduct(barcode) {
   }
 
   const master = Array.isArray(masterRows) ? masterRows[0] : null;
-  const masterIngredientNames = extractMasterIngredientNames(
+  const masterIngredients = extractMasterIngredients(
     master?.active_ingredients_json
   );
   const hasMaster = Boolean(master?.product_id);
@@ -82,11 +138,11 @@ export async function fetchLocalBarcodeScanProduct(barcode) {
     trimString(product?.name) ||
     "Scanned supplement";
   const ingredientsText =
-    masterIngredientNames.length > 0
-      ? masterIngredientNames.join(", ")
+    masterIngredients.length > 0
+      ? masterIngredients.map((item) => getIngredientDisplayName(item)).join(", ")
       : trimString(product?.ingredients);
   const sourceStatusVerbose = hasMaster
-    ? masterIngredientNames.length > 0
+    ? masterIngredients.length > 0
       ? "supplement_products_master"
       : "supplement_products_master_name_off_products_ingredients"
     : "off_products";
@@ -96,7 +152,7 @@ export async function fetchLocalBarcodeScanProduct(barcode) {
     productId: trimString(product?.id) || null,
     productName,
     ingredientsText,
-    sourceIngredients: masterIngredientNames,
+    sourceIngredients: masterIngredients,
     sourceStatus: 1,
     sourceStatusVerbose,
     scanDataSource: hasMaster

@@ -7,13 +7,49 @@ function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeIngredient(item) {
+  if (typeof item === "string") {
+    return normalizeString(item);
+  }
+
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const name =
+    normalizeString(item.name) ||
+    normalizeString(item.canonicalName) ||
+    normalizeString(item.canonical_name) ||
+    normalizeString(item.raw_name);
+
+  if (!name) {
+    return null;
+  }
+
+  return {
+    name,
+    dosageValue: normalizeNumber(item.dosageValue ?? item.dosage_value),
+    dosageUnit: normalizeString(item.dosageUnit ?? item.dosage_unit) || null,
+    dosageDisplay:
+      normalizeString(
+        item.dosageDisplay ??
+          item.dosage_display ??
+          item.dosageOriginalText ??
+          item.dosage_original_text
+      ) || null,
+    chemicalForm:
+      normalizeString(item.chemicalForm ?? item.chemical_form) || null,
+    amountBasis: normalizeString(item.amountBasis ?? item.amount_basis) || null,
+  };
+}
+
 function normalizeIngredients(value) {
   if (!Array.isArray(value)) {
     return [];
   }
 
   return value
-    .map((item) => normalizeString(item))
+    .map((item) => normalizeIngredient(item))
     .filter(Boolean);
 }
 

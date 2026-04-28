@@ -150,6 +150,83 @@ export function getBenefitScore(benefit) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+export function getScanBenefitSortScore(benefit) {
+  const benefitScore = Number(benefit?.scanSupportDriver?.benefitScore);
+  const doseFactor = Number(benefit?.scanSupportDriver?.doseFactor);
+
+  if (Number.isFinite(benefitScore) && Number.isFinite(doseFactor)) {
+    return benefitScore * doseFactor;
+  }
+
+  return getBenefitScore(benefit);
+}
+
+export function getScanBenefitDisplayScore(benefit, ranking = null) {
+  const doseFactor = Number(benefit?.scanSupportDriver?.doseFactor);
+
+  if (ranking && Number.isFinite(doseFactor)) {
+    return getScanBenefitProgress(ranking, doseFactor);
+  }
+
+  return getScanBenefitSortScore(benefit);
+}
+
+export function compareScanBenefits(
+  left,
+  right,
+  leftRanking = null,
+  rightRanking = null
+) {
+  const leftScore = getScanBenefitDisplayScore(left, leftRanking);
+  const rightScore = getScanBenefitDisplayScore(right, rightRanking);
+
+  if (leftScore !== rightScore) {
+    return (rightScore ?? -1) - (leftScore ?? -1);
+  }
+
+  const leftWeightedScore = getScanBenefitSortScore(left);
+  const rightWeightedScore = getScanBenefitSortScore(right);
+
+  if (leftWeightedScore !== rightWeightedScore) {
+    return (rightWeightedScore ?? -1) - (leftWeightedScore ?? -1);
+  }
+
+  const leftRawScore = Number(left?.scanSupportDriver?.benefitScore);
+  const rightRawScore = Number(right?.scanSupportDriver?.benefitScore);
+
+  if (leftRawScore !== rightRawScore) {
+    return (rightRawScore ?? -1) - (leftRawScore ?? -1);
+  }
+
+  return String(left?.label ?? "").localeCompare(String(right?.label ?? ""));
+}
+
+function getBenefitRankingSourceScore(benefit) {
+  if (Number.isFinite(benefit?.scanSupportDriver?.benefitScore)) {
+    return benefit.scanSupportDriver.benefitScore;
+  }
+
+  return getBenefitScore(benefit);
+}
+
+export function getScanBenefitProgress(ranking, doseFactor) {
+  const rank = Number(ranking?.rank);
+  const total = Number(ranking?.total);
+  const normalizedDoseFactor = Number(doseFactor);
+
+  if (
+    !Number.isFinite(rank) ||
+    !Number.isFinite(total) ||
+    total <= 0 ||
+    !Number.isFinite(normalizedDoseFactor)
+  ) {
+    return 0;
+  }
+
+  const relativeRank = (total - rank + 1) / total;
+  return Math.min(Math.max(relativeRank * normalizedDoseFactor, 0), 1);
+}
+
 export function buildBenefitRankings(benefits, rankingRows) {
   const groupedRows = (rankingRows ?? []).reduce((accumulator, row) => {
     if (!row?.label || !Number.isFinite(row?.score)) return accumulator;
@@ -162,7 +239,7 @@ export function buildBenefitRankings(benefits, rankingRows) {
   }, {});
 
   return benefits.reduce((accumulator, benefit) => {
-    const score = getBenefitScore(benefit);
+    const score = getBenefitRankingSourceScore(benefit);
     const rowsForLabel = groupedRows[benefit.label] ?? [];
     const scoresForLabel = rowsForLabel.map((row) => row.score);
 

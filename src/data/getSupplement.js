@@ -48,7 +48,7 @@ function formatDosageUnit(value) {
 }
 
 function buildStructuredDosageDisplay(row) {
-  const dosageValue = row?.dosage_value;
+  const dosageValue = parseFloat(row?.dosage_value);
   const dosageUnit = formatDosageUnit(row?.dosage_unit);
 
   if (!Number.isFinite(dosageValue) || !dosageUnit) {
@@ -113,7 +113,7 @@ function buildProductIngredientMatch(row, supplementNameById) {
     score: 100,
     verified: Boolean(supplementId),
     sourceTable: "product_active_ingredients",
-    dosageValue: Number.isFinite(row?.dosage_value) ? row.dosage_value : null,
+    dosageValue: Number.isFinite(parseFloat(row?.dosage_value)) ? parseFloat(row?.dosage_value) : null,
     dosageUnit: trimString(row?.dosage_unit) || null,
     dosageDisplay: buildDosageDisplay(row),
     chemicalForm: trimString(row?.chemical_form) || null,
