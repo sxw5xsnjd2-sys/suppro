@@ -35,13 +35,12 @@ import {
   getBenefitColor,
   getBenefitIconComponent,
   getScanBenefitProgress,
-  METAL_BADGE_GRADIENTS,
-  METAL_BADGE_LOCATIONS,
 } from "@/features/supplements/benefits";
 import {
   CATALOG_TYPES,
   createSupplementProductCatalogId,
 } from "@/features/supplements/catalog";
+import { BenefitIconBadge } from "@/features/supplements/components/BenefitIconBadge";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { getTrackedScanMatchedIngredients } from "@/features/supplements/trackedScanContext";
 import {
@@ -101,9 +100,9 @@ const B_COMPLEX_REFERENCE_SOURCE_NAMES = new Set([
   "Vitamin B6 (Pyridoxine / P5P / Pyridoxal-5-Phosphate)",
 ]);
 const BENEFIT_SCORE_TOOLTIP_COPY = {
-  catalog:
-    "This score reflects how strong the evidence is for this supplement for this specific benefit. Gold indicates the strongest evidence tier. A fuller bar means the supplement ranks higher for this benefit, and a full bar means it ranks #1.",
-  scan: "This score estimates how well the scanned product supports this benefit. It combines the matched ingredient's evidence ranking for the benefit with how well the product dose matches the recommended effective dose. A fuller bar means stronger benefit support; lower bars can reflect weaker evidence, a lower dose, or both.",
+  scan: "This score estimates how well the scanned product supports this benefit by combining the matched ingredient's evidence ranking with how effective the dose is. A fuller bar means stronger benefit support; lower bars can reflect weaker evidence, a lower dose, or both.",
+  ranking:
+    "A gold medal means there is strong evidence for this benefit while a silver medal means some evidence but not robust. A bronze medal means poor research studies performed for this benefit or no human studies performed.",
 };
 
 function getDoseTooltipMessage(item) {
@@ -199,24 +198,41 @@ function getBenefitRankText(benefit, ranking) {
   return "Evidence available";
 }
 
-function getBenefitRankingProgress(ranking) {
-  const rank = Number(ranking?.rank);
-  const total = Number(ranking?.total);
-
-  if (!Number.isFinite(rank) || !Number.isFinite(total) || total <= 0) {
-    return 0;
-  }
-
-  if (rank <= 1) {
-    return 1;
-  }
-
-  return Math.max(0, Math.min(1, (total - rank) / total));
-}
-
 function getSectionBody(value) {
   const body = typeof value === "string" ? value.trim() : "";
   return body || "No details listed yet.";
+}
+
+function normalizeDetailHeadingKey(value) {
+  return typeof value === "string"
+    ? value.trim().replace(/\s+/g, " ").toLowerCase()
+    : "";
+}
+
+function splitDetailBodyBlocks(body) {
+  const text = typeof body === "string" ? body.trim() : "";
+  if (!text) {
+    return [];
+  }
+
+  return text
+    .split(/\n\s*\n+/)
+    .map((block) => {
+      const lines = block
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (lines.length === 0) {
+        return null;
+      }
+
+      return {
+        heading: lines[0] ?? "",
+        content: lines.slice(1).join("\n").trim(),
+      };
+    })
+    .filter(Boolean);
 }
 
 function buildEvidenceSnippets(text) {
@@ -399,92 +415,133 @@ function BenefitRankingBar({
   doseFactor = 1,
 }) {
   const isScanVariant = variant === "scan";
-  const progress = isScanVariant
-    ? getScanBenefitProgress(ranking, doseFactor)
-    : getBenefitRankingProgress(ranking);
+  const progress = getScanBenefitProgress(ranking, doseFactor);
 
-  if (isScanVariant) {
-    const fillColor = "#34C759";
-    const trackColor = dimmed ? "rgba(52,199,89,0.08)" : "rgba(52,199,89,0.16)";
-
-    return (
-      <View
-        accessibilityElementsHidden
-        importantForAccessibility="no"
-        style={[styles.rankingBarTrack, { backgroundColor: trackColor }]}
-      >
-        <View
-          style={[
-            styles.rankingBarFill,
-            { backgroundColor: dimmed ? "rgba(52,199,89,0.82)" : fillColor },
-            { width: `${progress * 100}%` },
-          ]}
-        />
-      </View>
-    );
+  if (!isScanVariant) {
+    return null;
   }
 
-  const gradient = METAL_BADGE_GRADIENTS[ranking?.icon];
-  const locations = METAL_BADGE_LOCATIONS[ranking?.icon];
-  const fillColor = getBenefitColor(ranking?.icon);
-  const trackColor = `${fillColor}29`;
+  const fillColor = "#34C759";
+  const trackColor = dimmed ? "rgba(52,199,89,0.08)" : "rgba(52,199,89,0.16)";
 
   return (
     <View
       accessibilityElementsHidden
       importantForAccessibility="no"
-      style={[
-        styles.rankingBarTrack,
-        { backgroundColor: dimmed ? `${fillColor}1A` : trackColor },
-      ]}
+      style={[styles.rankingBarTrack, { backgroundColor: trackColor }]}
     >
-      {gradient ? (
-        <LinearGradient
-          colors={gradient}
-          locations={locations}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-          style={[
-            styles.rankingBarFill,
-            dimmed && styles.rankingBarFillDimmed,
-            { width: `${progress * 100}%` },
-          ]}
-        />
-      ) : (
-        <View
-          style={[
-            styles.rankingBarFill,
-            { backgroundColor: dimmed ? `${fillColor}D1` : fillColor },
-            { width: `${progress * 100}%` },
-          ]}
-        />
-      )}
+      <View
+        style={[
+          styles.rankingBarFill,
+          { backgroundColor: dimmed ? "rgba(52,199,89,0.82)" : fillColor },
+          { width: `${progress * 100}%` },
+        ]}
+      />
     </View>
   );
 }
 
-function DetailCard({ icon, title, body }) {
+function BenefitRankingMedal({ ranking, benefitLabel, Icon, dimmed = false }) {
+  if (!ranking?.icon) {
+    return null;
+  }
+
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+      style={[styles.rankingMedalWrap, dimmed && styles.rankingMedalDimmed]}
+    >
+      <BenefitIconBadge
+        label={benefitLabel}
+        color={getBenefitColor(ranking.icon)}
+        tone={ranking.icon}
+        Icon={Icon}
+        size={12}
+        containerSize={22}
+        borderRadius={11}
+      />
+    </View>
+  );
+}
+
+function DetailCard({
+  icon,
+  title,
+  body,
+  linkedItemsByHeading = null,
+  onLinkedHeadingPress = null,
+}) {
+  const blocks =
+    linkedItemsByHeading && body !== "No details listed yet."
+      ? splitDetailBodyBlocks(body)
+      : [];
+  const showLinkedBlocks = Boolean(linkedItemsByHeading && blocks.length > 0);
+
   return (
     <PrimaryCard style={styles.detailCard}>
       <View style={styles.detailCardHeader}>
         <Ionicons name={icon} size={18} color={appTheme.colors.textStrong} />
         <Text style={styles.detailCardTitle}>{title}</Text>
       </View>
-      <Text style={styles.detailCardBody}>{body}</Text>
+      {showLinkedBlocks ? (
+        <View style={styles.detailCardBodyBlocks}>
+          {blocks.map((block, index) => {
+            const linkedItem =
+              linkedItemsByHeading.get(
+                normalizeDetailHeadingKey(block.heading)
+              ) ?? null;
+
+            return (
+              <View
+                key={`${title}-${block.heading}-${index}`}
+                style={styles.detailCardBodyBlock}
+              >
+                {linkedItem ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open ${block.heading}`}
+                    onPress={() => onLinkedHeadingPress?.(linkedItem)}
+                    style={({ pressed }) => [
+                      styles.detailCardLinkWrap,
+                      pressed && styles.detailCardLinkWrapPressed,
+                    ]}
+                  >
+                    <Text style={styles.detailCardLinkText}>{block.heading}</Text>
+                  </Pressable>
+                ) : (
+                  <Text style={styles.detailCardBodyHeading}>{block.heading}</Text>
+                )}
+
+                {block.content ? (
+                  <Text style={styles.detailCardBody}>{block.content}</Text>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      ) : (
+        <Text style={styles.detailCardBody}>{body}</Text>
+      )}
     </PrimaryCard>
   );
 }
 
-function BenefitSectionHeader({ tooltipText, tooltipOpen, onTooltipPress }) {
+function BenefitSectionHeader({
+  tooltipText,
+  tooltipOpen,
+  onTooltipPress,
+  rightTitle = "Score",
+}) {
   return (
     <>
       <View style={styles.benefitHeaderRow}>
         <Text style={styles.benefitHeaderText}>Benefit</Text>
         <View style={styles.benefitHeaderRightGroup}>
-          <Text style={styles.benefitHeaderText}>Score</Text>
+          <Text style={styles.benefitHeaderText}>{rightTitle}</Text>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="What this score means"
+            accessibilityLabel={`What this ${rightTitle.toLowerCase()} means`}
             hitSlop={8}
             onPress={onTooltipPress}
             style={({ pressed }) => [
@@ -606,7 +663,6 @@ function BenefitRow({
       : benefit?.evidence ?? benefit?.evidence_summary ?? supplementEvidence;
   const evidenceSnippets = buildEvidenceSnippets(evidenceSource);
   const showScanSupportBar =
-    !showRanking &&
     ranking &&
     Number.isFinite(scanSupportDriver?.doseFactor) &&
     Number.isFinite(scanSupportDriver?.benefitScore);
@@ -634,7 +690,7 @@ function BenefitRow({
 
           <View style={styles.benefitCopy}>
             <Text style={styles.benefitLabel}>{benefit.label}</Text>
-            {showRanking ? (
+            {showRanking && !scanSupportDriver ? (
               <Text style={styles.benefitMeta}>
                 {getBenefitRankText(benefit, ranking)}
               </Text>
@@ -648,8 +704,13 @@ function BenefitRow({
             !showRanking && !showScanSupportBar && styles.benefitRightCompact,
           ]}
         >
-          {showRanking ? (
-            <BenefitRankingBar ranking={ranking} dimmed={dimmed} />
+          {showRanking && !scanSupportDriver ? (
+            <BenefitRankingMedal
+              ranking={ranking}
+              benefitLabel={benefit.label}
+              Icon={BenefitIcon}
+              dimmed={dimmed}
+            />
           ) : showScanSupportBar ? (
             <BenefitRankingBar
               ranking={ranking}
@@ -739,6 +800,9 @@ export default function SupplementInfoModal() {
   const isLiveScanSource = source === "scanned";
   const isTrackedScannedSource = source === "tracked-scanned";
   const isScanStyledSource = isLiveScanSource || isTrackedScannedSource;
+  const isSupplementProduct =
+    data?.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT;
+  const useProductSupportBar = isScanStyledSource || isSupplementProduct;
   const effectiveScanSessionId = Number.isFinite(requestedScanSessionId)
     ? requestedScanSessionId
     : scannerScanSessionId;
@@ -987,8 +1051,9 @@ export default function SupplementInfoModal() {
 
   const benefits = useMemo(() => {
     const nextBenefits = [...(data?.supplement_benefits ?? [])];
+
     return nextBenefits.sort((left, right) =>
-      isScanStyledSource
+      useProductSupportBar
         ? compareScanBenefits(
             left,
             right,
@@ -997,11 +1062,40 @@ export default function SupplementInfoModal() {
           )
         : compareBenefits(left, right)
     );
-  }, [benefitRankings, data?.supplement_benefits, isScanStyledSource]);
+  }, [benefitRankings, data?.supplement_benefits, useProductSupportBar]);
   const matchedIngredients = useMemo(
     () => [...(data?.matchedIngredients ?? [])],
     [data]
   );
+  const linkedDetailItemsByHeading = useMemo(() => {
+    if (
+      !isScanStyledSource &&
+      data?.catalogType !== CATALOG_TYPES.SUPPLEMENT_PRODUCT
+    ) {
+      return null;
+    }
+
+    const lookup = new Map();
+
+    matchedIngredients.forEach((item) => {
+      if (!item?.catalogId) {
+        return;
+      }
+
+      [
+        item?.catalogName,
+        item?.ingredientName,
+        item?.ingredientRaw,
+      ].forEach((name) => {
+        const key = normalizeDetailHeadingKey(name);
+        if (key && !lookup.has(key)) {
+          lookup.set(key, item);
+        }
+      });
+    });
+
+    return lookup;
+  }, [data?.catalogType, isScanStyledSource, matchedIngredients]);
 
   const supplementEvidence =
     typeof data?.evidence === "string" && data.evidence.trim()
@@ -1029,7 +1123,8 @@ export default function SupplementInfoModal() {
     isLiveScanSource && isCurrentScanSession
   );
   const showShareAction = !isScanFailure;
-  const showRanking = !isScanStyledSource;
+  const showRanking = !useProductSupportBar;
+  const benefitHeaderTitle = showRanking ? "Evidence" : "Score";
   const visibleBenefitCount = showAllBenefits ? benefits.length : 6;
   const visibleBenefits = benefits.slice(0, visibleBenefitCount);
   const hiddenBenefitCount = Math.max(benefits.length - visibleBenefitCount, 0);
@@ -1050,27 +1145,38 @@ export default function SupplementInfoModal() {
     B_COMPLEX_REFERENCE_SOURCE_NAMES.has(
       typeof data?.name === "string" ? data.name.trim() : ""
     );
-  const benefitScoreTooltipText = isScanStyledSource
+  const benefitScoreTooltipText = useProductSupportBar
     ? BENEFIT_SCORE_TOOLTIP_COPY.scan
-    : BENEFIT_SCORE_TOOLTIP_COPY.catalog;
+    : BENEFIT_SCORE_TOOLTIP_COPY.ranking;
+  const detailSectionTitles = useProductSupportBar
+    ? {
+        howToUse: "Ingredient guidance",
+        whatIsIt: "Ingredient breakdown",
+        whyUseIt: "Potential benefits",
+      }
+    : {
+        howToUse: "How to use",
+        whatIsIt: "What is it?",
+        whyUseIt: "Why use it?",
+      };
 
   const detailCards = [
     {
       key: "how-to-use",
       icon: "information-circle-outline",
-      title: "How to use",
+      title: detailSectionTitles.howToUse,
       body: getSectionBody(data?.how_to_use),
     },
     {
       key: "what-is-it",
       icon: "search-outline",
-      title: "What is it?",
+      title: detailSectionTitles.whatIsIt,
       body: getSectionBody(data?.what_is_it),
     },
     {
       key: "why-use-it",
       icon: "star-outline",
-      title: "Why use it?",
+      title: detailSectionTitles.whyUseIt,
       body: getSectionBody(data?.why_use_it),
     },
     {
@@ -1572,6 +1678,7 @@ export default function SupplementInfoModal() {
               ) : benefits.length > 0 ? (
                 <>
                   <BenefitSectionHeader
+                    rightTitle={benefitHeaderTitle}
                     tooltipText={benefitScoreTooltipText}
                     tooltipOpen={isBenefitScoreTooltipOpen}
                     onTooltipPress={() => {
@@ -1595,7 +1702,7 @@ export default function SupplementInfoModal() {
                           supplementEvidence={supplementEvidence}
                           showRanking={showRanking}
                           scanSupportDriver={
-                            isScanStyledSource
+                            useProductSupportBar
                               ? benefit?.scanSupportDriver ?? null
                               : null
                           }
@@ -1860,6 +1967,8 @@ export default function SupplementInfoModal() {
                     icon={section.icon}
                     title={section.title}
                     body={section.body}
+                    linkedItemsByHeading={linkedDetailItemsByHeading}
+                    onLinkedHeadingPress={handleOpenIngredient}
                   />
                 ))
               : null}
@@ -2238,6 +2347,16 @@ const styles = StyleSheet.create({
   benefitRightCompact: {
     width: "auto",
   },
+  rankingMedalWrap: {
+    width: 22,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 35,
+  },
+  rankingMedalDimmed: {
+    opacity: 0.82,
+  },
   rankingBarTrack: {
     width: 40,
     height: 8,
@@ -2561,6 +2680,35 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textSecondary,
+  },
+  detailCardBodyBlocks: {
+    gap: 14,
+  },
+  detailCardBodyBlock: {
+    gap: 6,
+  },
+  detailCardBodyHeading: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  detailCardLinkWrap: {
+    alignSelf: "flex-start",
+    borderRadius: 8,
+    backgroundColor: "rgba(92,63,168,0.12)",
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  detailCardLinkWrapPressed: {
+    opacity: 0.72,
+  },
+  detailCardLinkText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.metrics.duration.accent,
+    textDecorationLine: "underline",
   },
   verifiedModalRoot: {
     flex: 1,

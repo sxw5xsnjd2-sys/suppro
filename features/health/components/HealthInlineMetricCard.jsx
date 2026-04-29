@@ -151,7 +151,7 @@ export function FullMetricCard({ metric, todayEntry, entries = [], onPress }) {
     const parts = getDurationParts(raw);
     primaryValue = parts.hours;
     primaryUnit = parts.unit;
-    sublabel = "Time Asleep";
+    sublabel = metric.key === "sleep" ? "Time Asleep" : "Latest";
     sparkKind = "bars";
   } else if (metric.key === BLOOD_PRESSURE_METRIC_KEY) {
     const bp = normalizeBloodPressureValue(raw) ?? { systolic: "—", diastolic: "—" };
@@ -413,9 +413,9 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 116,
     borderRadius: 18,
-    backgroundColor: appTheme.colors.surfaceAccent,
+    backgroundColor: appTheme.metrics.duration.muted,
     borderWidth: 1.5,
-    borderColor: appTheme.colors.borderSubtle,
+    borderColor: "rgba(92,63,168,0.24)",
     borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
@@ -424,12 +424,12 @@ const styles = StyleSheet.create({
   addPlus: {
     fontFamily: typography.fontFamily.headingBlack,
     fontSize: 20,
-    color: appTheme.colors.textStrong,
+    color: appTheme.metrics.duration.accent,
     lineHeight: 24,
   },
   addLabel: {
     fontFamily: typography.fontFamily.heading,
     fontSize: 13,
-    color: appTheme.colors.textStrong,
+    color: appTheme.metrics.duration.accent,
   },
 });
