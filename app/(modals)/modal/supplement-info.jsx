@@ -29,6 +29,7 @@ import {
 import { leaveTopLevelScanModal } from "@/features/scanner/navigation";
 import { useScannerStore } from "@/features/scanner/store";
 import {
+  BENEFIT_RANK,
   buildBenefitRankings,
   compareScanBenefits,
   compareBenefits,
@@ -42,6 +43,7 @@ import {
 } from "@/features/supplements/catalog";
 import { BenefitIconBadge } from "@/features/supplements/components/BenefitIconBadge";
 import { useSupplementsStore } from "@/features/supplements/store";
+import { useToastStore } from "@/features/toast/toastStore";
 import { getTrackedScanMatchedIngredients } from "@/features/supplements/trackedScanContext";
 import {
   isSupplementHearted,
@@ -251,25 +253,51 @@ function buildEvidenceSnippets(text) {
     return ["No evidence summary is available for this benefit yet."];
   }
 
-  const explicitLines = body
-    .split(/\n+/)
-    .map((line) => line.replace(/^[\s\-*•]+/, "").trim())
+  const blocks = body
+    .split(/\n\s*\n+/)
+    .map((block) => block.trim())
     .filter(Boolean);
 
-  if (explicitLines.length >= 2) {
-    return explicitLines.slice(0, 3);
+  return blocks.length ? blocks.slice(0, 3) : [body];
+}
+
+function parseEvidenceSnippet(text) {
+  const body = typeof text === "string" ? text.trim() : "";
+  if (!body) {
+    return {
+      studyMeta: "Study details unavailable",
+      studyTitle: "No study title available",
+      studyFindings: "No evidence summary is available for this benefit yet.",
+    };
+  }
+
+  const quotedTitleMatch = body.match(
+    /^(.*?)(?::\s*)?["“]([^"”]+)["”]\.?\s*(.*)$/s
+  );
+
+  if (quotedTitleMatch) {
+    const [, rawMeta, rawTitle, rawFindings] = quotedTitleMatch;
+    return {
+      studyMeta: rawMeta.trim().replace(/[:\s]+$/, "") || "Study details unavailable",
+      studyTitle: rawTitle.trim() || "No study title available",
+      studyFindings:
+        rawFindings.trim() || "No evidence summary is available for this benefit yet.",
+    };
   }
 
   const sentences = body
     .split(/(?<=[.!?])\s+/)
     .map((sentence) => sentence.trim())
-    .filter((sentence) => sentence.length > 18);
+    .filter(Boolean);
 
-  if (sentences.length >= 2) {
-    return sentences.slice(0, 3);
-  }
-
-  return [body];
+  return {
+    studyMeta: sentences[0] || "Study details unavailable",
+    studyTitle: sentences[1] || "No study title available",
+    studyFindings:
+      sentences.slice(2).join(" ") ||
+      sentences[1] ||
+      "No evidence summary is available for this benefit yet.",
+  };
 }
 
 function EvidenceRatingGauge({ value, toneScore }) {
@@ -460,6 +488,7 @@ function BenefitRankingMedal({ ranking, benefitLabel, Icon, dimmed = false }) {
         size={12}
         containerSize={22}
         borderRadius={11}
+        iconOffsetX={benefitLabel === "Joint health" ? -3 : 0}
       />
     </View>
   );
@@ -794,9 +823,15 @@ export default function SupplementInfoModal() {
   const [verifiedInfoVisible, setVerifiedInfoVisible] = useState(false);
   const [isFavourite, setIsFavourite] = useState(false);
   const [showFavouriteToast, setShowFavouriteToast] = useState(false);
+  const [favouriteToastText, setFavouriteToastText] = useState("");
+  const [showAddToast, setShowAddToast] = useState(false);
+  const [addToastText, setAddToastText] = useState("");
   const [openDoseTooltipKey, setOpenDoseTooltipKey] = useState(null);
   const [isBenefitScoreTooltipOpen, setIsBenefitScoreTooltipOpen] =
     useState(false);
+  const toastMessage = useToastStore((state) => state.message);
+  const toastTarget = useToastStore((state) => state.target);
+  const clearToast = useToastStore((state) => state.clear);
   const isLiveScanSource = source === "scanned";
   const isTrackedScannedSource = source === "tracked-scanned";
   const isScanStyledSource = isLiveScanSource || isTrackedScannedSource;
@@ -1052,16 +1087,22 @@ export default function SupplementInfoModal() {
   const benefits = useMemo(() => {
     const nextBenefits = [...(data?.supplement_benefits ?? [])];
 
-    return nextBenefits.sort((left, right) =>
-      useProductSupportBar
-        ? compareScanBenefits(
-            left,
-            right,
-            benefitRankings[left?.id] ?? null,
-            benefitRankings[right?.id] ?? null
-          )
-        : compareBenefits(left, right)
-    );
+    return nextBenefits.sort((left, right) => {
+      const leftRanking = benefitRankings[left?.id] ?? null;
+      const rightRanking = benefitRankings[right?.id] ?? null;
+      const leftTone =
+        BENEFIT_RANK[leftRanking?.icon ?? left?.icon] ?? Number.MAX_SAFE_INTEGER;
+      const rightTone =
+        BENEFIT_RANK[rightRanking?.icon ?? right?.icon] ?? Number.MAX_SAFE_INTEGER;
+
+      if (leftTone !== rightTone) {
+        return leftTone - rightTone;
+      }
+
+      return useProductSupportBar
+        ? compareScanBenefits(left, right, leftRanking, rightRanking)
+        : compareBenefits(left, right);
+    });
   }, [benefitRankings, data?.supplement_benefits, useProductSupportBar]);
   const matchedIngredients = useMemo(
     () => [...(data?.matchedIngredients ?? [])],
@@ -1100,11 +1141,6 @@ export default function SupplementInfoModal() {
   const supplementEvidence =
     typeof data?.evidence === "string" && data.evidence.trim()
       ? data.evidence.trim()
-      : "";
-  const scoreAdjustmentSummary =
-    typeof data?.score_adjustment_summary === "string" &&
-    data.score_adjustment_summary.trim()
-      ? data.score_adjustment_summary.trim()
       : "";
   const fallbackName =
     data?.name ??
@@ -1160,32 +1196,77 @@ export default function SupplementInfoModal() {
         whyUseIt: "Why use it?",
       };
 
-  const detailCards = [
-    {
-      key: "how-to-use",
-      icon: "information-circle-outline",
-      title: detailSectionTitles.howToUse,
-      body: getSectionBody(data?.how_to_use),
-    },
-    {
-      key: "what-is-it",
-      icon: "search-outline",
-      title: detailSectionTitles.whatIsIt,
-      body: getSectionBody(data?.what_is_it),
-    },
-    {
-      key: "why-use-it",
-      icon: "star-outline",
-      title: detailSectionTitles.whyUseIt,
-      body: getSectionBody(data?.why_use_it),
-    },
-    {
-      key: "risks",
-      icon: "sparkles-outline",
-      title: "Risks & Interactions",
-      body: getSectionBody(data?.risks_and_interactions),
-    },
-  ];
+  const detailCards = useProductSupportBar
+    ? [
+        {
+          key: "what-is-it",
+          icon: "search-outline",
+          title: detailSectionTitles.whatIsIt,
+          body: getSectionBody(data?.what_is_it),
+        },
+        {
+          key: "how-to-use",
+          icon: "information-circle-outline",
+          title: detailSectionTitles.howToUse,
+          body: getSectionBody(data?.how_to_use),
+        },
+        {
+          key: "why-use-it",
+          icon: "star-outline",
+          title: detailSectionTitles.whyUseIt,
+          body: getSectionBody(data?.why_use_it),
+        },
+        {
+          key: "risks",
+          icon: "warning-outline",
+          title: "Risks & Interactions",
+          body: getSectionBody(data?.risks_and_interactions),
+        },
+      ]
+    : [
+        {
+          key: "how-to-use",
+          icon: "information-circle-outline",
+          title: detailSectionTitles.howToUse,
+          body: getSectionBody(data?.how_to_use),
+        },
+        {
+          key: "what-is-it",
+          icon: "search-outline",
+          title: detailSectionTitles.whatIsIt,
+          body: getSectionBody(data?.what_is_it),
+        },
+        {
+          key: "why-use-it",
+          icon: "star-outline",
+          title: detailSectionTitles.whyUseIt,
+          body: getSectionBody(data?.why_use_it),
+        },
+        {
+          key: "how-it-works",
+          icon: "flask-outline",
+          title: "How it works",
+          body: getSectionBody(data?.how_does_it_work),
+        },
+        {
+          key: "who-might-benefit",
+          icon: "people-outline",
+          title: "Who might benefit",
+          body: getSectionBody(data?.who_might_benefit),
+        },
+        {
+          key: "side-effects",
+          icon: "alert-circle-outline",
+          title: "Side effects",
+          body: getSectionBody(data?.side_effects),
+        },
+        {
+          key: "risks",
+          icon: "warning-outline",
+          title: "Risks & Interactions",
+          body: getSectionBody(data?.risks_and_interactions),
+        },
+      ];
 
   const handleAddSupplement = () => {
     if (!canAddSupplement) return;
@@ -1198,6 +1279,7 @@ export default function SupplementInfoModal() {
             newCatalogId: data.id,
             newCatalogName: data.name || fallbackName,
             newCatalogType: data.catalogType,
+            toastTarget: "supplement-info",
           },
         });
         return;
@@ -1209,6 +1291,7 @@ export default function SupplementInfoModal() {
           initialName: fallbackName,
           scanSource: "scanned_product",
           scanSessionId: String(effectiveScanSessionId ?? ""),
+          toastTarget: "supplement-info",
         },
       });
       return;
@@ -1220,6 +1303,7 @@ export default function SupplementInfoModal() {
         newCatalogId: data.id,
         newCatalogName: data.name,
         newCatalogType: data.catalogType,
+        toastTarget: "supplement-info",
       },
     });
   };
@@ -1290,16 +1374,22 @@ export default function SupplementInfoModal() {
   };
 
   const handleFavourite = async () => {
-    if (!canFavourite || isFavourite) {
+    if (!canFavourite) {
       return;
     }
 
     try {
-      await setSupplementHearted(favouriteSupplementId, true);
-      setIsFavourite(true);
+      const nextFavouriteState = !isFavourite;
+      await setSupplementHearted(favouriteSupplementId, nextFavouriteState);
+      setIsFavourite(nextFavouriteState);
+      setFavouriteToastText(
+        nextFavouriteState
+          ? "Added to favourites!"
+          : "Removed from favourites!"
+      );
       setShowFavouriteToast(true);
     } catch (error) {
-      console.error("Failed to save favourite supplement", error);
+      console.error("Failed to update favourite supplement", error);
     }
   };
 
@@ -1344,6 +1434,30 @@ export default function SupplementInfoModal() {
       clearTimeout(timeoutId);
     };
   }, [showFavouriteToast]);
+
+  useEffect(() => {
+    if (toastTarget !== "supplement-info" || !toastMessage) {
+      return;
+    }
+
+    setAddToastText(toastMessage);
+    setShowAddToast(true);
+    clearToast();
+  }, [clearToast, toastMessage, toastTarget]);
+
+  useEffect(() => {
+    if (!showAddToast) {
+      return undefined;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setShowAddToast(false);
+    }, 1800);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [showAddToast]);
 
   if (loaded && isProductNotRecognizedFailure) {
     return (
@@ -1448,7 +1562,7 @@ export default function SupplementInfoModal() {
         <Ionicons name="close" size={18} color={appTheme.colors.textStrong} />
       </Pressable>
 
-      {showFavouriteToast ? (
+      {showFavouriteToast || showAddToast ? (
         <View
           pointerEvents="none"
           style={[
@@ -1457,8 +1571,14 @@ export default function SupplementInfoModal() {
           ]}
         >
           <View style={styles.toast}>
-            <Ionicons name="heart" size={14} color="#FFFFFF" />
-            <Text style={styles.toastText}>Added to favourites!</Text>
+            <Ionicons
+              name={showAddToast ? "checkmark-circle" : "heart"}
+              size={14}
+              color="#FFFFFF"
+            />
+            <Text style={styles.toastText}>
+              {showAddToast ? addToastText : favouriteToastText}
+            </Text>
           </View>
         </View>
       ) : null}
@@ -1577,14 +1697,6 @@ export default function SupplementInfoModal() {
                   value={displayedRating}
                   toneScore={rating}
                 />
-              ) : null}
-
-              {!isScanFailure &&
-              !isScanStyledSource &&
-              scoreAdjustmentSummary ? (
-                <Text style={styles.scoreAdjustmentNote}>
-                  {scoreAdjustmentSummary}
-                </Text>
               ) : null}
 
               {showBComplexReference ? (

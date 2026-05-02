@@ -15,8 +15,9 @@ export function BenefitIconBadge({
   size = 20,
   containerSize = 40,
   borderRadius,
+  iconOffsetX = 0,
 }) {
-  const nudge = BENEFIT_ICON_NUDGE[label] ?? 0;
+  const nudge = (BENEFIT_ICON_NUDGE[label] ?? 0) + iconOffsetX;
   const resolvedRadius =
     typeof borderRadius === "number" ? borderRadius : containerSize / 2;
   const iconNode = (

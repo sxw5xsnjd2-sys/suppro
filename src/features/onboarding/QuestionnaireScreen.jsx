@@ -209,34 +209,41 @@ const EVIDENCE_OPTIONS = [
 const PRIORITY_OPTIONS = [
   {
     value: "cost_conscious",
-    label: "Cost-conscious",
-    description: "Lean toward affordable options.",
+    label: "Smart Value",
+    description: "Prioritise effective, budget-friendly choices.",
     priorityFactors: ["cost", "clinical_evidence"],
   },
   {
     value: "balanced",
     label: "Balanced",
-    description: "Quality and value, both matter.",
+    description: "A thoughtful balance of quality, safety, and value.",
     priorityFactors: ["clinical_evidence", "safety_profile"],
   },
   {
     value: "premium",
     label: "Premium",
-    description: "Best-in-class, cost is secondary.",
+    description: "Prioritise the highest-quality options, regardless of cost.",
     priorityFactors: ["quality", "clinical_evidence"],
   },
 ];
 
 const CAUTION_OPTIONS = [
   {
-    value: "very_cautious",
-    label: "Well-established only",
+    value: "evidence_first",
+    label: "Evidence-first",
+    description: "Prioritise well-studied supplements.",
     cautionLevel: "ultra_conservative",
   },
-  { value: "balanced", label: "Balanced", cautionLevel: "balanced" },
   {
-    value: "adventurous",
-    label: "Open to promising new options",
+    value: "balanced",
+    label: "Balanced",
+    description: "Prefer mostly proven, with some flexibility.",
+    cautionLevel: "balanced",
+  },
+  {
+    value: "exploratory",
+    label: "Exploratory",
+    description: "Open to promising options with less research.",
     cautionLevel: "results_optimised",
   },
 ];
@@ -2557,7 +2564,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
           <QuestionHero
             centered
             title="Safety first."
-            subtitle="1 in 4 supplement combinations carry a known interaction. Check risks and interactions with Suppro."
+            subtitle="Nearly 1 in 2 people taking supplements with prescription medications may face potential interactions. Every supplement page includes guidance on risks and interactions."
           >
             <GlyphHeart />
           </QuestionHero>
@@ -2605,7 +2612,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     if (stepKey === "priorities") {
       return (
         <>
-          <QuestionHero title="What matters most to you?" />
+          <QuestionHero title="How do you prefer to choose supplements?" />
           <View style={styles.optionStack}>
             {PRIORITY_OPTIONS.map((option) => (
               <OptionRow
@@ -2639,14 +2646,15 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       return (
         <>
           <QuestionHero
-            title="How cautious would you like to be?"
-            subtitle="Some supplements have weaker evidence but interesting upside."
+            title="What’s your comfort level with emerging supplements?"
+            subtitle="Some supplements are backed by stronger research, while others show promise with earlier evidence."
           />
           <View style={styles.optionStack}>
             {CAUTION_OPTIONS.map((option) => (
               <OptionRow
                 key={option.value}
                 label={option.label}
+                description={option.description}
                 selected={answers.cautionPreference === option.value}
                 onPress={() => {
                   const nextAnswers = {

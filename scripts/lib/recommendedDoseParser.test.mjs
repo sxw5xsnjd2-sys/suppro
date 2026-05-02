@@ -1,6 +1,7 @@
 import test from "node:test";
 import {
   assertParsedDoseResult,
+  normalizeRecommendedDoseResult,
   parseRecommendedDoseFromHowToUse,
 } from "./recommendedDoseParser.mjs";
 
@@ -86,6 +87,32 @@ test("conflicting comparable doses are ambiguous", () => {
       unit: null,
       frequencyMin: null,
       frequencyMax: null,
+    },
+  });
+});
+
+test("normalizes llm-style missing results without throwing", () => {
+  const result = normalizeRecommendedDoseResult({
+    status: "missing",
+    source_text:
+      "Typical dose is 1-2 tablespoons diluted in water once or twice daily.",
+    confidence: 0.62,
+    per_intake_min_value: null,
+    per_intake_max_value: null,
+    unit: null,
+    frequency_min_per_day: 1,
+    frequency_max_per_day: 1,
+    flags: ["no_comparable_dose_found"],
+  });
+
+  assertParsedDoseResult(result, {
+    status: "missing",
+    values: {
+      min: null,
+      max: null,
+      unit: null,
+      frequencyMin: 1,
+      frequencyMax: 1,
     },
   });
 });

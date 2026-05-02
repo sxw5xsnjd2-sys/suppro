@@ -124,11 +124,14 @@ function buildProductIngredientMatch(row, supplementNameById) {
 const SUPPLEMENT_SELECT = `
   id,
   name,
-  description,
+  status,
   what_is_it,
+  how_does_it_work,
   how_to_use,
   why_use_it,
+  side_effects,
   risks_and_interactions,
+  who_might_benefit,
   evidence,
   evidence_score,
   recommended_dose_status,
@@ -162,7 +165,7 @@ export async function getSupplementsByIds(ids) {
   const { data, error } = await supabase
     .from("supplements")
     .select(SUPPLEMENT_SELECT)
-    .eq("status", "approved")
+    .in("status", ["approved", "pending"])
     .in("id", cleanIds);
 
   if (error) {
@@ -172,7 +175,7 @@ export async function getSupplementsByIds(ids) {
 
   return (data ?? []).map((row) => ({
     ...row,
-    verified: true,
+    verified: row?.status === "approved",
     catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
   }));
 }
@@ -255,7 +258,7 @@ async function getActiveIngredientById(catalogId) {
     .from("supplements")
     .select(SUPPLEMENT_SELECT)
     .eq("id", cleanId)
-    .eq("status", "approved")
+    .in("status", ["approved", "pending"])
     .maybeSingle();
 
   if (error) {
@@ -269,7 +272,7 @@ async function getActiveIngredientById(catalogId) {
 
   return {
     ...data,
-    verified: true,
+    verified: data?.status === "approved",
     catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
   };
 }

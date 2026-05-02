@@ -1,6 +1,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+declare const EdgeRuntime:
+  | {
+      waitUntil?: (promise: Promise<unknown>) => void;
+    }
+  | undefined;
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -19,8 +25,13 @@ const REVIEW_TYPES = {
   aliasUnresolved: "alias_unresolved",
 };
 
+const RESEARCH_FUNCTION = "research-pending-supplements";
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
-const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const supabaseServiceRoleKey = normalizeSecretToken(
+  Deno.env.get("INTERNAL_SERVICE_ROLE_KEY") ??
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+);
 
 const adminSupabase =
   supabaseUrl && supabaseServiceRoleKey
@@ -39,6 +50,31 @@ function jsonResponse(data: unknown, status = 200) {
 
 function trimString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeSecretToken(value: unknown) {
+  return trimString(value)
+    .replace(/^Bearer\s+/i, "")
+    .replace(/^["']|["']$/g, "")
+    .trim();
+}
+
+function parseJwtPayload(token: string) {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    return JSON.parse(atob(padded)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function isServiceRoleRequest(req: Request) {
+  const token = trimString(req.headers.get("Authorization")?.replace(/^Bearer\s+/i, ""));
+  const payload = parseJwtPayload(token);
+  return payload?.role === "service_role";
 }
 
 function normalizeWhitespace(value: unknown): string {
@@ -214,6 +250,31 @@ function dedupeByKey<T>(items: T[], getKey: (item: T) => string) {
   });
 }
 
+function mergeSampleRows<T>(
+  existingItems: unknown,
+  freshItems: T[],
+  getKey: (item: T) => string,
+  limit = 5
+) {
+  const existing = Array.isArray(existingItems) ? (existingItems as T[]) : [];
+  return dedupeByKey(
+    [...freshItems, ...existing].filter(Boolean) as T[],
+    getKey
+  ).slice(0, limit);
+}
+
+function maxTimestamp(left: string, right: string) {
+  if (!left) return right;
+  if (!right) return left;
+  return left > right ? left : right;
+}
+
+function minTimestamp(left: string, right: string) {
+  if (!left) return right;
+  if (!right) return left;
+  return left < right ? left : right;
+}
+
 async function fetchPendingReviewNames() {
   const { data, error } = await adminSupabase!
     .from(TABLES.reviewQueue)
@@ -270,7 +331,9 @@ async function fetchOccurrenceRows(normalizedNames: string[]) {
   const { data, error } = await adminSupabase!
     .from(TABLES.missingOccurrences)
     .select("*")
-    .in("normalized_name", normalizedNames);
+    .in("normalized_name", normalizedNames)
+    .order("last_seen_at", { ascending: false })
+    .order("first_seen_at", { ascending: true });
 
   if (error) {
     throw new Error(`[supabase:${TABLES.missingOccurrences}] ${error.message}`);
@@ -316,6 +379,48 @@ async function fetchActiveIngredientRows(productIds: string[]) {
   return data ?? [];
 }
 
+function scheduleBackgroundTask(promise: Promise<unknown>) {
+  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
+    EdgeRuntime.waitUntil(promise);
+    return;
+  }
+
+  promise.catch((error) => {
+    console.error("Background task failed", error);
+  });
+}
+
+function queueSupplementResearch(normalizedNames: string[]) {
+  if (!supabaseUrl || !supabaseServiceRoleKey || !normalizedNames.length) {
+    return;
+  }
+
+  const uniqueNames = Array.from(new Set(normalizedNames.filter(Boolean)));
+  if (!uniqueNames.length) {
+    return;
+  }
+
+  scheduleBackgroundTask(
+    fetch(`${supabaseUrl}/functions/v1/${RESEARCH_FUNCTION}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      },
+      body: JSON.stringify({
+        normalizedNames: uniqueNames,
+        limit: Math.min(uniqueNames.length, 5),
+      }),
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(
+          `Supplement research failed: ${response.status} ${await response.text()}`
+        );
+      }
+    })
+  );
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -333,10 +438,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const authHeader = req.headers.get("Authorization");
-    const token = trimString(authHeader?.replace(/^Bearer\s+/i, ""));
-
-    if (!token || token !== supabaseServiceRoleKey) {
+    if (!isServiceRoleRequest(req)) {
       return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
@@ -404,9 +506,12 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const sampleActiveIngredients = dedupeByKey(
+      const sampleActiveIngredients = mergeSampleRows(
+        existingRow?.sample_active_ingredients_json,
         (activeRowsByName.get(normalizedName) || [])
-          .slice(0, 5)
+          .sort((left, right) =>
+            trimString(right.created_at).localeCompare(trimString(left.created_at))
+          )
           .map((row) => ({
             product_id: trimString(row.product_id) || null,
             raw_name: normalizeWhitespace(row.raw_name) || null,
@@ -421,12 +526,13 @@ Deno.serve(async (req) => {
             item.canonical_name,
             item.dosage_original_text,
             item.chemical_form,
-          ].join("|")
+          ].join("|"),
+        5
       );
 
-      const sampleProducts = dedupeByKey(
+      const sampleProducts = mergeSampleRows(
+        existingRow?.sample_products_json,
         matchingOccurrences
-          .slice(0, 5)
           .map((row) => {
             const productId = trimString(row.product_id);
             const product = productById.get(productId);
@@ -441,7 +547,8 @@ Deno.serve(async (req) => {
             };
           })
           .filter(Boolean),
-        (item) => trimString(item?.product_id)
+        (item) => trimString(item?.product_id),
+        5
       );
 
       const firstSeenFromOccurrences = matchingOccurrences
@@ -453,26 +560,35 @@ Deno.serve(async (req) => {
         .filter(Boolean)
         .sort()
         .at(-1);
+      const occurrenceCountFromOccurrences = matchingOccurrences.reduce(
+        (sum, row) => {
+          const count = Number(row.occurrence_count);
+          return sum + (Number.isFinite(count) && count > 0 ? count : 1);
+        },
+        0
+      );
       const latestCreatedAt = (activeRowsByName.get(normalizedName) || [])
         .map((row) => trimString(row.created_at))
         .filter(Boolean)
         .sort()
         .at(-1);
       const displayName =
+        normalizeWhitespace(existingRow?.display_name) ||
         normalizeWhitespace(matchingOccurrences[0]?.display_name) ||
         normalizeWhitespace(sampleActiveIngredients[0]?.canonical_name) ||
         normalizeWhitespace(sampleActiveIngredients[0]?.raw_name) ||
-        normalizeWhitespace(existingRow?.display_name) ||
         normalizedName;
 
       upserts.push({
         normalized_name: normalizedName,
         display_name: displayName,
-        occurrence_count: matchingOccurrences.length,
+        occurrence_count: occurrenceCountFromOccurrences,
         sample_active_ingredients_json: sampleActiveIngredients,
         sample_products_json: sampleProducts,
         suggested_action:
-          trimString(existingRow?.suggested_action) || "manual_review",
+          trimString(existingRow?.suggested_action) === "ignore"
+            ? "manual_review"
+            : trimString(existingRow?.suggested_action) || "manual_review",
         suggested_supplement_name:
           trimString(existingRow?.suggested_supplement_name) || null,
         suggestion_confidence:
@@ -489,9 +605,14 @@ Deno.serve(async (req) => {
         review_notes: trimString(existingRow?.review_notes) || null,
         created_at: trimString(existingRow?.created_at) || now,
         updated_at: now,
-        first_seen_at:
-          trimString(existingRow?.first_seen_at) || firstSeenFromOccurrences || now,
-        last_seen_at: lastSeenFromOccurrences || now,
+        first_seen_at: minTimestamp(
+          trimString(existingRow?.first_seen_at),
+          firstSeenFromOccurrences || now
+        ),
+        last_seen_at: maxTimestamp(
+          trimString(existingRow?.last_seen_at),
+          lastSeenFromOccurrences || now
+        ),
       });
     }
 
@@ -507,6 +628,12 @@ Deno.serve(async (req) => {
           `[supabase:${TABLES.catalogReviewCandidates}] ${upsertError.message}`
         );
       }
+
+      queueSupplementResearch(
+        upserts
+          .map((row) => trimString(row.normalized_name))
+          .filter(Boolean)
+      );
     }
 
     return jsonResponse({

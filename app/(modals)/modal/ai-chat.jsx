@@ -422,9 +422,9 @@ export function AiChatScreen({ presentation = "screen" }) {
     publicSupabase
       .from("supplements")
       .select(
-        "id, name, evidence_score, supplement_benefits(label, supplement_name, score, icon)"
+        "id, name, status, evidence_score, supplement_benefits(label, supplement_name, score, icon)"
       )
-      .eq("status", "approved")
+      .in("status", ["approved", "pending"])
       .limit(500)
       .then(({ data, error: queryError }) => {
         if (!active) return;

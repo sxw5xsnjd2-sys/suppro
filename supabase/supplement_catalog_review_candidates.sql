@@ -10,6 +10,7 @@ create table if not exists supplement_catalog_review_candidates (
   suggested_supplement_name text,
   suggestion_confidence double precision,
   suggestion_reason text not null default '',
+  research_json jsonb,
   source_latest_created_at timestamptz,
   review_status text not null default 'pending' check (
     review_status in ('pending', 'approved', 'rejected', 'applied')

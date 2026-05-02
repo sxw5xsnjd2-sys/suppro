@@ -27,3 +27,15 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/process-photo-rescue-reviews/deno.json"
 entrypoint = "./functions/process-photo-rescue-reviews/index.ts"
+
+[functions.queue-missing-active-ingredients]
+enabled = true
+verify_jwt = true
+import_map = "./functions/queue-missing-active-ingredients/deno.json"
+entrypoint = "./functions/queue-missing-active-ingredients/index.ts"
+
+[functions.research-pending-supplements]
+enabled = true
+verify_jwt = true
+import_map = "./functions/research-pending-supplements/deno.json"
+entrypoint = "./functions/research-pending-supplements/index.ts"

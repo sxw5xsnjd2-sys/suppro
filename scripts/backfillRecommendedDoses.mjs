@@ -140,11 +140,29 @@ function createAdminClient() {
   });
 }
 
-async function fetchSupplements({ supabase, ids, limit }) {
+function normalizeStatuses(value) {
+  const allowed = new Set(["approved", "pending"]);
+  const requested = trimString(value)
+    .split(",")
+    .map((item) => trimString(item).toLowerCase())
+    .filter(Boolean);
+
+  if (requested.length === 0) {
+    return ["approved", "pending"];
+  }
+
+  const unique = Array.from(new Set(requested)).filter((status) =>
+    allowed.has(status)
+  );
+
+  return unique.length > 0 ? unique : ["approved", "pending"];
+}
+
+async function fetchSupplements({ supabase, ids, limit, statuses }) {
   let query = supabase
     .from(SUPPLEMENTS_TABLE)
     .select("id, name, how_to_use, status")
-    .eq("status", "approved")
+    .in("status", statuses)
     .order("name", { ascending: true });
 
   if (ids.length > 0) {
@@ -421,6 +439,7 @@ async function main() {
   const apply = Boolean(flags.apply);
   const skipLlm = Boolean(flags["skip-llm"]);
   const limit = parseOptionalNumber(flags.limit);
+  const statuses = normalizeStatuses(flags.status);
   const ids = trimString(flags.ids)
     .split(",")
     .map((item) => trimString(item))
@@ -429,7 +448,7 @@ async function main() {
   const supabase = createAdminClient();
   const openAiApiKey = trimString(process.env.OPENAI_API_KEY);
   const model = trimString(flags.model) || DEFAULT_MODEL;
-  const supplements = await fetchSupplements({ supabase, ids, limit });
+  const supplements = await fetchSupplements({ supabase, ids, limit, statuses });
   const results = [];
 
   for (const supplement of supplements) {
@@ -476,6 +495,7 @@ async function main() {
     JSON.stringify(
       {
         apply,
+        statuses,
         total: results.length,
         summary,
         usedLlmFallback: !skipLlm && Boolean(openAiApiKey),

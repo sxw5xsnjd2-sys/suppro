@@ -365,7 +365,10 @@ export default function LoginScreen() {
         return;
       }
 
-      router.replace("/login?mode=login");
+      router.replace({
+        pathname: "/verify-email",
+        params: { email: payloadEmail },
+      });
     } catch (error) {
       setErrorMessage(
         error instanceof Error

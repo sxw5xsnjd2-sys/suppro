@@ -2,8 +2,8 @@ import { supabase } from "@src/lib/supabase";
 export async function getSupplementCatalog() {
     const { data, error } = await supabase
         .from("supplements")
-        .select("id, name")
-        .eq("status", "approved")
+        .select("id, name, status")
+        .in("status", ["approved", "pending"])
         .order("name", { ascending: true });
     if (error) {
         console.error(error);

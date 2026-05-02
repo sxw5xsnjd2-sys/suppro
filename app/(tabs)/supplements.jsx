@@ -173,6 +173,7 @@ export default function SupplementsScreen() {
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [showRankingInfo, setShowRankingInfo] = useState(false);
   const trimmedQuery = searchQuery.trim();
   const hasSearchQuery = trimmedQuery.length > 0;
 
@@ -195,7 +196,7 @@ export default function SupplementsScreen() {
       const { data, error } = await supabase
         .from("supplements")
         .select("supplement_benefits(label, icon)")
-        .eq("status", "approved");
+        .in("status", ["approved", "pending"]);
 
       if (!active) return;
 
@@ -231,7 +232,7 @@ export default function SupplementsScreen() {
     supabase
       .from("supplements")
       .select("id, name")
-      .eq("status", "approved")
+      .in("status", ["approved", "pending"])
       .ilike("name", `%${trimmedQuery}%`)
       .order("name")
       .limit(12)
@@ -274,10 +275,51 @@ export default function SupplementsScreen() {
         <AppHeader
           title="SUPPLEMENT RANKINGS"
           titleStyle={styles.headerTitle}
+          titleRowStyle={styles.headerTitleRow}
+          titleAccessory={
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                showRankingInfo
+                  ? "Hide supplement rankings explanation"
+                  : "Show supplement rankings explanation"
+              }
+              accessibilityHint="Explains how supplement ranking evidence and medals work."
+              onPress={() => setShowRankingInfo((prev) => !prev)}
+              style={({ pressed }) => [
+                styles.infoButton,
+                pressed && styles.infoButtonPressed,
+              ]}
+            >
+              <Ionicons
+                name="information-circle-outline"
+                size={22}
+                color={appTheme.colors.textSecondary}
+              />
+            </Pressable>
+          }
           bottomSlot={
-            <Text style={styles.headerSubtitle}>
-              Search ranked supplements or browse benefit rankings
-            </Text>
+            <View style={styles.headerBottomContent}>
+              {showRankingInfo ? (
+                <View style={styles.infoBubbleWrap}>
+                  <View style={styles.infoBubble}>
+                    <Text style={styles.infoBubbleText}>
+                      Supplements are ranked by the strength of the evidence for
+                      that particular benefit. So 1st place has the strongest
+                      evidence for that benefit. Gold medals mean robust studies
+                      with randomised controlled trials and meta-analyses.
+                      Silver medals are less robust studies and bronze medals
+                      are poorly conducted studies, or those which have no human
+                      studies.
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
+              <Text style={styles.headerSubtitle}>
+                Search ranked supplements or browse benefit rankings
+              </Text>
+            </View>
           }
           bottomSlotStyle={styles.headerBottom}
         />
@@ -388,14 +430,54 @@ export default function SupplementsScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerTitleRow: {
+    justifyContent: "flex-start",
+  },
   headerTitle: {
     color: appTheme.colors.textPrimary,
   },
   headerBottom: {
     marginTop: 6,
   },
+  headerBottomContent: {
+    gap: 10,
+  },
   headerSubtitle: {
     fontSize: 14,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
+  },
+  infoButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  infoButtonPressed: {
+    opacity: 0.68,
+  },
+  infoBubbleWrap: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+  },
+  infoBubble: {
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    borderWidth: 1,
+    borderColor: "rgba(26,24,32,0.08)",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    shadowColor: "#1A1820",
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
+  },
+  infoBubbleText: {
+    fontSize: 13,
+    lineHeight: 19,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
   },

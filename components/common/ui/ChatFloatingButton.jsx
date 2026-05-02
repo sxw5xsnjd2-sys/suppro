@@ -15,7 +15,7 @@ export function ChatFloatingButton({ style }) {
       style={[
         styles.wrap,
         {
-          bottom: Math.max(insets.bottom, 0) + 18,
+          bottom: Math.max(insets.bottom, 0) - 10,
         },
         style,
       ]}

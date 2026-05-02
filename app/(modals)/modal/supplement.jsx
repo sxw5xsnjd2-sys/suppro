@@ -269,6 +269,7 @@ export default function SupplementModal() {
     id,
     scanSessionId,
     scanSource,
+    toastTarget,
   } = useLocalSearchParams();
   const isEdit = Boolean(id);
   const requestedScanSessionId = normalizeIntegerParam(scanSessionId);
@@ -491,15 +492,21 @@ export default function SupplementModal() {
 
       if (isEdit && id) {
         updateSupplement(id, payload);
+        router.back();
       } else {
+        const resolvedToastTarget =
+          typeof toastTarget === "string" && toastTarget.trim().length > 0
+            ? toastTarget
+            : "global";
         addSupplement({
           id: Date.now().toString(),
           ...payload,
         });
-        showToast("Added to your stack!");
+        router.back();
+        setTimeout(() => {
+          showToast("Added to your stack!", resolvedToastTarget);
+        }, 250);
       }
-
-      router.back();
     } catch (error) {
       console.error("Failed to save supplement", error);
       Alert.alert("Could not save supplement", "Please try again in a moment.");

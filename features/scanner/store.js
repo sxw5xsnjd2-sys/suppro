@@ -6,6 +6,7 @@ import {
 } from "@src/data/getOpenFoodFactsProduct";
 import { fetchLocalBarcodeScanProduct } from "@src/data/getLocalBarcodeScanProduct";
 import { fetchIngredientMatchCatalog } from "@src/data/getIngredientMatchCatalog";
+import { queueMissingActiveIngredients } from "@src/data/queueMissingActiveIngredients";
 import { scanSupplementPhotos } from "@src/data/scanSupplementPhotos";
 import {
   extractIngredientCandidatesFromList,
@@ -335,6 +336,22 @@ export const useScannerStore = create((set, get) => ({
         extractionSource,
         extractionConfidence: null,
       }));
+
+      if (
+        trimString(product?.scanDataSource) === "supplement_products_master" &&
+        trimString(product?.productId) &&
+        unmatchedIngredients.length
+      ) {
+        queueMissingActiveIngredients({
+          productId: product.productId,
+          ingredients: unmatchedIngredients,
+        }).catch((queueError) => {
+          console.warn(
+            "[scanner] failed to queue missing active ingredients",
+            queueError
+          );
+        });
+      }
 
       return get();
     } catch (error) {

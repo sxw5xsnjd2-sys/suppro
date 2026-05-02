@@ -363,8 +363,11 @@ export function normalizeRecommendedDoseResult(value, parserMethod = "llm") {
     parserMethod,
     minValue: normalizedMin?.value ?? null,
     maxValue:
-      normalizedMax?.unit === normalizedMin?.unit ? normalizedMax.value : null,
-    unit: normalizedMin?.unit ?? null,
+      normalizedMax?.unit &&
+      normalizedMax?.unit === (normalizedMin?.unit ?? normalizedMax.unit)
+        ? normalizedMax.value
+        : null,
+    unit: normalizedMin?.unit ?? normalizedMax?.unit ?? null,
     frequencyMinPerDay: parseOptionalNumber(value?.frequency_min_per_day),
     frequencyMaxPerDay: parseOptionalNumber(value?.frequency_max_per_day),
     flags: Array.isArray(value?.flags)

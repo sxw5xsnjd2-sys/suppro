@@ -36,7 +36,6 @@ const EVIDENCE_POINTS = {
 const AI_SUMMARY_CACHE_KEY = "suppro.stats.aiSummary.v1";
 const AI_SUMMARY_WINDOW_DAYS = 30;
 
-
 function EmptyState() {
   return (
     <PrimaryCard style={emptyStateStyles.card}>
@@ -47,23 +46,54 @@ function EmptyState() {
 
       <View style={emptyStateStyles.divider} />
 
-      <Pressable
-        onPress={() => router.push("/scanner")}
-        style={({ pressed }) => [emptyStateStyles.action, pressed && emptyStateStyles.actionPressed]}
-      >
-        <Ionicons name="barcode-outline" size={18} color={appTheme.colors.textStrong} />
-        <Text style={emptyStateStyles.actionLabel}>Scan a supplement</Text>
-      </Pressable>
+      <View style={emptyStateStyles.actionsRow}>
+        <Pressable
+          onPress={() => router.push("/scanner")}
+          style={({ pressed }) => [
+            emptyStateStyles.action,
+            pressed && emptyStateStyles.actionPressed,
+          ]}
+        >
+          <Ionicons
+            name="barcode-outline"
+            size={18}
+            color={appTheme.colors.textStrong}
+          />
+          <Text style={emptyStateStyles.actionLabel}>Scan a supplement</Text>
+          <Ionicons
+            name="chevron-forward-outline"
+            size={13}
+            color={appTheme.colors.textMuted}
+          />
+        </Pressable>
 
-      <View style={emptyStateStyles.actionDivider} />
+        <View style={emptyStateStyles.verticalDivider} />
 
-      <Pressable
-        onPress={() => router.push({ pathname: "/supplement-search", params: { mode: "info" } })}
-        style={({ pressed }) => [emptyStateStyles.action, pressed && emptyStateStyles.actionPressed]}
-      >
-        <Ionicons name="search-outline" size={18} color={appTheme.colors.textStrong} />
-        <Text style={emptyStateStyles.actionLabel}>Search supplements</Text>
-      </Pressable>
+        <Pressable
+          onPress={() =>
+            router.push({
+              pathname: "/supplement-search",
+              params: { mode: "info" },
+            })
+          }
+          style={({ pressed }) => [
+            emptyStateStyles.action,
+            pressed && emptyStateStyles.actionPressed,
+          ]}
+        >
+          <Ionicons
+            name="search-outline"
+            size={18}
+            color={appTheme.colors.textStrong}
+          />
+          <Text style={emptyStateStyles.actionLabel}>Search supplements</Text>
+          <Ionicons
+            name="chevron-forward-outline"
+            size={13}
+            color={appTheme.colors.textMuted}
+          />
+        </Pressable>
+      </View>
     </PrimaryCard>
   );
 }
@@ -72,8 +102,9 @@ const emptyStateStyles = StyleSheet.create({
   card: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xl,
-    paddingBottom: 4,
+    paddingBottom: 0,
     marginBottom: 10,
+    overflow: "hidden",
   },
   title: {
     fontSize: 18,
@@ -95,24 +126,32 @@ const emptyStateStyles = StyleSheet.create({
     marginTop: spacing.lg,
     marginHorizontal: -spacing.lg,
   },
+  actionsRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    marginHorizontal: -spacing.lg,
+  },
   action: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingVertical: 14,
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.md,
+  },
+  verticalDivider: {
+    width: 1,
+    backgroundColor: appTheme.colors.borderSubtle,
   },
   actionPressed: {
     opacity: 0.6,
   },
-  actionDivider: {
-    height: 1,
-    backgroundColor: appTheme.colors.borderSubtle,
-    marginHorizontal: 0,
-  },
   actionLabel: {
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: typography.fontFamily.headingSemiBold,
     color: appTheme.colors.textStrong,
+    textAlign: "center",
   },
 });
 
@@ -168,6 +207,26 @@ function toPercent(taken, planned) {
 function formatNumber(value) {
   if (!Number.isFinite(value)) return "—";
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function formatDueTime(supplement) {
+  const directTime =
+    typeof supplement?.time === "string" ? supplement.time.trim() : "";
+  if (directTime) {
+    return directTime;
+  }
+
+  const timeMinutes = Number(supplement?.timeMinutes);
+  if (!Number.isFinite(timeMinutes)) {
+    return "";
+  }
+
+  const hours = Math.max(0, Math.floor(timeMinutes / 60));
+  const minutes = Math.max(0, timeMinutes % 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(
+    2,
+    "0"
+  )}`;
 }
 
 function sanitizeRecommendations(input) {
@@ -351,6 +410,9 @@ function SupplementRow({
   onEditPress,
 }) {
   const evidence = getEvidenceDisplay(score);
+  const dueTime = formatDueTime(supplement);
+  const metaLabel =
+    taken && takenAt ? `Taken ${takenAt}` : dueTime ? `Due ${dueTime}` : "";
 
   return (
     <PrimaryCard
@@ -411,7 +473,7 @@ function SupplementRow({
             style={[styles.supplementMeta, taken && styles.supplementMetaTaken]}
             numberOfLines={1}
           >
-            {taken && takenAt ? `Taken ${takenAt}` : supplement.time}
+            {metaLabel}
           </Text>
         </View>
 
@@ -991,7 +1053,9 @@ export default function HomeScreen() {
           color="#8B8595"
           style={styles.searchFieldIcon}
         />
-        <Text style={styles.searchFieldPlaceholder}>Search supplements</Text>
+        <Text style={styles.searchFieldPlaceholder}>
+          Search supplement catalog ...
+        </Text>
       </Pressable>
 
       <AISummaryCard

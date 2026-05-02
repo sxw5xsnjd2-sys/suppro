@@ -8,8 +8,8 @@ export async function searchSupplementCatalog(query) {
     const [activeIngredients, supplementProducts] = await Promise.all([
         supabase
             .from("supplements")
-            .select("id, name, evidence_score")
-            .eq("status", "approved")
+            .select("id, name, evidence_score, status")
+            .in("status", ["approved", "pending"])
             .ilike("name", `%${trimmedQuery}%`)
             .order("name")
             .limit(12),
@@ -38,6 +38,7 @@ export async function searchSupplementCatalog(query) {
                 evidenceScore: Number.isFinite(row.evidence_score)
                     ? row.evidence_score
                     : null,
+                verified: row.status === "approved",
             })),
         },
         {

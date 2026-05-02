@@ -2,7 +2,7 @@ import React from "react";
 import { StyleSheet, Text } from "react-native";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
-import { AppButton, AppHeader } from "@/components/common/ui";
+import { AppButton, AppHeader, ChatFloatingButton } from "@/components/common/ui";
 import { StatsContent } from "./stats";
 import { appTheme, typography } from "@/theme";
 import SettingsIcon from "@/assets/icons/profile/settings.svg";
@@ -11,6 +11,7 @@ export default function ProfileScreen() {
   return (
     <BackdropScreen
       contentStyle={styles.content}
+      floatingSlot={<ChatFloatingButton />}
       headerBehavior="collapsible"
       collapsedTitle="ME"
       header={

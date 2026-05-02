@@ -40,6 +40,7 @@ export default function ScannerScreen() {
   const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
   const [hasScanned, setHasScanned] = useState(false);
+  const cameraRef = useRef(null);
   const hasRequestedRef = useRef(false);
   const hasScannedRef = useRef(false);
   const resetScan = useScannerStore((state) => state.resetScan);
@@ -93,6 +94,7 @@ export default function ScannerScreen() {
       permission && !permission.granted && permission.status !== "undetermined"
     );
   }, [permission]);
+  const isProcessingScan = hasScanned || scannerStatus === "processing";
   const showProductNotFoundPopup = scannerStatus === "not_found";
   const showScannerErrorPopup = scannerStatus === "error";
   const productNotFoundMessage =
@@ -168,6 +170,25 @@ export default function ScannerScreen() {
     });
   };
 
+  useEffect(() => {
+    const camera = cameraRef.current;
+
+    if (!camera || !isFocused) {
+      return;
+    }
+
+    if (isProcessingScan) {
+      Promise.resolve(camera.pausePreview?.()).catch((error) => {
+        console.warn("[scanner] failed to pause preview", error);
+      });
+      return;
+    }
+
+    Promise.resolve(camera.resumePreview?.()).catch((error) => {
+      console.warn("[scanner] failed to resume preview", error);
+    });
+  }, [isFocused, isProcessingScan]);
+
   if (!CameraView) {
     return (
       <ScannerFallback
@@ -209,12 +230,15 @@ export default function ScannerScreen() {
     <View style={styles.screen}>
       {isFocused ? (
         <CameraView
+          ref={cameraRef}
           style={StyleSheet.absoluteFill}
           facing="back"
           barcodeScannerSettings={{ barcodeTypes: BARCODE_TYPES }}
-          onBarcodeScanned={handleBarcodeScanned}
+          onBarcodeScanned={isProcessingScan ? undefined : handleBarcodeScanned}
         />
       ) : null}
+
+      {isProcessingScan ? <View style={styles.captureFreezeOverlay} /> : null}
 
       <View style={styles.overlay}>
         <View style={styles.topBar}>
@@ -229,9 +253,19 @@ export default function ScannerScreen() {
         </View>
 
         <View style={styles.centerContent}>
-          <View style={styles.scanFrame} />
+          <View
+            style={[
+              styles.scanFrame,
+              isProcessingScan && styles.scanFrameProcessing,
+            ]}
+          />
           <Text style={styles.title}>Scan a barcode</Text>
-          <Text style={styles.description}>
+          <Text
+            style={[
+              styles.description,
+              isProcessingScan && styles.descriptionHidden,
+            ]}
+          >
             Center the barcode inside the frame. We&apos;ll do the rest.
           </Text>
         </View>
@@ -360,6 +394,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(5,5,5,0.28)",
     paddingHorizontal: spacing.md,
   },
+  captureFreezeOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(5,5,5,0.18)",
+  },
   topBar: {
     position: "absolute",
     top: spacing.xl * 1.6,
@@ -385,6 +423,10 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.95)",
     backgroundColor: "rgba(255,255,255,0.06)",
   },
+  scanFrameProcessing: {
+    borderColor: "rgba(255,255,255,0.68)",
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
   title: {
     fontSize: 30,
     fontFamily: typography.fontFamily.heading,
@@ -398,6 +440,9 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: "rgba(255,255,255,0.82)",
     fontFamily: typography.fontFamily.body,
+  },
+  descriptionHidden: {
+    opacity: 0,
   },
   fallbackScreen: {
     flex: 1,

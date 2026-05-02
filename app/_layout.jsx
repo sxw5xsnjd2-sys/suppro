@@ -78,6 +78,7 @@ function RootNavigator() {
   const gateRequestRef = useRef(0);
   const isOnboardingRoute = segments[0] === "onboarding";
   const isLoginRoute = segments[0] === "login";
+  const isVerifyEmailRoute = segments[0] === "verify-email";
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
   const stepParam = Array.isArray(params.step) ? params.step[0] : params.step;
   const sourceParam = Array.isArray(params.source)
@@ -169,7 +170,7 @@ function RootNavigator() {
     }
 
     if (gateState === "needs_login") {
-      return isLoginRoute;
+      return isLoginRoute || isVerifyEmailRoute;
     }
 
     if (gateState === "needs_questions") {
@@ -206,6 +207,7 @@ function RootNavigator() {
     isOnboardingRoute,
     isOnboardingScannerFlow,
     isRetakeOnboarding,
+    isVerifyEmailRoute,
     modeParam,
     stepParam,
   ]);
@@ -262,6 +264,10 @@ function RootNavigator() {
         />
         <Stack.Screen
           name="login"
+          options={{ headerShown: false, gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="verify-email"
           options={{ headerShown: false, gestureEnabled: false }}
         />
         <Stack.Screen

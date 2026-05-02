@@ -82,6 +82,7 @@ create table if not exists supplement_missing_catalog_occurrences (
   normalized_name text not null,
   product_id uuid not null references off_products (id) on delete cascade,
   display_name text not null,
+  occurrence_count integer not null default 1,
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
   primary key (normalized_name, product_id)

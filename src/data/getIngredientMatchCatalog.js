@@ -5,35 +5,36 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function toCatalogRows(rows, { sourceTable, verified, catalogType }) {
+function toCatalogRows(rows, { sourceTable, catalogType }) {
   return (rows ?? [])
     .filter((row) => typeof row?.id === "string" && typeof row?.name === "string")
     .map((row) => ({
       catalogId: row.id,
       catalogName: row.name.trim(),
-      verified,
+      verified: row.status === "approved",
       sourceTable,
       catalogType,
     }))
     .filter((row) => row.catalogName.length > 0);
 }
 
-function toAliasCatalogRows(rows, approvedSupplementIds) {
-  const approvedIds = approvedSupplementIds ?? new Set();
+function toAliasCatalogRows(rows, supplementStatusById) {
+  const statusById = supplementStatusById ?? new Map();
 
   return (rows ?? [])
     .map((row) => {
       const catalogId = trimString(row?.supplement_id);
       const catalogName = trimString(row?.alias) || trimString(row?.alias_normalized);
+      const status = statusById.get(catalogId);
 
-      if (!catalogId || !catalogName || !approvedIds.has(catalogId)) {
+      if (!catalogId || !catalogName || !status) {
         return null;
       }
 
       return {
         catalogId,
         catalogName,
-        verified: true,
+        verified: status === "approved",
         sourceTable: "supplement_aliases",
         catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
       };
@@ -61,8 +62,8 @@ export async function fetchIngredientMatchCatalog() {
   const [supplementsResult, aliasesResult] = await Promise.all([
     supabase
       .from("supplements")
-      .select("id, name")
-      .eq("status", "approved")
+      .select("id, name, status")
+      .in("status", ["approved", "pending"])
       .order("name", { ascending: true }),
     supabase
       .from("supplement_aliases")
@@ -78,17 +79,18 @@ export async function fetchIngredientMatchCatalog() {
 
   const supplementRows = toCatalogRows(data, {
     sourceTable: "supplements",
-    verified: true,
     catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
   });
-  const approvedSupplementIds = new Set(supplementRows.map((row) => row.catalogId));
+  const supplementStatusById = new Map(
+    (data ?? []).map((row) => [row.id, row.status])
+  );
 
   if (aliasesResult.error) {
     console.warn("ingredient alias catalog fetch failed; falling back to supplement names", aliasesResult.error);
     return supplementRows;
   }
 
-  const aliasRows = toAliasCatalogRows(aliasesResult.data, approvedSupplementIds);
+  const aliasRows = toAliasCatalogRows(aliasesResult.data, supplementStatusById);
 
   return dedupeCatalogRows([...aliasRows, ...supplementRows]);
 }

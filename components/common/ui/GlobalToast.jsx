@@ -7,12 +7,13 @@ import { useToastStore } from "@/features/toast/toastStore";
 
 export function GlobalToast() {
   const message = useToastStore((s) => s.message);
+  const target = useToastStore((s) => s.target);
   const clear = useToastStore((s) => s.clear);
   const opacity = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
-    if (!message) return;
+    if (!message || target !== "global") return;
 
     opacity.setValue(0);
     Animated.sequence([
@@ -20,14 +21,14 @@ export function GlobalToast() {
       Animated.delay(2000),
       Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
     ]).start(() => clear());
-  }, [message]);
+  }, [clear, message, opacity, target]);
 
-  if (!message) return null;
+  if (!message || target !== "global") return null;
 
   return (
     <Animated.View
       pointerEvents="none"
-      style={[styles.wrap, { bottom: insets.bottom + 80, opacity }]}
+      style={[styles.wrap, { top: insets.top + 14, opacity }]}
     >
       <View style={styles.pill}>
         <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" />
@@ -44,6 +45,7 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: "center",
     zIndex: 9999,
+    elevation: 9999,
     pointerEvents: "none",
   },
   pill: {

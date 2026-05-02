@@ -1674,14 +1674,53 @@ async function replaceReviewArtifacts({
   }
 
   if (unresolvedRows.length) {
-    const now = new Date().toISOString();
-    const occurrenceRows = unresolvedRows.map((row) => ({
+    const existingOccurrenceKeys = unresolvedRows.map((row) => ({
       normalized_name: row.normalized_name,
       product_id: row.product_id,
-      display_name: row.display_name,
-      first_seen_at: now,
-      last_seen_at: now,
     }));
+    const { data: existingOccurrenceRows, error: existingOccurrencesError } =
+      await adminSupabase!
+        .from(TABLES.missingOccurrences)
+        .select("normalized_name, product_id, first_seen_at, occurrence_count")
+        .in(
+          "normalized_name",
+          Array.from(new Set(existingOccurrenceKeys.map((row) => row.normalized_name)))
+        )
+        .eq("product_id", productId);
+
+    if (existingOccurrencesError) {
+      throw new Error(
+        `[supabase:${TABLES.missingOccurrences}] ${existingOccurrencesError.message}`
+      );
+    }
+
+    const existingFirstSeenByKey = new Map(
+      (existingOccurrenceRows ?? []).map((row) => [
+        `${trimString(row.normalized_name)}|${trimString(row.product_id)}`,
+        {
+          first_seen_at: trimString(row.first_seen_at),
+          occurrence_count: Number(row.occurrence_count),
+        },
+      ])
+    );
+
+    const now = new Date().toISOString();
+    const occurrenceRows = unresolvedRows.map((row) => {
+      const existing = existingFirstSeenByKey.get(
+        `${trimString(row.normalized_name)}|${trimString(row.product_id)}`
+      );
+
+      return {
+        normalized_name: row.normalized_name,
+        product_id: row.product_id,
+        display_name: row.display_name,
+        first_seen_at: existing?.first_seen_at || now,
+        last_seen_at: now,
+        occurrence_count: Number.isFinite(existing?.occurrence_count)
+          ? Number(existing.occurrence_count) + 1
+          : 1,
+      };
+    });
 
     const { error: upsertOccurrencesError } = await adminSupabase!
       .from(TABLES.missingOccurrences)
