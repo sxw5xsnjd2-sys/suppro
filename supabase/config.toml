@@ -16,6 +16,12 @@ verify_jwt = true
 import_map = "./functions/delete-account/deno.json"
 entrypoint = "./functions/delete-account/index.ts"
 
+[functions.lookup-apple-account]
+enabled = true
+verify_jwt = false
+import_map = "./functions/lookup-apple-account/deno.json"
+entrypoint = "./functions/lookup-apple-account/index.ts"
+
 [functions.scan-supplement-photos]
 enabled = true
 verify_jwt = true

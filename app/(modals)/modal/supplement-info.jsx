@@ -83,7 +83,7 @@ const DOSE_BAND_PILL_COLORS = {
 
 const DOSE_STATUS_TOOLTIP_COPY = {
   missing_dose_scoring_profile:
-    "Dose target unavailable means we do not yet have a reliable target dose range for this ingredient, so we cannot judge this product against one.",
+    "Dose target unavailable means we do not yet have a reliable target dose range for this ingredient, or it is not a supplement.",
   missing_actual_dose:
     "Dose unavailable means we could not determine a usable amount per serving from this product, so we cannot compare it with the target dose.",
   serving_size_unparseable:
@@ -278,10 +278,12 @@ function parseEvidenceSnippet(text) {
   if (quotedTitleMatch) {
     const [, rawMeta, rawTitle, rawFindings] = quotedTitleMatch;
     return {
-      studyMeta: rawMeta.trim().replace(/[:\s]+$/, "") || "Study details unavailable",
+      studyMeta:
+        rawMeta.trim().replace(/[:\s]+$/, "") || "Study details unavailable",
       studyTitle: rawTitle.trim() || "No study title available",
       studyFindings:
-        rawFindings.trim() || "No evidence summary is available for this benefit yet.",
+        rawFindings.trim() ||
+        "No evidence summary is available for this benefit yet.",
     };
   }
 
@@ -536,10 +538,14 @@ function DetailCard({
                       pressed && styles.detailCardLinkWrapPressed,
                     ]}
                   >
-                    <Text style={styles.detailCardLinkText}>{block.heading}</Text>
+                    <Text style={styles.detailCardLinkText}>
+                      {block.heading}
+                    </Text>
                   </Pressable>
                 ) : (
-                  <Text style={styles.detailCardBodyHeading}>{block.heading}</Text>
+                  <Text style={styles.detailCardBodyHeading}>
+                    {block.heading}
+                  </Text>
                 )}
 
                 {block.content ? (
@@ -1091,9 +1097,11 @@ export default function SupplementInfoModal() {
       const leftRanking = benefitRankings[left?.id] ?? null;
       const rightRanking = benefitRankings[right?.id] ?? null;
       const leftTone =
-        BENEFIT_RANK[leftRanking?.icon ?? left?.icon] ?? Number.MAX_SAFE_INTEGER;
+        BENEFIT_RANK[leftRanking?.icon ?? left?.icon] ??
+        Number.MAX_SAFE_INTEGER;
       const rightTone =
-        BENEFIT_RANK[rightRanking?.icon ?? right?.icon] ?? Number.MAX_SAFE_INTEGER;
+        BENEFIT_RANK[rightRanking?.icon ?? right?.icon] ??
+        Number.MAX_SAFE_INTEGER;
 
       if (leftTone !== rightTone) {
         return leftTone - rightTone;
@@ -1123,16 +1131,14 @@ export default function SupplementInfoModal() {
         return;
       }
 
-      [
-        item?.catalogName,
-        item?.ingredientName,
-        item?.ingredientRaw,
-      ].forEach((name) => {
-        const key = normalizeDetailHeadingKey(name);
-        if (key && !lookup.has(key)) {
-          lookup.set(key, item);
+      [item?.catalogName, item?.ingredientName, item?.ingredientRaw].forEach(
+        (name) => {
+          const key = normalizeDetailHeadingKey(name);
+          if (key && !lookup.has(key)) {
+            lookup.set(key, item);
+          }
         }
-      });
+      );
     });
 
     return lookup;
@@ -1383,9 +1389,7 @@ export default function SupplementInfoModal() {
       await setSupplementHearted(favouriteSupplementId, nextFavouriteState);
       setIsFavourite(nextFavouriteState);
       setFavouriteToastText(
-        nextFavouriteState
-          ? "Added to favourites!"
-          : "Removed from favourites!"
+        nextFavouriteState ? "Added to favourites!" : "Removed from favourites!"
       );
       setShowFavouriteToast(true);
     } catch (error) {

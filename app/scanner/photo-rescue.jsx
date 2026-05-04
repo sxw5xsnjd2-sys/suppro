@@ -91,6 +91,7 @@ export default function ScannerPhotoRescueScreen() {
   const params = useLocalSearchParams();
   const requestedScanSessionId = normalizeIntegerParam(params.scanSessionId);
   const [permission, requestPermission] = useCameraPermissions();
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [step, setStep] = useState("ingredients");
   const [ingredientsPhoto, setIngredientsPhoto] = useState("");
   const [captureError, setCaptureError] = useState("");
@@ -211,13 +212,24 @@ export default function ScannerPhotoRescueScreen() {
     );
   }
 
-  if (!permission || (permissionDenied && permission.canAskAgain)) {
+  if (
+    !permission ||
+    isRequestingPermission ||
+    (permissionDenied && permission.canAskAgain)
+  ) {
     return (
       <PhotoRescueFallback
         title="Camera access needed"
         description="We use your camera to capture the ingredient panel and front label for photo rescue."
         primaryLabel="Allow camera"
-        onPrimaryPress={requestPermission}
+        onPrimaryPress={async () => {
+          setIsRequestingPermission(true);
+          try {
+            await requestPermission();
+          } finally {
+            setIsRequestingPermission(false);
+          }
+        }}
       />
     );
   }

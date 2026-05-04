@@ -5,8 +5,8 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function buildBarcodeLookupCandidates(barcode) {
-  const normalizedBarcode = normalizeBarcode(barcode);
+function buildBarcodeLookupCandidates(barcode, barcodeType) {
+  const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
   const candidates = [normalizedBarcode];
 
   if (/^\d{12}$/.test(normalizedBarcode)) {
@@ -92,13 +92,16 @@ function extractMasterIngredients(activeIngredientsJson) {
   return ingredients;
 }
 
-export async function fetchLocalBarcodeScanProduct(barcode) {
-  const normalizedBarcode = normalizeBarcode(barcode);
-  if (!isValidBarcode(normalizedBarcode)) {
+export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
+  const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
+  if (!isValidBarcode(normalizedBarcode, barcodeType)) {
     return null;
   }
 
-  const barcodeCandidates = buildBarcodeLookupCandidates(normalizedBarcode);
+  const barcodeCandidates = buildBarcodeLookupCandidates(
+    normalizedBarcode,
+    barcodeType
+  );
   const { data: productRows, error: productError } = await supabase
     .from("off_products")
     .select("id, barcode, name, ingredients")

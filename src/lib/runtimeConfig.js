@@ -41,13 +41,26 @@ const expoExtraAnonKey = firstNonEmptyString([
   expoGoConfigExtra?.supabaseAnonKey,
 ]);
 
+const processEnvEnableDsldLookup =
+  process.env.EXPO_PUBLIC_ENABLE_DSLD_LOOKUP?.trim() ?? "";
+const expoExtraEnableDsldLookup = firstNonEmptyString([
+  expoConfigExtra?.enableDsldLookup,
+  manifestExtra?.enableDsldLookup,
+  manifest2Extra?.enableDsldLookup,
+  expoGoConfigExtra?.enableDsldLookup,
+]);
+
 export const SUPABASE_URL = processEnvUrl || expoExtraUrl;
 export const SUPABASE_ANON_KEY = processEnvAnonKey || expoExtraAnonKey;
+export const ENABLE_DSLD_LOOKUP =
+  (processEnvEnableDsldLookup || expoExtraEnableDsldLookup).toLowerCase() ===
+  "true";
 
 export function getSupabaseRuntimeDiagnostics() {
   return {
     urlPresent: Boolean(SUPABASE_URL),
     anonKeyPresent: Boolean(SUPABASE_ANON_KEY),
+    dsldLookupEnabled: ENABLE_DSLD_LOOKUP,
     urlSource: describeSource(SUPABASE_URL, processEnvUrl ? "process.env" : "expo.extra"),
     anonKeySource: describeSource(
       SUPABASE_ANON_KEY,

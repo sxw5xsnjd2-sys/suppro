@@ -169,8 +169,12 @@ function RootNavigator() {
       return true;
     }
 
+    if (isLoginRoute || isVerifyEmailRoute) {
+      return true;
+    }
+
     if (gateState === "needs_login") {
-      return isLoginRoute || isVerifyEmailRoute;
+      return true;
     }
 
     if (gateState === "needs_questions") {
@@ -183,7 +187,7 @@ function RootNavigator() {
     }
 
     if (gateState === "needs_signup") {
-      return isLoginRoute && modeParam !== "login";
+      return isLoginRoute;
     }
 
     if (gateState === "needs_paywall") {

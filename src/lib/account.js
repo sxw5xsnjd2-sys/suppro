@@ -20,6 +20,7 @@ export const CHAT_STORAGE_KEY = "suppro.chatStore.v1";
 export const HEART_FLAGS_STORAGE_KEY = "supplement-heart-flags";
 export const AI_SUMMARY_CACHE_STORAGE_KEY = "suppro.stats.aiSummary.v1";
 export const DELETE_ACCOUNT_FUNCTION_NAME = "delete-account";
+export const LOOKUP_APPLE_ACCOUNT_FUNCTION_NAME = "lookup-apple-account";
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -177,7 +178,26 @@ export function formatAppleName(fullName) {
     .trim();
 }
 
-export async function signInWithAppleIdentity() {
+async function lookupExistingAppleAccount({ appleUserId, email }) {
+  const { data, error } = await supabase.functions.invoke(
+    LOOKUP_APPLE_ACCOUNT_FUNCTION_NAME,
+    {
+      body: {
+        appleUserId: trimString(appleUserId) || null,
+        email: normalizeEmail(email) || null,
+      },
+    }
+  );
+
+  if (error) {
+    throw new Error(error.message || "Could not verify your Suppro account.");
+  }
+
+  return data;
+}
+
+export async function signInWithAppleIdentity(options = {}) {
+  const { requireExistingAccount = false } = options;
   const rawNonce = Crypto.randomUUID();
   const hashedNonce = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
@@ -194,6 +214,19 @@ export async function signInWithAppleIdentity() {
 
   if (!credential.identityToken) {
     throw new Error("Apple Sign In did not return an identity token.");
+  }
+
+  if (requireExistingAccount) {
+    const existingAccount = await lookupExistingAppleAccount({
+      appleUserId: credential.user,
+      email: credential.email,
+    });
+
+    if (!existingAccount?.exists) {
+      throw new Error(
+        "No existing Suppro account was found for this Apple ID. Create an account instead."
+      );
+    }
   }
 
   const { data, error } = await supabase.auth.signInWithIdToken({

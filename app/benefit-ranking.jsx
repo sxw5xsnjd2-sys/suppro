@@ -49,7 +49,7 @@ export default function BenefitRankingScreen() {
       const { data, error } = await supabase
         .from("supplements")
         .select(
-          "id, name, status, evidence_score, supplement_benefits!inner(id, supplement_name, label, icon, score)"
+          "id, name, status, evidence_score, supplement_benefits!inner(id, supplement_name, label, icon, score, ranking_reason)"
         )
         .in("status", ["approved", "pending"])
         .eq("supplement_benefits.label", benefitLabel);
@@ -180,10 +180,8 @@ export default function BenefitRankingScreen() {
 
                 <View style={styles.scoreRow}>
                   <Text style={styles.scoreText}>
-                    Evidence rating:{" "}
-                    {Number.isFinite(item.evidenceScore)
-                      ? `${item.evidenceScore}/100`
-                      : "Not rated"}
+                    {item.benefit?.ranking_reason?.trim() ||
+                      "No ranking reason available."}
                   </Text>
                 </View>
               </PrimaryCard>

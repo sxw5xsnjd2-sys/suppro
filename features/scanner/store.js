@@ -1,13 +1,22 @@
 import { create } from "zustand";
 import {
+  canonicalizeBarcodeType,
   fetchOpenFoodFactsProduct,
+  isRetailBarcodeType,
   isValidBarcode,
   normalizeBarcode,
 } from "@src/data/getOpenFoodFactsProduct";
 import { fetchLocalBarcodeScanProduct } from "@src/data/getLocalBarcodeScanProduct";
+import {
+  buildScanDebugMetadata,
+  getOpenFoodFactsQuality,
+  shouldCheckDsld,
+} from "@src/data/dsldSourceDecision";
+import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
 import { fetchIngredientMatchCatalog } from "@src/data/getIngredientMatchCatalog";
 import { queueMissingActiveIngredients } from "@src/data/queueMissingActiveIngredients";
 import { scanSupplementPhotos } from "@src/data/scanSupplementPhotos";
+import { ENABLE_DSLD_LOOKUP } from "@src/lib/runtimeConfig";
 import {
   extractIngredientCandidatesFromList,
   extractBestIngredientCandidates,
@@ -141,6 +150,7 @@ function createInitialState() {
     permissionState: null,
     scanSessionId: 0,
     barcode: "",
+    barcodeType: null,
     product: null,
     ingredients: [],
     matchedIngredients: [],
@@ -205,6 +215,29 @@ function shouldUseStructuredLocalIngredients(product) {
   );
 }
 
+function buildDsldSecondaryProduct({
+  barcode,
+  product,
+  dsldMatch,
+  sourceDecision,
+}) {
+  return {
+    ...(product && typeof product === "object" ? product : {}),
+    barcode: trimString(barcode) || trimString(product?.barcode),
+    productName: trimString(product?.productName) || null,
+    ingredientsText: trimString(product?.ingredientsText) || "",
+    sourceIngredients: Array.isArray(product?.sourceIngredients)
+      ? product.sourceIngredients
+      : [],
+    sourceStatus:
+      typeof product?.sourceStatus === "number" ? product.sourceStatus : null,
+    sourceStatusVerbose: trimString(product?.sourceStatusVerbose) || null,
+    scanDataSource: trimString(product?.scanDataSource) || "open_food_facts",
+    dsldMatch,
+    sourceDecision,
+  };
+}
+
 export const useScannerStore = create((set, get) => ({
   ...createInitialState(),
 
@@ -232,11 +265,12 @@ export const useScannerStore = create((set, get) => ({
       photoRescueError: null,
     })),
 
-  processBarcode: async (barcode) => {
-    const nextBarcode = normalizeBarcode(barcode);
+  processBarcode: async (barcode, barcodeType) => {
+    const nextBarcode = normalizeBarcode(barcode, barcodeType);
+    const nextBarcodeType = canonicalizeBarcodeType(barcodeType) || null;
     const nextScanSessionId = get().scanSessionId + 1;
 
-    if (!isValidBarcode(nextBarcode)) {
+    if (!isValidBarcode(nextBarcode, nextBarcodeType)) {
       const invalid = normalizeScannerError({ code: "invalid_barcode" });
 
       set(() => ({
@@ -244,6 +278,7 @@ export const useScannerStore = create((set, get) => ({
         error: invalid.error,
         scanSessionId: nextScanSessionId,
         barcode: nextBarcode,
+        barcodeType: nextBarcodeType,
         product: null,
         ingredients: [],
         matchedIngredients: [],
@@ -263,6 +298,7 @@ export const useScannerStore = create((set, get) => ({
       error: null,
       scanSessionId: nextScanSessionId,
       barcode: nextBarcode,
+      barcodeType: nextBarcodeType,
       product: null,
       ingredients: [],
       matchedIngredients: [],
@@ -277,9 +313,39 @@ export const useScannerStore = create((set, get) => ({
     try {
       let product = null;
       let extractionSource = null;
+      const retailBarcode = isRetailBarcodeType(nextBarcodeType);
+      let offFound = false;
+      let offQuality = "missing";
+      let dsldChecked = false;
+      let dsldCacheHit = false;
+      let dsldConfidence = null;
+
+      if (!retailBarcode) {
+        const notFound = normalizeScannerError({ code: "product_not_found" });
+
+        set(() => ({
+          status: notFound.status,
+          error: notFound.error,
+          scanSessionId: nextScanSessionId,
+          barcode: nextBarcode,
+          barcodeType: nextBarcodeType,
+          product: null,
+          ingredients: [],
+          matchedIngredients: [],
+          matches: [],
+          unmatchedIngredients: [],
+          photoRescueStatus: "idle",
+          photoRescueError: null,
+          extractionSource: null,
+          extractionConfidence: null,
+        }));
+
+        return null;
+      }
 
       try {
-        product = await fetchLocalBarcodeScanProduct(nextBarcode);
+        // Local and OpenFoodFacts lookups are retail-only and expect numeric barcodes.
+        product = await fetchLocalBarcodeScanProduct(nextBarcode, nextBarcodeType);
         extractionSource = trimString(product?.scanDataSource) || null;
       } catch (localLookupError) {
         console.error(
@@ -289,13 +355,100 @@ export const useScannerStore = create((set, get) => ({
       }
 
       if (!product) {
-        product = await fetchOpenFoodFactsProduct(nextBarcode);
-        extractionSource = "open_food_facts";
+        try {
+          product = await fetchOpenFoodFactsProduct(nextBarcode, nextBarcodeType);
+          extractionSource = "open_food_facts";
+          offFound = Boolean(product);
+          offQuality = getOpenFoodFactsQuality(product);
+        } catch (openFoodFactsError) {
+          offFound = false;
+          offQuality = "missing";
+
+          const dsldResult = await maybeFetchDsldScanMatch({
+            barcode: nextBarcode,
+            barcodeType: nextBarcodeType,
+            productName: "",
+          });
+          dsldChecked = dsldResult.checked;
+          dsldCacheHit = dsldResult.cacheHit;
+          dsldConfidence = dsldResult.confidence;
+
+          if (dsldResult.dsldMatch) {
+            const sourceDecision = buildScanDebugMetadata({
+              offFound,
+              offQuality,
+              dsldChecked,
+              dsldCacheHit,
+              dsldConfidence,
+              finalSourceUsed: "photo_fallback_with_dsld",
+            });
+            product = buildDsldSecondaryProduct({
+              barcode: nextBarcode,
+              product: null,
+              dsldMatch: dsldResult.dsldMatch,
+              sourceDecision,
+            });
+            extractionSource = "open_food_facts";
+            console.log("[scanner-source-decision]", sourceDecision);
+          } else {
+            throw openFoodFactsError;
+          }
+        }
+      }
+
+      if (product && shouldCheckDsld({
+        barcode: nextBarcode,
+        featureEnabled: ENABLE_DSLD_LOOKUP,
+        primaryProduct: product,
+        openFoodFactsQuality: offQuality,
+      })) {
+        const dsldResult = await maybeFetchDsldScanMatch({
+          barcode: nextBarcode,
+          barcodeType: nextBarcodeType,
+          productName: trimString(product?.productName),
+        });
+        dsldChecked = dsldResult.checked;
+        dsldCacheHit = dsldResult.cacheHit;
+        dsldConfidence = dsldResult.confidence;
+
+        if (dsldResult.dsldMatch) {
+          product = {
+            ...product,
+            dsldMatch: dsldResult.dsldMatch,
+          };
+        }
       }
 
       const ingredients = shouldUseStructuredLocalIngredients(product)
         ? extractIngredientCandidatesFromList(product.sourceIngredients)
         : extractBestIngredientCandidates(product);
+
+      const sourceDecision = buildScanDebugMetadata({
+        offFound,
+        offQuality:
+          trimString(product?.scanDataSource) === "open_food_facts"
+            ? offQuality
+            : "local_cache",
+        dsldChecked,
+        dsldCacheHit,
+        dsldConfidence,
+        finalSourceUsed:
+          trimString(product?.scanDataSource) === "supplement_products_master" ||
+          trimString(product?.scanDataSource) === "off_products"
+            ? trimString(product.scanDataSource)
+            : trimString(product?.dsldMatch?.source)
+              ? "open_food_facts_with_dsld"
+              : trimString(product?.scanDataSource) === "open_food_facts"
+                ? "open_food_facts"
+                : "photo_fallback_pending",
+      });
+      if (product && typeof product === "object") {
+        product = {
+          ...product,
+          sourceDecision,
+        };
+      }
+      console.log("[scanner-source-decision]", sourceDecision);
 
       if (!product.ingredientsText || ingredients.length === 0) {
         set(() => ({
@@ -303,6 +456,7 @@ export const useScannerStore = create((set, get) => ({
           error: null,
           scanSessionId: nextScanSessionId,
           barcode: nextBarcode,
+          barcodeType: nextBarcodeType,
           product,
           ingredients: [],
           matchedIngredients: [],
@@ -326,6 +480,7 @@ export const useScannerStore = create((set, get) => ({
         error: null,
         scanSessionId: nextScanSessionId,
         barcode: nextBarcode,
+        barcodeType: nextBarcodeType,
         product,
         ingredients,
         matchedIngredients,
@@ -362,6 +517,7 @@ export const useScannerStore = create((set, get) => ({
         error: normalized.error,
         scanSessionId: nextScanSessionId,
         barcode: nextBarcode,
+        barcodeType: nextBarcodeType,
         product: null,
         ingredients: [],
         matchedIngredients: [],

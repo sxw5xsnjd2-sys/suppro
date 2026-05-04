@@ -115,18 +115,18 @@ export async function clearOnboardingPremiumComplete() {
 }
 
 export async function getOnboardingGateState() {
-  const answers = await getQuestionnaireAnswers();
-
-  if (!answers?.completedAt) {
-    return "needs_questions";
-  }
-
   const { data } = await supabase.auth.getSession();
   const loggedIn = hasNonAnonymousSession(data?.session ?? null);
 
   if (loggedIn) {
     await AsyncStorage.setItem(SIGNUP_COMPLETED_STORAGE_KEY, "true");
     return "complete";
+  }
+
+  const answers = await getQuestionnaireAnswers();
+
+  if (!answers?.completedAt) {
+    return "needs_questions";
   }
 
   const signupCompleted = await AsyncStorage.getItem(

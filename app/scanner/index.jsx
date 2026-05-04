@@ -33,13 +33,22 @@ const useCameraPermissions =
   ]);
 const cameraModuleError = cameraModule.error ?? null;
 
-const BARCODE_TYPES = ["ean13", "ean8", "upc_a", "upc_e", "code128"];
+const BARCODE_TYPES = [
+  "ean13",
+  "ean8",
+  "upc_a",
+  "upc_e",
+  "code128",
+  "code39",
+  "code93",
+];
 
 export default function ScannerScreen() {
   const params = useLocalSearchParams();
   const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
   const [hasScanned, setHasScanned] = useState(false);
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const cameraRef = useRef(null);
   const hasRequestedRef = useRef(false);
   const hasScannedRef = useRef(false);
@@ -86,7 +95,10 @@ export default function ScannerScreen() {
     if (permission.granted || permission.status !== "undetermined") return;
 
     hasRequestedRef.current = true;
-    requestPermission();
+    setIsRequestingPermission(true);
+    Promise.resolve(requestPermission()).finally(() => {
+      setIsRequestingPermission(false);
+    });
   }, [isFocused, permission, requestPermission]);
 
   const permissionDenied = useMemo(() => {
@@ -132,15 +144,16 @@ export default function ScannerScreen() {
   const handleBarcodeScanned = async (event) => {
     if (!isFocused || hasScannedRef.current || hasScanned) return;
 
-    const scannedBarcode = normalizeBarcode(event?.data);
+    const barcodeType = event?.type;
+    const scannedBarcode = normalizeBarcode(event?.data, barcodeType);
 
-    if (!isValidBarcode(scannedBarcode)) {
+    if (!isValidBarcode(scannedBarcode, barcodeType)) {
       return;
     }
 
     hasScannedRef.current = true;
     setHasScanned(true);
-    await processBarcode(scannedBarcode);
+    await processBarcode(scannedBarcode, barcodeType);
 
     const nextScanState = useScannerStore.getState();
     const nextScanSessionId = nextScanState.scanSessionId;
@@ -202,6 +215,7 @@ export default function ScannerScreen() {
 
   if (
     !permission ||
+    isRequestingPermission ||
     permission.status === "undetermined" ||
     (permissionDenied && permission.canAskAgain)
   ) {
@@ -210,7 +224,14 @@ export default function ScannerScreen() {
         title="Camera access needed"
         description="We use your camera to scan food barcodes and look up product ingredients."
         primaryLabel="Allow camera"
-        onPrimaryPress={requestPermission}
+        onPrimaryPress={async () => {
+          setIsRequestingPermission(true);
+          try {
+            await requestPermission();
+          } finally {
+            setIsRequestingPermission(false);
+          }
+        }}
       />
     );
   }
