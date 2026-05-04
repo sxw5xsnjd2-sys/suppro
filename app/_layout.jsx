@@ -134,11 +134,24 @@ function RootNavigator() {
     });
 
     try {
-      const authListener = supabase.auth.onAuthStateChange(
-        (_event, session) => {
-          resolveGate(session?.user ?? null);
+      const authListener = supabase.auth.onAuthStateChange((event, session) => {
+        if (event === "SIGNED_OUT") {
+          gateRequestRef.current += 1;
+          setGateState("needs_login");
+          setGateResolved(true);
+
+          resolveAccountScopedStores(null).catch((error) => {
+            console.error(
+              "Failed to clear account-scoped stores after sign out",
+              error
+            );
+          });
+
+          return;
         }
-      );
+
+        resolveGate(session?.user ?? null);
+      });
       subscription = authListener?.data?.subscription ?? null;
     } catch (error) {
       console.error("Failed to subscribe to auth state changes", error);

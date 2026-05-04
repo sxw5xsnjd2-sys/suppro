@@ -33,6 +33,7 @@ import {
   markAccountCreationComplete,
   normalizeEmail,
   signInWithAppleIdentity,
+  signInWithGoogleIdentity,
 } from "@src/lib/account";
 
 const HERO_IMAGE = require("@/assets/images/account-hero.png");
@@ -121,6 +122,7 @@ export default function LoginScreen() {
   const tabAnimation = useRef(new Animated.Value(0)).current;
 
   const isCreateMode = mode === "create";
+  const loginOnly = modeFromParam(params.mode) === "login";
   const heroHeight = Math.min(360, Math.max(292, height * 0.42));
 
   useEffect(() => {
@@ -226,9 +228,7 @@ export default function LoginScreen() {
 
     if (!premiumDone) {
       setQuestionnaireComplete(true);
-      router.replace(
-        "/onboarding?mode=first_run&step=paywall&origin=create"
-      );
+      router.replace("/onboarding?mode=first_run&step=paywall&origin=create");
       return false;
     }
 
@@ -244,6 +244,10 @@ export default function LoginScreen() {
   };
 
   const selectMode = async (nextMode) => {
+    if (loginOnly && nextMode === "create") {
+      return;
+    }
+
     if (nextMode === "create" && !(await ensureCanCreateAccount())) {
       return;
     }
@@ -420,6 +424,50 @@ export default function LoginScreen() {
     }
   };
 
+  const handleGoogleAuth = async () => {
+    if (saving) return;
+
+    setErrorMessage("");
+    setSaving(true);
+
+    try {
+      if (isCreateMode && !(await ensureCanCreateAccount())) {
+        return;
+      }
+
+      if (!isCreateMode && !(await ensureCanLogIn())) {
+        return;
+      }
+
+      const { user } = await signInWithGoogleIdentity();
+
+      if (isCreateMode) {
+        const profilePayload = buildProfilePayload({
+          questionnaireAnswers,
+          fallbackName: user?.user_metadata?.full_name || name,
+          userId: user.id,
+        });
+
+        await supabase
+          .from("profiles")
+          .upsert(profilePayload, { onConflict: "id" });
+
+        await clearOnboardingDraft();
+      }
+
+      await markAccountCreationComplete();
+      router.replace("/");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not complete Google sign in. Please try again."
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <>
       <Stack.Screen options={{ headerShown: false, gestureEnabled: false }} />
@@ -474,9 +522,17 @@ export default function LoginScreen() {
               </Animated.View>
               <Pressable
                 accessibilityRole="tab"
-                accessibilityState={{ selected: isCreateMode }}
+                accessibilityState={{
+                  selected: isCreateMode,
+                  disabled: loginOnly,
+                }}
+                disabled={loginOnly}
                 onPress={() => selectMode("create")}
-                style={styles.tabButton}
+                style={({ pressed }) => [
+                  styles.tabButton,
+                  loginOnly && { opacity: 0.45 },
+                  pressed && !loginOnly && styles.pressed,
+                ]}
               >
                 <Text
                   style={[
@@ -531,6 +587,22 @@ export default function LoginScreen() {
                       }
                     />
                   ) : null}
+                  <AccountActionButton
+                    label={
+                      isCreateMode
+                        ? "Continue with Google"
+                        : "Log in with Google"
+                    }
+                    disabled={saving}
+                    onPress={handleGoogleAuth}
+                    icon={
+                      <Ionicons
+                        name="logo-google"
+                        size={22}
+                        color={TOKENS.ink}
+                      />
+                    }
+                  />
                   <AccountActionButton
                     label={copy.emailLabel}
                     disabled={saving}
@@ -592,9 +664,7 @@ export default function LoginScreen() {
                       textContentType={
                         isCreateMode ? "newPassword" : "password"
                       }
-                      autoComplete={
-                        isCreateMode ? "password-new" : "password"
-                      }
+                      autoComplete={isCreateMode ? "password-new" : "password"}
                       accessibilityLabel="Password"
                       style={styles.input}
                     />
@@ -626,12 +696,14 @@ export default function LoginScreen() {
                           ? "Creating account..."
                           : "Signing in..."
                         : isCreateMode
-                          ? "Create account"
-                          : "Log in"
+                        ? "Create account"
+                        : "Log in"
                     }
                     variant="dark"
                     disabled={!canSubmit}
-                    onPress={isCreateMode ? handleEmailSignUp : handleEmailLogin}
+                    onPress={
+                      isCreateMode ? handleEmailSignUp : handleEmailLogin
+                    }
                     icon={
                       <Ionicons
                         name="mail-outline"
@@ -677,10 +749,13 @@ export default function LoginScreen() {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Switch to create account"
+                  accessibilityState={{ disabled: loginOnly }}
+                  disabled={loginOnly}
                   onPress={() => selectMode("create")}
                   style={({ pressed }) => [
                     styles.footerLinkButton,
-                    pressed && styles.pressed,
+                    loginOnly && { opacity: 0.45 },
+                    pressed && !loginOnly && styles.pressed,
                   ]}
                 >
                   <Text style={styles.footerPrompt}>

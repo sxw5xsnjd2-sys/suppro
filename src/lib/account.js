@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Crypto from "expo-crypto";
+import * as WebBrowser from "expo-web-browser";
 import { supabase } from "./supabase";
 import {
   parseHeightCm,
@@ -13,6 +14,8 @@ import {
   SIGNUP_COMPLETED_STORAGE_KEY,
   SIGNUP_PROMPTED_STORAGE_KEY,
 } from "./onboarding";
+
+WebBrowser.maybeCompleteAuthSession();
 
 export const SUPPLEMENTS_STORAGE_KEY_PREFIX = "supplement-store";
 export const HEALTH_STORAGE_KEY = "health-store";
@@ -35,7 +38,9 @@ export function isLikelyEmail(value) {
 }
 
 export function getUserAuthProvider(user) {
-  const primaryProvider = trimString(user?.app_metadata?.provider).toLowerCase();
+  const primaryProvider = trimString(
+    user?.app_metadata?.provider
+  ).toLowerCase();
   if (primaryProvider && primaryProvider !== "anonymous") {
     return primaryProvider;
   }
@@ -249,6 +254,59 @@ export async function signInWithAppleIdentity(options = {}) {
     data,
     user,
     appleName: formatAppleName(credential.fullName),
+  };
+}
+
+export async function signInWithGoogleIdentity() {
+  const redirectTo = "suppro://auth/callback";
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo,
+      skipBrowserRedirect: true,
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message || "Could not start Google sign in.");
+  }
+
+  if (!data?.url) {
+    throw new Error("Google sign in did not return an auth URL.");
+  }
+
+  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+
+  if (result.type !== "success" || !result.url) {
+    throw new Error("Google sign in was cancelled.");
+  }
+
+  const callbackUrl = new URL(result.url);
+  const code = callbackUrl.searchParams.get("code");
+
+  if (!code) {
+    throw new Error("Google sign in did not return an auth code.");
+  }
+
+  const { data: sessionData, error: sessionError } =
+    await supabase.auth.exchangeCodeForSession(code);
+
+  if (sessionError) {
+    throw new Error(
+      sessionError.message || "Could not complete Google sign in."
+    );
+  }
+
+  const user = sessionData?.user ?? sessionData?.session?.user ?? null;
+
+  if (!user?.id) {
+    throw new Error("Google sign in did not return a user id.");
+  }
+
+  return {
+    data: sessionData,
+    user,
   };
 }
 

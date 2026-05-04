@@ -1,12 +1,17 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Alert,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import Purchases from "react-native-purchases";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
-import {
-  AppButton,
-  AppHeader,
-} from "@/components/common/ui";
+import { AppButton, AppHeader } from "@/components/common/ui";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import ConnectionsIcon from "@/assets/icons/profile/connections.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
@@ -15,22 +20,72 @@ import { appTheme, spacing, typography } from "@/theme";
 
 function SupplementsIcon({ width, height, color }) {
   return (
-    <Ionicons name="nutrition-outline" size={Math.min(width, height)} color={color} />
+    <Ionicons
+      name="nutrition-outline"
+      size={Math.min(width, height)}
+      color={color}
+    />
   );
 }
 
+function SubscriptionIcon({ width, height, color }) {
+  return (
+    <Ionicons
+      name="card-outline"
+      size={Math.min(width, height)}
+      color={color}
+    />
+  );
+}
+
+function RestoreIcon({ width, height, color }) {
+  return (
+    <Ionicons
+      name="refresh-outline"
+      size={Math.min(width, height)}
+      color={color}
+    />
+  );
+}
+
+function ContactIcon({ width, height, color }) {
+  return (
+    <Ionicons
+      name="mail-outline"
+      size={Math.min(width, height)}
+      color={color}
+    />
+  );
+}
+
+async function contactSupport() {
+  await Linking.openURL("mailto:hello@suppro.co.uk");
+}
+
 const SETTINGS_ITEMS = [
-  {
-    key: "my-supplements",
-    label: "My Supplements",
-    route: "/my-supplements",
-    Icon: SupplementsIcon,
-  },
   {
     key: "account",
     label: "Account",
     route: "/account",
     Icon: AccountIcon,
+  },
+  {
+    key: "manage-subscription",
+    label: "Manage Subscription",
+    onPress: manageSubscription,
+    Icon: SubscriptionIcon,
+  },
+  {
+    key: "restore-purchases",
+    label: "Restore Purchases",
+    onPress: restorePurchases,
+    Icon: RestoreIcon,
+  },
+  {
+    key: "my-supplements",
+    label: "My Supplements",
+    route: "/my-supplements",
+    Icon: SupplementsIcon,
   },
   {
     key: "connections",
@@ -50,6 +105,12 @@ const SETTINGS_ITEMS = [
     route: "/onboarding?mode=retake",
     Icon: QuestionnaireIcon,
   },
+  {
+    key: "contact-us",
+    label: "Need help? Contact us",
+    onPress: contactSupport,
+    Icon: ContactIcon,
+  },
 ];
 
 function SettingsItemRow({ item, showBorder = false }) {
@@ -59,7 +120,14 @@ function SettingsItemRow({ item, showBorder = false }) {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={item.label}
-      onPress={() => router.push(item.route)}
+      onPress={() => {
+        if (item.onPress) {
+          item.onPress();
+          return;
+        }
+
+        router.push(item.route);
+      }}
       style={({ pressed }) => [
         styles.itemRow,
         showBorder && styles.itemRowBorder,
@@ -87,6 +155,35 @@ function SettingsItemRow({ item, showBorder = false }) {
       />
     </Pressable>
   );
+}
+
+async function manageSubscription() {
+  try {
+    await Purchases.showManageSubscriptions();
+  } catch (_error) {
+    console.log("Manage subscription error:", _error);
+
+    Alert.alert("Manage subscription error", _error?.message || String(_error));
+  }
+}
+
+async function restorePurchases() {
+  try {
+    const customerInfo = await Purchases.restorePurchases();
+
+    const entitlementId =
+      process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID || "Suppro Premium";
+
+    const isPremium = !!customerInfo.entitlements.active[entitlementId];
+
+    if (isPremium) {
+      Alert.alert("Purchases restored", "Your premium access is active.");
+    } else {
+      Alert.alert("No active subscription found");
+    }
+  } catch (_error) {
+    Alert.alert("Restore failed", "Please try again.");
+  }
 }
 
 export default function SettingsScreen() {
@@ -122,12 +219,21 @@ export default function SettingsScreen() {
       minBottomPadding={120}
     >
       <View style={styles.shortcutsList}>
-        {SETTINGS_ITEMS.map((item, index) => (
-          <SettingsItemRow
-            key={item.key}
-            item={item}
-            showBorder={index < SETTINGS_ITEMS.length - 1}
-          />
+        <View style={styles.divider} />
+        {SETTINGS_ITEMS.slice(0, 3).map((item) => (
+          <SettingsItemRow key={item.key} item={item} />
+        ))}
+
+        <View style={styles.divider} />
+
+        {SETTINGS_ITEMS.slice(3, 7).map((item) => (
+          <SettingsItemRow key={item.key} item={item} />
+        ))}
+
+        <View style={styles.divider} />
+
+        {SETTINGS_ITEMS.slice(7).map((item) => (
+          <SettingsItemRow key={item.key} item={item} />
         ))}
       </View>
     </BackdropScreen>
@@ -147,6 +253,10 @@ const styles = StyleSheet.create({
     color: appTheme.colors.textBody,
   },
   shortcutsList: {},
+  divider: {
+    height: 1,
+    backgroundColor: appTheme.colors.borderSubtle,
+  },
   itemRow: {
     minHeight: 68,
     flexDirection: "row",

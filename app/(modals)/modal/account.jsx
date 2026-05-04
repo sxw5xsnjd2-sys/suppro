@@ -40,19 +40,19 @@ function AccountField({
     <View style={styles.fieldBlock}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <View style={styles.fieldCard}>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        editable={editable}
-        keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize}
-        autoCorrect={false}
-        autoComplete={autoComplete}
-        textContentType={textContentType}
-        placeholder={label}
-        placeholderTextColor={appTheme.colors.textMuted}
-        style={[styles.fieldInput, !editable && styles.fieldInputDisabled]}
-      />
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          editable={editable}
+          keyboardType={keyboardType}
+          autoCapitalize={autoCapitalize}
+          autoCorrect={false}
+          autoComplete={autoComplete}
+          textContentType={textContentType}
+          placeholder={label}
+          placeholderTextColor={appTheme.colors.textMuted}
+          style={[styles.fieldInput, !editable && styles.fieldInputDisabled]}
+        />
       </View>
     </View>
   );
@@ -114,12 +114,11 @@ export default function AccountScreen() {
   const hasChanges =
     trimmedName !== currentName || normalizedEmail !== currentEmail;
   const nameError = !trimmedName ? "Name is required." : "";
-  const emailError =
-    !normalizedEmail
-      ? "Email address is required."
-      : !isLikelyEmail(normalizedEmail)
-      ? "Enter a valid email address."
-      : "";
+  const emailError = !normalizedEmail
+    ? "Email address is required."
+    : !isLikelyEmail(normalizedEmail)
+    ? "Enter a valid email address."
+    : "";
   const canSave =
     !loading &&
     !savingProfile &&
@@ -161,10 +160,7 @@ export default function AccountScreen() {
       }
 
       let updatedUser = account.user;
-      if (
-        trimmedName !== currentName ||
-        normalizedEmail !== currentEmail
-      ) {
+      if (trimmedName !== currentName || normalizedEmail !== currentEmail) {
         const authUpdatePayload = {
           data: {
             ...(account.user?.user_metadata ?? {}),
@@ -176,7 +172,9 @@ export default function AccountScreen() {
           authUpdatePayload.email = normalizedEmail;
         }
 
-        const { data, error } = await supabase.auth.updateUser(authUpdatePayload);
+        const { data, error } = await supabase.auth.updateUser(
+          authUpdatePayload
+        );
 
         if (error) {
           throw new Error(
@@ -227,7 +225,7 @@ export default function AccountScreen() {
         throw new Error(error.message || "Could not sign out.");
       }
 
-      router.replace("/login");
+      router.replace("/login?mode=login");
     } catch (error) {
       setAccountError(
         error instanceof Error
@@ -369,19 +367,15 @@ export default function AccountScreen() {
         editable={!loading && !savingProfile}
       />
 
-      {accountError ? <Text style={styles.errorText}>{accountError}</Text> : null}
+      {accountError ? (
+        <Text style={styles.errorText}>{accountError}</Text>
+      ) : null}
       {!accountError && saveMessage ? (
         <Text style={styles.successText}>{saveMessage}</Text>
       ) : null}
 
       <AppButton
-        label={
-          savingProfile
-            ? "Saving..."
-            : loading
-            ? "Loading..."
-            : "Save"
-        }
+        label={savingProfile ? "Saving..." : loading ? "Loading..." : "Save"}
         onPress={handleSave}
         disabled={!canSave}
         variant="accent"

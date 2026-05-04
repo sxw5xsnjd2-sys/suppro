@@ -18,6 +18,12 @@ module.exports = ({ config }) => {
       : plugin === "expo-camera"
   );
 
+  const hasWebBrowserPlugin = existingPlugins.some((plugin) =>
+    Array.isArray(plugin)
+      ? plugin[0] === "expo-web-browser"
+      : plugin === "expo-web-browser"
+  );
+
   const plugins = [...existingPlugins];
 
   if (!hasAppleHealthPlugin) {
@@ -46,6 +52,10 @@ module.exports = ({ config }) => {
         recordAudioAndroid: false,
       },
     ]);
+  }
+
+  if (!hasWebBrowserPlugin) {
+    plugins.push("expo-web-browser");
   }
 
   return {
