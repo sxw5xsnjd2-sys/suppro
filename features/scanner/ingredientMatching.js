@@ -98,6 +98,32 @@ const EXCIPIENT_PATTERNS = [
   /\bcapsule shell\b/i,
 ];
 
+// Exact-match blocklist for ordinary food ingredients, allergens, and common food
+// components that OpenFoodFacts (and similar sources) can return in an ingredients
+// field.  These must NOT be treated as active supplement ingredients — they would
+// otherwise partially match supplement catalog entries (e.g. "milk" → "milk thistle").
+// Entries are pre-normalized via normalizePlainText so the runtime comparison is cheap.
+const FOOD_INGREDIENT_BLOCKLIST = new Set([
+  "milk",
+  "whole milk",
+  "skimmed milk",
+  "milk powder",
+  "skimmed milk powder",
+  "whole milk powder",
+  "cocoa",
+  "cocoa mass",
+  "cocoa butter",
+  "cocoa powder",
+  "sugar",
+  "glucose syrup",
+  "cream",
+  "butter",
+  "emulsifier",
+  "soya lecithin",
+  "soy lecithin",
+  "whey powder",
+]);
+
 const ALIAS_GROUPS = [
   ["vitamin c", "ascorbic acid"],
   ["vitamin b1", "thiamine", "thiamin"],
@@ -448,6 +474,12 @@ export function classifyIngredientText(text) {
   }
 
   if (EXCIPIENT_PATTERNS.some((pattern) => pattern.test(value))) {
+    return "inactive";
+  }
+
+  // Exact-match guard: ordinary food/allergen ingredients (e.g. "milk", "cocoa butter")
+  // must be classified inactive so they are never presented as supplement candidates.
+  if (FOOD_INGREDIENT_BLOCKLIST.has(normalizePlainText(value))) {
     return "inactive";
   }
 
@@ -879,6 +911,14 @@ export function scoreIngredientMatch(candidate, catalogEntry) {
       : candidate.normalized;
 
   if (!hasWholePhraseMatch(longerValue, shorterValue)) {
+    return null;
+  }
+
+  // Single-token partial matches are too ambiguous: a one-word food ingredient like
+  // "milk" would otherwise match multi-word supplement names like "milk thistle", and
+  // "green" would match "green tea extract".  Require at least two tokens on the
+  // shorter side before accepting a partial match.
+  if (tokenize(shorterValue).length <= 1) {
     return null;
   }
 
