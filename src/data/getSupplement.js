@@ -97,6 +97,99 @@ function buildProductIngredientKey(match) {
   ].join("|");
 }
 
+function normalizeIngredientComparisonName(value) {
+  return trimString(value)
+    .replace(/\([^)]*\)/g, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function normalizeDoseForComparison(value, unit) {
+  const doseValue = Number(value);
+  const normalizedUnit = trimString(unit).toLowerCase();
+
+  if (!Number.isFinite(doseValue)) {
+    return null;
+  }
+
+  if (["g", "gram", "grams"].includes(normalizedUnit)) {
+    return doseValue * 1000;
+  }
+
+  if (["mg", "milligram", "milligrams"].includes(normalizedUnit)) {
+    return doseValue;
+  }
+
+  if (["mcg", "ug", "µg", "μg"].includes(normalizedUnit)) {
+    return doseValue / 1000;
+  }
+
+  return doseValue;
+}
+
+function getActiveEquivalentPreferenceScore(match) {
+  const ingredientName = normalizeIngredientComparisonName(match?.ingredientRaw);
+  const catalogName = normalizeIngredientComparisonName(match?.catalogName);
+
+  let score = 0;
+
+  if (catalogName && ingredientName === catalogName) {
+    score += 100;
+  }
+
+  if (Number.isFinite(Number(match?.dosageValue))) {
+    score += 10;
+  }
+
+  return score;
+}
+
+function shouldReplaceDuplicateIngredient(existing, next) {
+  const existingScore = getActiveEquivalentPreferenceScore(existing);
+  const nextScore = getActiveEquivalentPreferenceScore(next);
+
+  if (nextScore !== existingScore) {
+    return nextScore > existingScore;
+  }
+
+  const existingDose = normalizeDoseForComparison(
+    existing?.dosageValue,
+    existing?.dosageUnit
+  );
+  const nextDose = normalizeDoseForComparison(next?.dosageValue, next?.dosageUnit);
+
+  if (
+    Number.isFinite(existingDose) &&
+    Number.isFinite(nextDose) &&
+    nextDose !== existingDose
+  ) {
+    return nextDose < existingDose;
+  }
+
+  return false;
+}
+
+function dedupeProductIngredientsForDisplay(matches) {
+  const bestByKey = new Map();
+
+  (matches ?? []).forEach((match) => {
+    const catalogId = trimString(match?.catalogId);
+    const rawKey = normalizeIngredientComparisonName(match?.ingredientRaw);
+    const key = catalogId ? `catalog:${catalogId}` : `raw:${rawKey}`;
+
+    if (!key) {
+      return;
+    }
+
+    const existing = bestByKey.get(key);
+    if (!existing || shouldReplaceDuplicateIngredient(existing, match)) {
+      bestByKey.set(key, match);
+    }
+  });
+
+  return Array.from(bestByKey.values());
+}
+
 function buildProductIngredientMatch(row, supplementNameById) {
   const supplementId = trimString(row?.canonical_supplement_id);
   const canonicalName = trimString(row?.canonical_name);
@@ -215,11 +308,13 @@ async function loadSupplementProductIngredientSets(catalogId) {
     supplementRows.map((row) => [row.id, row.name])
   );
 
-  const activeIngredients = dedupeByKey(
-    (data ?? [])
-      .map((row) => buildProductIngredientMatch(row, supplementNameById))
-      .filter((match) => trimString(match.ingredientName)),
-    buildProductIngredientKey
+  const activeIngredients = dedupeProductIngredientsForDisplay(
+    dedupeByKey(
+      (data ?? [])
+        .map((row) => buildProductIngredientMatch(row, supplementNameById))
+        .filter((match) => trimString(match.ingredientName)),
+      buildProductIngredientKey
+    )
   );
 
   const linkedIngredients = dedupeByKey(

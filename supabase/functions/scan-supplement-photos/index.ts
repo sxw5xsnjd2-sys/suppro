@@ -765,6 +765,8 @@ function buildSystemPrompt() {
     "Use a dose-extraction hierarchy: structured table first, inline ingredient doses second, ingredient names without doses last.",
     "If a structured table exists, treat it as the primary source of truth and extract every row with an explicit numeric dose.",
     "If multiple sections exist, merge them without duplicating ingredients and prefer entries with explicit numeric doses over undosed mentions.",
+    "If a label gives a compound/form dose plus an active/equivalent amount, such as 'Creatine monohydrate 3g of which creatine 2.6g', return ONE row only: canonical_name 'Creatine', dosage_value 2.6, dosage_unit 'g', chemical_form 'Creatine monohydrate'. Do not also return Creatine monohydrate 3g as a separate active ingredient.",
+    "Apply the same rule to wording like 'providing', 'equivalent to', 'yielding', 'of which', or 'elemental'. Prefer the actual active/equivalent amount for dosage_value.",
     "Rows from structured tables should normally map to active ingredients with dosage_value, dosage_unit, and amount_basis 'per_serving' unless the label clearly states another basis.",
     "Mark excipients, fillers, capsule materials, sweeteners, preservatives, and colors as inactive.",
     "Do not invent missing dosages.",
