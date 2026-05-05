@@ -227,6 +227,35 @@ export function getScanBenefitProgress(ranking, doseFactor) {
   return Math.min(Math.max(relativeRank * normalizedDoseFactor, 0), 1);
 }
 
+function compareBenefitRankItems(left, right) {
+  const leftTone = BENEFIT_RANK[left?.icon] ?? Number.MAX_SAFE_INTEGER;
+  const rightTone = BENEFIT_RANK[right?.icon] ?? Number.MAX_SAFE_INTEGER;
+
+  if (leftTone !== rightTone) {
+    return leftTone - rightTone;
+  }
+
+  const leftScore = Number.isFinite(left?.score) ? left.score : -1;
+  const rightScore = Number.isFinite(right?.score) ? right.score : -1;
+
+  if (leftScore !== rightScore) {
+    return rightScore - leftScore;
+  }
+
+  const leftEvidence = Number.isFinite(left?.evidenceScore)
+    ? left.evidenceScore
+    : -1;
+  const rightEvidence = Number.isFinite(right?.evidenceScore)
+    ? right.evidenceScore
+    : -1;
+
+  if (leftEvidence !== rightEvidence) {
+    return rightEvidence - leftEvidence;
+  }
+
+  return String(left?.name ?? "").localeCompare(String(right?.name ?? ""));
+}
+
 export function buildBenefitRankings(benefits, rankingRows) {
   const groupedRows = (rankingRows ?? []).reduce((accumulator, row) => {
     if (!row?.label || !Number.isFinite(row?.score)) return accumulator;
@@ -234,26 +263,43 @@ export function buildBenefitRankings(benefits, rankingRows) {
     accumulator[row.label].push({
       score: row.score,
       icon: row.icon ?? null,
+      evidenceScore: Number.isFinite(row?.evidence_score)
+        ? row.evidence_score
+        : null,
+      name: row?.supplement_name ?? "",
     });
     return accumulator;
   }, {});
 
+  const rankedRowsByLabel = Object.fromEntries(
+    Object.entries(groupedRows).map(([label, rows]) => [
+      label,
+      rows.slice().sort(compareBenefitRankItems),
+    ])
+  );
+
   return benefits.reduce((accumulator, benefit) => {
     const score = getBenefitRankingSourceScore(benefit);
-    const rowsForLabel = groupedRows[benefit.label] ?? [];
-    const scoresForLabel = rowsForLabel.map((row) => row.score);
+    const icon = benefit?.icon ?? null;
+    const rowsForLabel = rankedRowsByLabel[benefit.label] ?? [];
 
-    if (!Number.isFinite(score) || scoresForLabel.length === 0) {
+    if (!Number.isFinite(score) || rowsForLabel.length === 0) {
       accumulator[benefit.id] = null;
       return accumulator;
     }
 
-    const higherScores = scoresForLabel.filter((value) => value > score).length;
+    const rankIndex = rowsForLabel.findIndex(
+      (row) => row.score === score && (row.icon ?? null) === icon
+    );
+
+    const fallbackRankIndex = rowsForLabel.findIndex((row) => row.score === score);
+    const resolvedRankIndex = rankIndex >= 0 ? rankIndex : fallbackRankIndex;
+
     accumulator[benefit.id] = {
-      rank: higherScores + 1,
-      total: scoresForLabel.length,
+      rank: resolvedRankIndex >= 0 ? resolvedRankIndex + 1 : null,
+      total: rowsForLabel.length,
       score,
-      icon: benefit?.icon ?? rowsForLabel.find((row) => row.score === score)?.icon ?? null,
+      icon: icon ?? rowsForLabel[resolvedRankIndex]?.icon ?? null,
     };
     return accumulator;
   }, {});
@@ -295,41 +341,26 @@ export function buildRankedBenefitSupplements(rows) {
 
   const total = normalizedRows.length;
 
-  const sortedRows = normalizedRows.slice().sort((left, right) => {
-    const leftScore = left.benefitScore ?? -1;
-    const rightScore = right.benefitScore ?? -1;
+  const sortedRows = normalizedRows.slice().sort((left, right) =>
+    compareBenefitRankItems(
+      {
+        icon: left.benefit?.icon,
+        score: left.benefitScore,
+        evidenceScore: left.evidenceScore,
+        name: left.name,
+      },
+      {
+        icon: right.benefit?.icon,
+        score: right.benefitScore,
+        evidenceScore: right.evidenceScore,
+        name: right.name,
+      }
+    )
+  );
 
-    if (leftScore !== rightScore) {
-      return rightScore - leftScore;
-    }
-
-    const leftTone = BENEFIT_RANK[left.benefit?.icon] ?? Number.MAX_SAFE_INTEGER;
-    const rightTone =
-      BENEFIT_RANK[right.benefit?.icon] ?? Number.MAX_SAFE_INTEGER;
-
-    if (leftTone !== rightTone) {
-      return leftTone - rightTone;
-    }
-
-    const leftEvidence = left.evidenceScore ?? -1;
-    const rightEvidence = right.evidenceScore ?? -1;
-
-    if (leftEvidence !== rightEvidence) {
-      return rightEvidence - leftEvidence;
-    }
-
-    return String(left.name).localeCompare(String(right.name));
-  });
-
-  const allScores = sortedRows
-    .map((row) => row.benefitScore)
-    .filter((score) => Number.isFinite(score));
-
-  return sortedRows.map((row) => ({
+  return sortedRows.map((row, index) => ({
     ...row,
-    rank: Number.isFinite(row.benefitScore)
-      ? allScores.filter((score) => score > row.benefitScore).length + 1
-      : null,
+    rank: Number.isFinite(row.benefitScore) ? index + 1 : null,
     total,
   }));
 }

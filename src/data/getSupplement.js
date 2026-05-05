@@ -246,6 +246,26 @@ const PRODUCT_ACTIVE_INGREDIENTS_SELECT = `
   amount_basis
 `;
 
+async function getOffProductBarcode(productId) {
+  const cleanProductId = trimString(productId);
+  if (!cleanProductId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("off_products")
+    .select("barcode")
+    .eq("id", cleanProductId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Failed to load off product barcode", error);
+    return null;
+  }
+
+  return trimString(data?.barcode) || null;
+}
+
 export async function getSupplementsByIds(ids) {
   const cleanIds = Array.from(
     new Set((ids ?? []).map((id) => trimString(id)).filter(Boolean))
@@ -380,7 +400,9 @@ async function getSupplementProductById(catalogId, fallbackName) {
 
   const { data, error } = await supabase
     .from("supplement_products_master")
-    .select("product_id, display_name, serving_size_text")
+    .select(
+      "product_id, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at"
+    )
     .eq("product_id", productId)
     .maybeSingle();
 
@@ -400,6 +422,7 @@ async function getSupplementProductById(catalogId, fallbackName) {
   );
   const displayName =
     trimString(data?.display_name) || trimString(fallbackName) || "Supplement";
+  const barcode = await getOffProductBarcode(data.product_id);
 
   return {
     ...buildLinkedSupplementPayload({
@@ -413,6 +436,24 @@ async function getSupplementProductById(catalogId, fallbackName) {
       supplementsByCatalogId,
     }),
     productId: String(data.product_id),
+    product_id: String(data.product_id),
+    display_name: displayName,
+    active_ingredients_json: Array.isArray(data?.active_ingredients_json)
+      ? data.active_ingredients_json
+      : null,
+    barcode,
+    image_url: trimString(data?.image_url) || null,
+    image_thumbnail_url: trimString(data?.image_thumbnail_url) || null,
+    image_source_url: trimString(data?.image_source_url) || null,
+    image_provider: trimString(data?.image_provider) || null,
+    image_query: trimString(data?.image_query) || null,
+    image_confidence: Number.isFinite(Number(data?.image_confidence))
+      ? Number(data.image_confidence)
+      : null,
+    image_status: trimString(data?.image_status) || "missing",
+    image_error: trimString(data?.image_error) || null,
+    image_manual_override: Boolean(data?.image_manual_override),
+    image_last_checked_at: trimString(data?.image_last_checked_at) || null,
     ingredient_count: activeIngredients.length,
   };
 }

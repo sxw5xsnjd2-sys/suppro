@@ -24,7 +24,6 @@ import { isSupplementScheduledOnDate } from "@/features/supplements/schedule";
 import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 import { computeMetricImprovement } from "@/features/health/metricTrends";
-import { Icon } from "@/features/supplements/icons/Icon";
 
 const EVIDENCE_POINTS = {
   high: 3,
@@ -451,10 +450,6 @@ function SupplementRow({
       </View>
 
       <View style={[styles.supplementRow, taken && styles.supplementRowTaken]}>
-        <View style={[styles.iconCircle, taken && styles.iconCircleTaken]}>
-          <Icon route={supplement.route || "tablet"} size={22} />
-        </View>
-
         <View style={styles.supplementCopy}>
           <View style={styles.supplementNameRow}>
             <Text
@@ -1221,18 +1216,6 @@ const styles = StyleSheet.create({
   },
   supplementRowTaken: {
     opacity: 0.88,
-  },
-  iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: appTheme.colors.iconSurface,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 14,
-  },
-  iconCircleTaken: {
-    backgroundColor: appTheme.colors.iconSurfaceMuted,
   },
   supplementCopy: {
     flex: 1,

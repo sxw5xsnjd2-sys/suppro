@@ -335,6 +335,8 @@ export async function clearLocalPersistedAppData() {
     HEART_FLAGS_STORAGE_KEY,
     AI_SUMMARY_CACHE_STORAGE_KEY,
   ]);
+
+  notifyOnboardingGateChange();
 }
 
 export async function loadCurrentAccountProfile() {

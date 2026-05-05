@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -21,6 +23,7 @@ import Svg, {
   Stop,
 } from "react-native-svg";
 import { AppButton, PrimaryCard } from "@/components/common/ui";
+import { COMPACT_TITLE_HEADER_TRIGGER_OFFSET } from "@/components/common/ui/CompactTitleHeader";
 import ShieldTrustIcon from "@/assets/icons/shield-trust 1.svg";
 import {
   buildScannedSupplementFailurePayload,
@@ -51,6 +54,7 @@ import {
 } from "@/features/supplements/favouritesStorage";
 import { appTheme, gradients, typography } from "@/theme";
 import { getSupplementById } from "@src/data/getSupplement";
+import { enrichProductImageIfNeeded } from "@src/lib/productImages";
 import { supabase } from "@src/lib/supabase";
 
 const DOSE_BAND_PILL_COLORS = {
@@ -82,7 +86,7 @@ const DOSE_BAND_PILL_COLORS = {
 };
 
 const DOSE_STATUS_TOOLTIP_COPY = {
-  missing_dose_scoring_profile:
+  missing_dose_scoringr_profile:
     "Dose target unavailable means we do not yet have a reliable target dose range for this ingredient, or it is not a supplement.",
   missing_actual_dose:
     "Dose unavailable means we could not determine a usable amount per serving from this product, so we cannot compare it with the target dose.",
@@ -102,7 +106,7 @@ const B_COMPLEX_REFERENCE_SOURCE_NAMES = new Set([
   "Vitamin B6 (Pyridoxine / P5P / Pyridoxal-5-Phosphate)",
 ]);
 const BENEFIT_SCORE_TOOLTIP_COPY = {
-  scan: "This score estimates how well the scanned product supports this benefit by combining the matched ingredient's evidence ranking with how effective the dose is. A fuller bar means stronger benefit support; lower bars can reflect weaker evidence, a lower dose, or both.",
+  scan: "This score estimates how well the scanned product supports this benefit by combining the matched ingredient's overall score with how effective the dose is. A fuller bar means stronger benefit support; lower bars can reflect weaker evidence, a lower dose, or both.",
   ranking:
     "A gold medal means there is strong evidence for this benefit while a silver medal means some evidence but not robust. A bronze medal means poor research studies performed for this benefit or no human studies performed.",
 };
@@ -145,6 +149,14 @@ function normalizeIntegerParam(value) {
   const normalized = normalizeParam(value);
   const parsed = Number.parseInt(normalized, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getDisplayImageUrl(value) {
+  return (
+    (typeof value?.image_url === "string" && value.image_url.trim()) ||
+    (typeof value?.imageUrl === "string" && value.imageUrl.trim()) ||
+    ""
+  );
 }
 
 function clampEvidenceScore(score) {
@@ -368,7 +380,7 @@ function EvidenceRatingGauge({ value, toneScore }) {
 
       <View pointerEvents="none" style={styles.gaugeTextWrap}>
         <Text style={[styles.gaugeEyebrow, { color: palette.textColor }]}>
-          Evidence Rating
+          Overall score
         </Text>
         <Text
           style={[
@@ -438,6 +450,35 @@ function EvidenceSnippetCard({ text }) {
   );
 }
 
+function EvidenceScorePill({ value, toneScore }) {
+  const hasRating = Number.isFinite(toneScore);
+  const displayScore = clampEvidenceScore(value);
+  const palette = getEvidenceGaugePalette(toneScore);
+
+  return (
+    <View style={styles.evidenceScorePill}>
+      <Text style={styles.evidenceScoreLabel}>Evidence score</Text>
+      <Text
+        style={[
+          styles.evidenceScoreValue,
+          !hasRating && styles.evidenceScoreValueUnavailable,
+          { color: palette.textColor },
+        ]}
+      >
+        {hasRating ? `${displayScore}/100` : "Not rated"}
+      </Text>
+    </View>
+  );
+}
+
+function ActiveIngredientSummaryHeader({ value, toneScore }) {
+  return (
+    <View style={styles.activeIngredientSummaryHeader}>
+      <EvidenceScorePill value={value} toneScore={toneScore} />
+    </View>
+  );
+}
+
 function BenefitRankingBar({
   ranking,
   dimmed = false,
@@ -471,6 +512,107 @@ function BenefitRankingBar({
   );
 }
 
+function BenefitGridCard({
+  benefit,
+  ranking,
+  open,
+  dimmed,
+  onPress,
+  onBenefitPress,
+  supplementEvidence,
+}) {
+  const BenefitIcon = getBenefitIconComponent(benefit.label);
+  const evidenceSource =
+    Array.isArray(benefit?.evidenceItems) && benefit.evidenceItems.length
+      ? benefit.evidenceItems
+      : benefit?.evidence ?? benefit?.evidence_summary ?? supplementEvidence;
+  const evidenceSnippets = buildEvidenceSnippets(evidenceSource);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open }}
+      accessibilityLabel={`${benefit.label}. ${
+        open ? "Collapse" : "Expand"
+      } evidence.`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.benefitGridCard,
+        open && styles.benefitGridCardOpen,
+        dimmed && styles.benefitGridCardDimmed,
+        pressed && styles.benefitGridCardPressed,
+      ]}
+    >
+      <View style={styles.benefitGridCardTop}>
+        {ranking?.icon ? (
+          <View style={styles.benefitGridMedalWrap}>
+            <BenefitIconBadge
+              label={benefit.label}
+              color={getBenefitColor(ranking.icon)}
+              tone={ranking.icon}
+              Icon={BenefitIcon}
+              size={18}
+              containerSize={34}
+              borderRadius={17}
+              iconOffsetX={benefit.label === "Joint health" ? -3 : 0}
+            />
+          </View>
+        ) : (
+          <View style={styles.benefitGridMedalPlaceholder} />
+        )}
+
+        <View style={styles.benefitGridCardRight}>
+          <Ionicons
+            name={open ? "chevron-up" : "chevron-down"}
+            size={15}
+            color={appTheme.colors.textSecondary}
+          />
+        </View>
+      </View>
+
+      <Text style={styles.benefitGridLabel} numberOfLines={2}>
+        {benefit.label}
+      </Text>
+      <Text style={styles.benefitGridMeta} numberOfLines={2}>
+        {getBenefitRankText(benefit, ranking)}
+      </Text>
+
+      {open ? (
+        <View style={styles.expandedEvidenceWrap}>
+          {evidenceSnippets.map((snippet, index) => (
+            <EvidenceSnippetCard
+              key={`${benefit.id ?? benefit.label}-${index}`}
+              text={snippet}
+            />
+          ))}
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Go to ${benefit.label}`}
+            onPress={(event) => {
+              event.stopPropagation?.();
+              onBenefitPress?.();
+            }}
+            style={({ pressed }) => [
+              styles.benefitCta,
+              pressed && styles.benefitCtaPressed,
+            ]}
+          >
+            <Text style={styles.benefitCtaText}>
+              {`Go to ${String(benefit.label).toLowerCase()}`}
+            </Text>
+            <Ionicons
+              name="arrow-forward"
+              size={14}
+              color={appTheme.colors.textStrong}
+            />
+          </Pressable>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
 function BenefitRankingMedal({ ranking, benefitLabel, Icon, dimmed = false }) {
   if (!ranking?.icon) {
     return null;
@@ -497,17 +639,19 @@ function BenefitRankingMedal({ ranking, benefitLabel, Icon, dimmed = false }) {
 }
 
 function DetailCard({
+  sectionKey,
   icon,
   title,
   body,
+  collapsibleBlocks = false,
   linkedItemsByHeading = null,
   onLinkedHeadingPress = null,
+  expandedItems = {},
+  onToggleItem = null,
 }) {
   const blocks =
-    linkedItemsByHeading && body !== "No details listed yet."
-      ? splitDetailBodyBlocks(body)
-      : [];
-  const showLinkedBlocks = Boolean(linkedItemsByHeading && blocks.length > 0);
+    body !== "No details listed yet." ? splitDetailBodyBlocks(body) : [];
+  const showCollapsibleBlocks = collapsibleBlocks && blocks.length > 0;
 
   return (
     <PrimaryCard style={styles.detailCard}>
@@ -515,41 +659,70 @@ function DetailCard({
         <Ionicons name={icon} size={18} color={appTheme.colors.textStrong} />
         <Text style={styles.detailCardTitle}>{title}</Text>
       </View>
-      {showLinkedBlocks ? (
+      {showCollapsibleBlocks ? (
         <View style={styles.detailCardBodyBlocks}>
           {blocks.map((block, index) => {
             const linkedItem =
-              linkedItemsByHeading.get(
+              linkedItemsByHeading?.get(
                 normalizeDetailHeadingKey(block.heading)
               ) ?? null;
+            const itemName = block.heading || `Ingredient ${index + 1}`;
+            const itemKey = `${sectionKey}:${normalizeDetailHeadingKey(
+              block.heading
+            )}:${index}`;
+            const expanded = Boolean(expandedItems[itemKey]);
 
             return (
               <View
                 key={`${title}-${block.heading}-${index}`}
-                style={styles.detailCardBodyBlock}
+                style={[
+                  styles.detailCardBodyBlock,
+                  index < blocks.length - 1 && styles.detailCardBodyBlockDivider,
+                ]}
               >
-                {linkedItem ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Open ${block.heading}`}
-                    onPress={() => onLinkedHeadingPress?.(linkedItem)}
-                    style={({ pressed }) => [
-                      styles.detailCardLinkWrap,
-                      pressed && styles.detailCardLinkWrapPressed,
-                    ]}
-                  >
-                    <Text style={styles.detailCardLinkText}>
-                      {block.heading}
-                    </Text>
-                  </Pressable>
-                ) : (
-                  <Text style={styles.detailCardBodyHeading}>
-                    {block.heading}
-                  </Text>
-                )}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${
+                    expanded ? "Collapse" : "Expand"
+                  } details for ${itemName} in ${title}`}
+                  accessibilityState={{ expanded }}
+                  onPress={() => onToggleItem?.(itemKey)}
+                  style={({ pressed }) => [
+                    styles.detailCardToggleRow,
+                    pressed && styles.detailCardToggleRowPressed,
+                  ]}
+                >
+                  {linkedItem ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open ${itemName}`}
+                      onPress={(event) => {
+                        event.stopPropagation?.();
+                        onLinkedHeadingPress?.(linkedItem);
+                      }}
+                      style={({ pressed }) => [
+                        styles.detailCardLinkWrap,
+                        pressed && styles.detailCardLinkWrapPressed,
+                      ]}
+                    >
+                      <Text style={styles.detailCardLinkText}>{itemName}</Text>
+                    </Pressable>
+                  ) : (
+                    <Text style={styles.detailCardBodyHeading}>{itemName}</Text>
+                  )}
+                  <Ionicons
+                    name={expanded ? "chevron-up" : "chevron-down"}
+                    size={16}
+                    color={appTheme.colors.textSecondary}
+                  />
+                </Pressable>
 
-                {block.content ? (
-                  <Text style={styles.detailCardBody}>{block.content}</Text>
+                {expanded ? (
+                  <View style={styles.detailCardExpandedBody}>
+                    {block.content ? (
+                      <Text style={styles.detailCardBody}>{block.content}</Text>
+                    ) : null}
+                  </View>
                 ) : null}
               </View>
             );
@@ -566,34 +739,38 @@ function BenefitSectionHeader({
   tooltipText,
   tooltipOpen,
   onTooltipPress,
+  leftTitle = "Benefit",
   rightTitle = "Score",
+  showRightGroup = true,
 }) {
   return (
     <>
       <View style={styles.benefitHeaderRow}>
-        <Text style={styles.benefitHeaderText}>Benefit</Text>
-        <View style={styles.benefitHeaderRightGroup}>
-          <Text style={styles.benefitHeaderText}>{rightTitle}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`What this ${rightTitle.toLowerCase()} means`}
-            hitSlop={8}
-            onPress={onTooltipPress}
-            style={({ pressed }) => [
-              styles.benefitHeaderHelpButton,
-              pressed && styles.benefitHeaderHelpButtonPressed,
-            ]}
-          >
-            <Ionicons
-              name="help-circle-outline"
-              size={16}
-              color={appTheme.colors.textSecondary}
-            />
-          </Pressable>
-        </View>
+        <Text style={styles.benefitHeaderText}>{leftTitle}</Text>
+        {showRightGroup ? (
+          <View style={styles.benefitHeaderRightGroup}>
+            <Text style={styles.benefitHeaderText}>{rightTitle}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`What this ${rightTitle.toLowerCase()} means`}
+              hitSlop={8}
+              onPress={onTooltipPress}
+              style={({ pressed }) => [
+                styles.benefitHeaderHelpButton,
+                pressed && styles.benefitHeaderHelpButtonPressed,
+              ]}
+            >
+              <Ionicons
+                name="help-circle-outline"
+                size={16}
+                color={appTheme.colors.textSecondary}
+              />
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
-      {tooltipOpen ? (
+      {showRightGroup && tooltipOpen ? (
         <View style={styles.benefitHeaderTooltipWrap}>
           <View style={styles.benefitHeaderTooltipArrow} />
           <View style={styles.doseTooltip}>
@@ -832,9 +1009,15 @@ export default function SupplementInfoModal() {
   const [favouriteToastText, setFavouriteToastText] = useState("");
   const [showAddToast, setShowAddToast] = useState(false);
   const [addToastText, setAddToastText] = useState("");
+  const [showAllIngredients, setShowAllIngredients] = useState(false);
+  const [expandedDetailItems, setExpandedDetailItems] = useState({});
   const [openDoseTooltipKey, setOpenDoseTooltipKey] = useState(null);
   const [isBenefitScoreTooltipOpen, setIsBenefitScoreTooltipOpen] =
     useState(false);
+  const imageRequestKeyRef = useRef("");
+  const [headerAreaHeight, setHeaderAreaHeight] = useState(0);
+  const collapsedHeaderAnimation = useRef(new Animated.Value(0)).current;
+  const isCollapsedRef = useRef(false);
   const toastMessage = useToastStore((state) => state.message);
   const toastTarget = useToastStore((state) => state.target);
   const clearToast = useToastStore((state) => state.clear);
@@ -873,6 +1056,8 @@ export default function SupplementInfoModal() {
     setLoaded(false);
     setOpenBenefitId(null);
     setShowAllBenefits(false);
+    setShowAllIngredients(false);
+    setExpandedDetailItems({});
     setVerifiedInfoVisible(false);
     setOpenDoseTooltipKey(null);
     setIsBenefitScoreTooltipOpen(false);
@@ -1036,7 +1221,7 @@ export default function SupplementInfoModal() {
 
       const { data: rankingRows, error } = await supabase
         .from("supplement_benefits")
-        .select("label, score, icon")
+        .select("id, label, score, icon")
         .in("label", labels);
 
       if (!active) return;
@@ -1154,6 +1339,8 @@ export default function SupplementInfoModal() {
     paramName ??
     (isScanStyledSource ? "Scanned supplement" : "Supplement");
   const isScanFailure = isLiveScanSource && Boolean(data?.scanFailureMessage);
+  const isActiveIngredientDetail =
+    data?.catalogType === CATALOG_TYPES.ACTIVE_INGREDIENT && !isScanFailure;
   const isProductNotRecognizedFailure =
     isScanFailure && data?.scanFailureStatus === "not_found";
   const isVerified = Boolean(data?.verified);
@@ -1170,8 +1357,28 @@ export default function SupplementInfoModal() {
   const visibleBenefitCount = showAllBenefits ? benefits.length : 6;
   const visibleBenefits = benefits.slice(0, visibleBenefitCount);
   const hiddenBenefitCount = Math.max(benefits.length - visibleBenefitCount, 0);
+  const visibleIngredientCount = showAllIngredients ? matchedIngredients.length : 6;
+  const visibleIngredients = matchedIngredients.slice(0, visibleIngredientCount);
+  const hiddenIngredientCount = Math.max(
+    matchedIngredients.length - visibleIngredientCount,
+    0
+  );
   const isSupplementProductDetail =
     data?.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT;
+  const productId = data?.product_id || data?.id;
+  const shouldShowProductImage =
+    !isScanFailure &&
+    data?.catalogType !== CATALOG_TYPES.ACTIVE_INGREDIENT &&
+    (isSupplementProductDetail ||
+      data?.catalogType === "supplement_product" ||
+      Boolean(
+        data?.product_id ||
+          data?.display_name ||
+          data?.barcode ||
+          data?.brand ||
+          data?.brand_name
+      ));
+  const productImageUrl = getDisplayImageUrl(data);
   const showIngredientsSection =
     !isScanFailure &&
     (matchedIngredients.length > 0 || isSupplementProductDetail);
@@ -1273,6 +1480,52 @@ export default function SupplementInfoModal() {
           body: getSectionBody(data?.risks_and_interactions),
         },
       ];
+
+  const handleToggleDetailItem = (itemKey) => {
+    if (!itemKey) {
+      return;
+    }
+
+    setExpandedDetailItems((current) => ({
+      ...current,
+      [itemKey]: !current[itemKey],
+    }));
+  };
+
+  const toggleCollapsedHeader = (nextCollapsed) => {
+    if (isCollapsedRef.current === nextCollapsed) return;
+    isCollapsedRef.current = nextCollapsed;
+    Animated.timing(collapsedHeaderAnimation, {
+      toValue: nextCollapsed ? 1 : 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleHeaderAreaLayout = (event) => {
+    setHeaderAreaHeight(event.nativeEvent.layout.height);
+  };
+
+  const handleScroll = (event) => {
+    if (headerAreaHeight <= 0) return;
+    const threshold = Math.max(
+      0,
+      16 + headerAreaHeight - COMPACT_TITLE_HEADER_TRIGGER_OFFSET
+    );
+    toggleCollapsedHeader(event.nativeEvent.contentOffset.y >= threshold);
+  };
+
+  const collapsedHeaderStyle = {
+    opacity: collapsedHeaderAnimation,
+    transform: [
+      {
+        translateY: collapsedHeaderAnimation.interpolate({
+          inputRange: [0, 1],
+          outputRange: [-8, 0],
+        }),
+      },
+    ],
+  };
 
   const handleAddSupplement = () => {
     if (!canAddSupplement) return;
@@ -1463,6 +1716,67 @@ export default function SupplementInfoModal() {
     };
   }, [showAddToast]);
 
+  useEffect(() => {
+    if (
+      !loaded ||
+      !shouldShowProductImage ||
+      !productId ||
+      productImageUrl ||
+      imageRequestKeyRef.current === productId
+    ) {
+      if (loaded && data) {
+        console.log("product image enrichment skipped", {
+          productId,
+          catalogType: data?.catalogType,
+          hasImage: Boolean(data?.image_url),
+          displayName: data?.display_name,
+          name: data?.name,
+        });
+      }
+      return undefined;
+    }
+
+    let active = true;
+    imageRequestKeyRef.current = productId;
+
+    console.log("product image enrichment requested", { productId });
+    enrichProductImageIfNeeded(data).then((result) => {
+      if (!active || !result?.imageUrl) {
+        return;
+      }
+
+      if (result.status !== "found" && result.status !== "cached") {
+        return;
+      }
+
+      setData((current) => {
+        const currentProductId = current?.product_id || current?.id;
+        if (
+          !current ||
+          currentProductId !== productId ||
+          getDisplayImageUrl(current)
+        ) {
+          return current;
+        }
+
+        return {
+          ...current,
+          image_url: result.imageUrl,
+          image_thumbnail_url: result.thumbnailUrl ?? null,
+          image_source_url: result.sourceUrl ?? null,
+          image_query: result.query ?? null,
+          image_confidence: result.confidence ?? null,
+          image_status:
+            result.status === "cached" ? current.image_status : "found",
+        };
+      });
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [data, loaded, productId, productImageUrl, shouldShowProductImage]);
+
   if (loaded && isProductNotRecognizedFailure) {
     return (
       <View style={[styles.screenRoot, styles.notRecognizedScreenRoot]}>
@@ -1551,21 +1865,6 @@ export default function SupplementInfoModal() {
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Fixed close button — stays visible while scrolling */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Close supplement info"
-        hitSlop={8}
-        onPress={handleClose}
-        style={({ pressed }) => [
-          styles.closeButton,
-          { top: 16 },
-          pressed && styles.closeButtonPressed,
-        ]}
-      >
-        <Ionicons name="close" size={18} color={appTheme.colors.textStrong} />
-      </Pressable>
-
       {showFavouriteToast || showAddToast ? (
         <View
           pointerEvents="none"
@@ -1596,87 +1895,169 @@ export default function SupplementInfoModal() {
           },
         ]}
         showsVerticalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
       >
-        <View style={styles.headerBlock}>
-          {!isProductNotRecognizedFailure ? (
-            <View style={styles.titleRow}>
-              <Text style={styles.pageTitle}>{fallbackName}</Text>
-              <View style={styles.titleActions}>
-                {isVerified ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Verified supplement information"
-                    hitSlop={8}
-                    onPress={() => setVerifiedInfoVisible(true)}
-                    style={({ pressed }) => [
-                      styles.verifiedBadgeButton,
-                      pressed && styles.verifiedBadgeButtonPressed,
-                    ]}
-                  >
-                    <ShieldTrustIcon width={16} height={16} />
-                  </Pressable>
-                ) : null}
-                {canFavourite ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      isFavourite ? "Saved to favourites" : "Add to favourites"
-                    }
-                    accessibilityState={isFavourite ? { selected: true } : {}}
-                    hitSlop={8}
-                    onPress={handleFavourite}
-                    style={({ pressed }) => [
-                      styles.favouriteButton,
-                      isFavourite && styles.favouriteButtonActive,
-                      pressed && styles.closeButtonPressed,
-                    ]}
-                  >
-                    <Ionicons
-                      name={isFavourite ? "heart" : "heart-outline"}
-                      size={16}
-                      color={
-                        isFavourite ? "#A6685B" : appTheme.colors.textStrong
-                      }
-                    />
-                  </Pressable>
-                ) : null}
-              </View>
+        <View style={styles.scrollInner} onLayout={handleHeaderAreaLayout}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close supplement info"
+            hitSlop={8}
+            onPress={handleClose}
+            style={({ pressed }) => [
+              styles.closeButton,
+              styles.closeButtonScroll,
+              pressed && styles.closeButtonPressed,
+            ]}
+          >
+            <Ionicons
+              name="close"
+              size={18}
+              color={appTheme.colors.textStrong}
+            />
+          </Pressable>
+
+          {canFavourite ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                isFavourite ? "Saved to favourites" : "Add to favourites"
+              }
+              accessibilityState={isFavourite ? { selected: true } : {}}
+              hitSlop={8}
+              onPress={handleFavourite}
+              style={({ pressed }) => [
+                styles.favouriteButton,
+                styles.favouriteButtonScroll,
+                { top: isActiveIngredientDetail ? 72 : 44 },
+                isFavourite && styles.favouriteButtonActive,
+                pressed && styles.closeButtonPressed,
+              ]}
+            >
+              <Ionicons
+                name={isFavourite ? "heart" : "heart-outline"}
+                size={16}
+                color={isFavourite ? "#A6685B" : appTheme.colors.textStrong}
+              />
+            </Pressable>
+          ) : null}
+
+          {isActiveIngredientDetail ? (
+            <View style={styles.activeIngredientPageLabel}>
+              <Ionicons
+                name="book-outline"
+                size={20}
+                color={appTheme.colors.textStrong}
+              />
+              <Text style={styles.activeIngredientPageLabelText}>
+                Active ingredient
+              </Text>
             </View>
           ) : null}
 
-          {canAddSupplement ||
-          showShareAction ||
-          (canImproveScanWithPhotos && !isProductNotRecognizedFailure) ? (
-            <View style={styles.headerActionsContainer}>
-              {canImproveScanWithPhotos && !isProductNotRecognizedFailure ? (
-                <HeaderAction
-                  icon="camera-outline"
-                  label="Improve with photos"
-                  onPress={handleImproveScanWithPhotos}
-                  accent
-                />
-              ) : null}
-              {canAddSupplement || showShareAction ? (
-                <View style={styles.headerActionsRow}>
-                  {canAddSupplement ? (
-                    <HeaderAction
-                      icon="add"
-                      label="Add to supplements"
-                      onPress={handleAddSupplement}
-                      disabled={!canAddSupplement}
-                    />
-                  ) : null}
-                  {showShareAction ? (
-                    <HeaderAction
-                      icon="share-social-outline"
-                      label="Share"
-                      onPress={handleShare}
-                    />
+          <View
+            style={[
+              styles.headerBlock,
+              isActiveIngredientDetail && styles.headerBlockActiveIngredient,
+            ]}
+          >
+            {!isProductNotRecognizedFailure ? (
+              <View style={styles.titleRow}>
+                {shouldShowProductImage ? (
+                  <View style={styles.productImageFrame}>
+                    {productImageUrl ? (
+                      <Image
+                        source={{ uri: productImageUrl }}
+                        style={styles.productImage}
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <Ionicons
+                        name="cube-outline"
+                        size={24}
+                        color={appTheme.colors.textSecondary}
+                      />
+                    )}
+                  </View>
+                ) : null}
+                <View style={styles.titleCopy}>
+                  <View
+                    style={[
+                      styles.titleTextGroup,
+                      isActiveIngredientDetail && styles.titleTextGroupInline,
+                    ]}
+                  >
+                    <Text style={styles.pageTitle}>{fallbackName}</Text>
+                    {isActiveIngredientDetail && isVerified ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Verified supplement information"
+                        hitSlop={8}
+                        onPress={() => setVerifiedInfoVisible(true)}
+                        style={({ pressed }) => [
+                          styles.verifiedBadgeButton,
+                          styles.verifiedBadgeButtonInline,
+                          pressed && styles.verifiedBadgeButtonPressed,
+                        ]}
+                      >
+                        <ShieldTrustIcon width={16} height={16} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  {!isActiveIngredientDetail && isVerified ? (
+                    <View style={styles.titleActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Verified supplement information"
+                        hitSlop={8}
+                        onPress={() => setVerifiedInfoVisible(true)}
+                        style={({ pressed }) => [
+                          styles.verifiedBadgeButton,
+                          pressed && styles.verifiedBadgeButtonPressed,
+                        ]}
+                      >
+                        <ShieldTrustIcon width={16} height={16} />
+                      </Pressable>
+                    </View>
                   ) : null}
                 </View>
-              ) : null}
-            </View>
-          ) : null}
+              </View>
+            ) : null}
+
+            {canAddSupplement ||
+            showShareAction ||
+            (canImproveScanWithPhotos && !isProductNotRecognizedFailure) ? (
+              <View style={styles.headerActionsContainer}>
+                {canImproveScanWithPhotos && !isProductNotRecognizedFailure ? (
+                  <HeaderAction
+                    icon="camera-outline"
+                    label="Improve with photos"
+                    onPress={handleImproveScanWithPhotos}
+                    accent
+                  />
+                ) : null}
+                {canAddSupplement || showShareAction ? (
+                  <View style={styles.headerActionsRow}>
+                    {canAddSupplement ? (
+                      <HeaderAction
+                        icon="add"
+                        label="Add to supplements"
+                        onPress={handleAddSupplement}
+                        disabled={!canAddSupplement}
+                      />
+                    ) : null}
+                    {showShareAction ? (
+                      <HeaderAction
+                        icon="share-social-outline"
+                        label="Share"
+                        onPress={handleShare}
+                      />
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
         </View>
 
         {!loaded ? (
@@ -1692,11 +2073,17 @@ export default function SupplementInfoModal() {
             <PrimaryCard
               style={[
                 styles.summaryCard,
+                isActiveIngredientDetail && styles.summaryCardActiveIngredient,
                 isProductNotRecognizedFailure &&
                   styles.summaryCardNotRecognized,
               ]}
             >
-              {!isProductNotRecognizedFailure ? (
+              {isActiveIngredientDetail ? (
+                <ActiveIngredientSummaryHeader
+                  value={displayedRating}
+                  toneScore={rating}
+                />
+              ) : !isProductNotRecognizedFailure ? (
                 <EvidenceRatingGauge
                   value={displayedRating}
                   toneScore={rating}
@@ -1794,7 +2181,11 @@ export default function SupplementInfoModal() {
               ) : benefits.length > 0 ? (
                 <>
                   <BenefitSectionHeader
+                    leftTitle={
+                      isActiveIngredientDetail ? "Benefits" : "Benefit"
+                    }
                     rightTitle={benefitHeaderTitle}
+                    showRightGroup={!isActiveIngredientDetail}
                     tooltipText={benefitScoreTooltipText}
                     tooltipOpen={isBenefitScoreTooltipOpen}
                     onTooltipPress={() => {
@@ -1803,12 +2194,40 @@ export default function SupplementInfoModal() {
                     }}
                   />
 
-                  <View style={styles.benefitList}>
+                  <View
+                    style={
+                      isActiveIngredientDetail
+                        ? styles.benefitGrid
+                        : styles.benefitList
+                    }
+                  >
                     {visibleBenefits.map((benefit) => {
                       const isOpen = openBenefitId === benefit.id;
                       const dimmed = Boolean(openBenefitId && !isOpen);
 
-                      return (
+                      return isActiveIngredientDetail ? (
+                        <BenefitGridCard
+                          key={benefit.id}
+                          benefit={benefit}
+                          ranking={benefitRankings[benefit.id] ?? null}
+                          open={isOpen}
+                          dimmed={dimmed}
+                          supplementEvidence={supplementEvidence}
+                          onPress={() => {
+                            setIsBenefitScoreTooltipOpen(false);
+                            setOpenBenefitId((current) =>
+                              current === benefit.id ? null : benefit.id
+                            );
+                          }}
+                          onBenefitPress={() => {
+                            setIsBenefitScoreTooltipOpen(false);
+                            router.push({
+                              pathname: "/benefit-ranking",
+                              params: { label: benefit.label },
+                            });
+                          }}
+                        />
+                      ) : (
                         <BenefitRow
                           key={benefit.id}
                           benefit={benefit}
@@ -1846,6 +2265,8 @@ export default function SupplementInfoModal() {
                         onPress={() => setShowAllBenefits(true)}
                         style={({ pressed }) => [
                           styles.moreBenefitsRow,
+                          isActiveIngredientDetail &&
+                            styles.benefitGridActionRow,
                           pressed && styles.moreBenefitsRowPressed,
                         ]}
                       >
@@ -1876,6 +2297,8 @@ export default function SupplementInfoModal() {
                         }}
                         style={({ pressed }) => [
                           styles.moreBenefitsRow,
+                          isActiveIngredientDetail &&
+                            styles.benefitGridActionRow,
                           pressed && styles.moreBenefitsRowPressed,
                         ]}
                       >
@@ -1903,7 +2326,7 @@ export default function SupplementInfoModal() {
 
                   {matchedIngredients.length > 0 ? (
                     <View style={styles.ingredientsList}>
-                      {matchedIngredients.map((item, index) => {
+                      {visibleIngredients.map((item, index) => {
                         const ingredientName = String(
                           item?.ingredientName ??
                             item?.catalogName ??
@@ -1931,7 +2354,7 @@ export default function SupplementInfoModal() {
                             onPress={() => handleOpenIngredient(item)}
                             style={({ pressed }) => [
                               styles.ingredientRow,
-                              index < matchedIngredients.length - 1 &&
+                              index < visibleIngredients.length - 1 &&
                                 styles.ingredientRowDivider,
                               canOpenIngredient &&
                                 pressed &&
@@ -2079,6 +2502,46 @@ export default function SupplementInfoModal() {
                           </Pressable>
                         );
                       })}
+
+                      {hiddenIngredientCount > 0 ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Show ${hiddenIngredientCount} more ingredients`}
+                          onPress={() => setShowAllIngredients(true)}
+                          style={({ pressed }) => [
+                            styles.moreBenefitsRow,
+                            pressed && styles.moreBenefitsRowPressed,
+                          ]}
+                        >
+                          <Text style={styles.moreBenefitsText}>
+                            {`+ ${hiddenIngredientCount} more ingredients`}
+                          </Text>
+                          <Ionicons
+                            name="chevron-forward"
+                            size={16}
+                            color={appTheme.colors.textStrong}
+                          />
+                        </Pressable>
+                      ) : null}
+
+                      {showAllIngredients && matchedIngredients.length > 6 ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Show fewer ingredients"
+                          onPress={() => setShowAllIngredients(false)}
+                          style={({ pressed }) => [
+                            styles.moreBenefitsRow,
+                            pressed && styles.moreBenefitsRowPressed,
+                          ]}
+                        >
+                          <Text style={styles.moreBenefitsText}>Show less</Text>
+                          <Ionicons
+                            name="chevron-up"
+                            size={16}
+                            color={appTheme.colors.textStrong}
+                          />
+                        </Pressable>
+                      ) : null}
                     </View>
                   ) : (
                     <Text style={styles.emptyIngredientText}>
@@ -2093,11 +2556,15 @@ export default function SupplementInfoModal() {
               ? detailCards.map((section) => (
                   <DetailCard
                     key={section.key}
+                    sectionKey={section.key}
                     icon={section.icon}
                     title={section.title}
                     body={section.body}
+                    collapsibleBlocks={Boolean(linkedDetailItemsByHeading)}
                     linkedItemsByHeading={linkedDetailItemsByHeading}
                     onLinkedHeadingPress={handleOpenIngredient}
+                    expandedItems={expandedDetailItems}
+                    onToggleItem={handleToggleDetailItem}
                   />
                 ))
               : null}
@@ -2109,6 +2576,19 @@ export default function SupplementInfoModal() {
         visible={verifiedInfoVisible && isVerified}
         onClose={() => setVerifiedInfoVisible(false)}
       />
+
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.compactHeaderOverlay, collapsedHeaderStyle]}
+      >
+        <Text
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          style={styles.compactHeaderTitle}
+        >
+          {fallbackName}
+        </Text>
+      </Animated.View>
     </View>
   );
 }
@@ -2118,6 +2598,28 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: appTheme.screen.background,
   },
+  compactHeaderOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 30,
+    backgroundColor: appTheme.screen.background,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: appTheme.colors.borderSubtle,
+    paddingHorizontal: appTheme.screen.sidePadding,
+    paddingTop: 10,
+    paddingBottom: 10,
+    alignItems: "center",
+  },
+  compactHeaderTitle: {
+    fontSize: 17,
+    lineHeight: 21,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textPrimary,
+    letterSpacing: -0.2,
+    textAlign: "center",
+  },
   notRecognizedScreenRoot: {
     backgroundColor: "transparent",
     justifyContent: "center",
@@ -2126,10 +2628,16 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 24,
   },
+  scrollInner: {
+    position: "relative",
+  },
   headerBlock: {
     marginBottom: 18,
     paddingTop: 42,
     paddingRight: 46,
+  },
+  headerBlockActiveIngredient: {
+    paddingTop: 12,
   },
   favouriteButton: {
     width: 28,
@@ -2137,10 +2645,15 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.52)",
+    backgroundColor: "#F1F1F1",
+  },
+  favouriteButtonScroll: {
+    position: "absolute",
+    right: -4,
+    zIndex: 10,
   },
   favouriteButtonActive: {
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: "#E8E8E8",
   },
   closeButton: {
     position: "absolute",
@@ -2150,8 +2663,12 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.52)",
+    backgroundColor: "#F1F1F1",
     zIndex: 10,
+  },
+  closeButtonScroll: {
+    top: 0,
+    right: -4,
   },
   closeButtonPressed: {
     opacity: 0.72,
@@ -2185,14 +2702,59 @@ const styles = StyleSheet.create({
   },
   titleRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
+    alignItems: "flex-start",
+    gap: 12,
     paddingTop: 2,
+  },
+  productImageFrame: {
+    width: 60,
+    height: 60,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.62)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    overflow: "hidden",
+  },
+  productImage: {
+    width: 54,
+    height: 54,
+  },
+  titleCopy: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  titleTextGroup: {
+    flex: 1,
+    minWidth: 0,
+  },
+  titleTextGroupInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  activeIngredientPageLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 8,
+    marginTop: 38,
+  },
+  activeIngredientPageLabelText: {
+    fontSize: 16,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
   },
   titleActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    marginLeft: "auto",
     flexShrink: 0,
   },
   pageTitle: {
@@ -2208,6 +2770,10 @@ const styles = StyleSheet.create({
     height: 22,
     alignItems: "center",
     justifyContent: "center",
+  },
+  verifiedBadgeButtonInline: {
+    marginLeft: 0,
+    flexShrink: 0,
   },
   verifiedBadgeButtonPressed: {
     opacity: 0.72,
@@ -2288,6 +2854,9 @@ const styles = StyleSheet.create({
     paddingTop: 30,
     paddingBottom: 16,
     marginBottom: 14,
+  },
+  summaryCardActiveIngredient: {
+    paddingTop: 18,
   },
   summaryCardNotRecognized: {
     minHeight: 360,
@@ -2371,6 +2940,34 @@ const styles = StyleSheet.create({
     fontSize: 26,
     lineHeight: 28,
   },
+  activeIngredientSummaryHeader: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  evidenceScorePill: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  evidenceScoreLabel: {
+    fontSize: 12,
+    lineHeight: 15,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textSecondary,
+    textAlign: "center",
+  },
+  evidenceScoreValue: {
+    marginTop: 3,
+    fontSize: 36,
+    lineHeight: 39,
+    fontFamily: typography.fontFamily.headingBlack,
+    textAlign: "center",
+  },
+  evidenceScoreValueUnavailable: {
+    fontSize: 22,
+    lineHeight: 26,
+    fontFamily: typography.fontFamily.headingSemiBold,
+  },
   benefitHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -2417,6 +3014,70 @@ const styles = StyleSheet.create({
   },
   benefitList: {
     gap: 2,
+  },
+  benefitGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingTop: 4,
+  },
+  benefitGridCard: {
+    width: "48.4%",
+    minHeight: 126,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: "#F8F8FA",
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+  },
+  benefitGridCardOpen: {
+    width: "100%",
+    minHeight: 0,
+    backgroundColor: appTheme.colors.surface,
+  },
+  benefitGridCardDimmed: {
+    opacity: 0.42,
+  },
+  benefitGridCardPressed: {
+    opacity: 0.82,
+  },
+  benefitGridCardTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 10,
+  },
+  benefitGridMedalWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  benefitGridMedalPlaceholder: {
+    width: 34,
+    height: 34,
+  },
+  benefitGridCardRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  benefitGridLabel: {
+    minHeight: 36,
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  benefitGridMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  benefitGridActionRow: {
+    width: "100%",
   },
   benefitRow: {
     paddingVertical: 8,
@@ -2835,9 +3496,27 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   detailCardBodyBlock: {
-    gap: 6,
+    gap: 8,
+  },
+  detailCardBodyBlockDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: appTheme.colors.borderSubtle,
+    paddingBottom: 14,
+  },
+  detailCardToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  detailCardToggleRowPressed: {
+    opacity: 0.72,
+  },
+  detailCardExpandedBody: {
+    gap: 8,
   },
   detailCardBodyHeading: {
+    flex: 1,
     fontSize: 14,
     lineHeight: 20,
     fontFamily: typography.fontFamily.bodySemiBold,

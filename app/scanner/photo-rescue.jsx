@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Linking,
   Pressable,
   StyleSheet,
@@ -97,6 +98,11 @@ export default function ScannerPhotoRescueScreen() {
   const [captureError, setCaptureError] = useState("");
   const cameraRef = useRef(null);
 
+  const [captureFlashVisible, setCaptureFlashVisible] = useState(false);
+  const flashOpacity = useRef(new Animated.Value(0)).current;
+  const flashScale = useRef(new Animated.Value(0.85)).current;
+  const buttonScale = useRef(new Animated.Value(1)).current;
+
   const currentScanSessionId = useScannerStore((state) => state.scanSessionId);
   const photoRescueStatus = useScannerStore((state) => state.photoRescueStatus);
   const photoRescueError = useScannerStore((state) => state.photoRescueError);
@@ -144,6 +150,31 @@ export default function ScannerPhotoRescueScreen() {
       ? "Capture ingredients photo"
       : "Capture product photo";
 
+  const showCaptureFlash = (onDone) => {
+    setCaptureFlashVisible(true);
+    flashScale.setValue(0.85);
+    flashOpacity.setValue(0);
+    Animated.parallel([
+      Animated.spring(flashScale, { toValue: 1, friction: 6, useNativeDriver: true }),
+      Animated.timing(flashOpacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+    ]).start(() => {
+      setTimeout(() => {
+        Animated.timing(flashOpacity, { toValue: 0, duration: 250, useNativeDriver: true }).start(() => {
+          setCaptureFlashVisible(false);
+          onDone?.();
+        });
+      }, 700);
+    });
+  };
+
+  const animateCaptureButton = () => {
+    buttonScale.setValue(1);
+    Animated.sequence([
+      Animated.spring(buttonScale, { toValue: 0.88, friction: 8, useNativeDriver: true }),
+      Animated.spring(buttonScale, { toValue: 1, friction: 5, useNativeDriver: true }),
+    ]).start();
+  };
+
   const restartFlow = () => {
     setStep("ingredients");
     setIngredientsPhoto("");
@@ -155,6 +186,7 @@ export default function ScannerPhotoRescueScreen() {
     if (submitting) return;
 
     setCaptureError("");
+    animateCaptureButton();
 
     try {
       const photo = await cameraRef.current?.takePictureAsync({
@@ -170,7 +202,7 @@ export default function ScannerPhotoRescueScreen() {
 
       if (step === "ingredients") {
         setIngredientsPhoto(nextPhoto);
-        setStep("product");
+        showCaptureFlash(() => setStep("product"));
         return;
       }
 
@@ -262,10 +294,24 @@ export default function ScannerPhotoRescueScreen() {
         </View>
 
         <View style={styles.centerContent}>
-          <View style={styles.stepPill}>
-            <Text style={styles.stepPillText}>{stepLabel}</Text>
+          <View style={[styles.stepPill, captureFlashVisible && styles.stepPillSuccess]}>
+            <Text style={[styles.stepPillText, captureFlashVisible && styles.stepPillTextSuccess]}>
+              {captureFlashVisible ? "✓ Step 1 done" : stepLabel}
+            </Text>
           </View>
-          <View style={styles.captureFrame} />
+          <View style={[styles.captureFrame, captureFlashVisible && styles.captureFrameSuccess]}>
+            {captureFlashVisible ? (
+              <Animated.View
+                style={[
+                  styles.captureSuccessOverlay,
+                  { opacity: flashOpacity, transform: [{ scale: flashScale }] },
+                ]}
+              >
+                <Text style={styles.captureSuccessCheck}>✓</Text>
+                <Text style={styles.captureSuccessLabel}>Ingredients captured</Text>
+              </Animated.View>
+            ) : null}
+          </View>
           <Text style={styles.title}>{stepTitle}</Text>
           <Text style={styles.description}>{stepDescription}</Text>
         </View>
@@ -284,19 +330,21 @@ export default function ScannerPhotoRescueScreen() {
             <View style={styles.restartSpacer} />
           )}
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={captureLabel}
-            onPress={handleCapture}
-            disabled={submitting}
-            style={({ pressed }) => [
-              styles.captureButton,
-              pressed && styles.captureButtonPressed,
-              submitting && styles.captureButtonDisabled,
-            ]}
-          >
-            <View style={styles.captureButtonInner} />
-          </Pressable>
+          <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={captureLabel}
+              onPress={handleCapture}
+              disabled={submitting}
+              style={({ pressed }) => [
+                styles.captureButton,
+                pressed && styles.captureButtonPressed,
+                submitting && styles.captureButtonDisabled,
+              ]}
+            >
+              <View style={styles.captureButtonInner} />
+            </Pressable>
+          </Animated.View>
 
           <View style={styles.restartSpacer} />
         </View>
@@ -384,6 +432,38 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "rgba(255,255,255,0.95)",
     backgroundColor: "rgba(255,255,255,0.05)",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  captureFrameSuccess: {
+    borderColor: "#4ADE80",
+    borderWidth: 3,
+    backgroundColor: "rgba(74,222,128,0.08)",
+  },
+  captureSuccessOverlay: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  captureSuccessCheck: {
+    fontSize: 72,
+    lineHeight: 80,
+    color: "#4ADE80",
+    fontFamily: typography.fontFamily.heading,
+  },
+  captureSuccessLabel: {
+    fontSize: 16,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "#FFFFFF",
+    textAlign: "center",
+  },
+  stepPillSuccess: {
+    backgroundColor: "rgba(74,222,128,0.25)",
+  },
+  stepPillTextSuccess: {
+    color: "#4ADE80",
   },
   title: {
     textAlign: "center",

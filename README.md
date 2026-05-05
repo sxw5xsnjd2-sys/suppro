@@ -16,6 +16,16 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npx expo start
    ```
 
+## Product image enrichment
+
+Product images are enriched server-side by the `enrich-product-image` Supabase
+Edge Function. Configure and deploy it with:
+
+```bash
+npx supabase secrets set SERPAPI_API_KEY=your_key_here
+npx supabase functions deploy enrich-product-image
+```
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)

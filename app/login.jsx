@@ -122,7 +122,6 @@ export default function LoginScreen() {
   const tabAnimation = useRef(new Animated.Value(0)).current;
 
   const isCreateMode = mode === "create";
-  const loginOnly = modeFromParam(params.mode) === "login";
   const heroHeight = Math.min(360, Math.max(292, height * 0.42));
 
   useEffect(() => {
@@ -244,10 +243,6 @@ export default function LoginScreen() {
   };
 
   const selectMode = async (nextMode) => {
-    if (loginOnly && nextMode === "create") {
-      return;
-    }
-
     if (nextMode === "create" && !(await ensureCanCreateAccount())) {
       return;
     }
@@ -522,16 +517,11 @@ export default function LoginScreen() {
               </Animated.View>
               <Pressable
                 accessibilityRole="tab"
-                accessibilityState={{
-                  selected: isCreateMode,
-                  disabled: loginOnly,
-                }}
-                disabled={loginOnly}
+                accessibilityState={{ selected: isCreateMode }}
                 onPress={() => selectMode("create")}
                 style={({ pressed }) => [
                   styles.tabButton,
-                  loginOnly && { opacity: 0.45 },
-                  pressed && !loginOnly && styles.pressed,
+                  pressed && styles.pressed,
                 ]}
               >
                 <Text
@@ -749,13 +739,10 @@ export default function LoginScreen() {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Switch to create account"
-                  accessibilityState={{ disabled: loginOnly }}
-                  disabled={loginOnly}
                   onPress={() => selectMode("create")}
                   style={({ pressed }) => [
                     styles.footerLinkButton,
-                    loginOnly && { opacity: 0.45 },
-                    pressed && !loginOnly && styles.pressed,
+                    pressed && styles.pressed,
                   ]}
                 >
                   <Text style={styles.footerPrompt}>

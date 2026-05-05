@@ -279,7 +279,7 @@ export default function AccountScreen() {
 
       await clearLocalPersistedAppData();
       router.dismissAll();
-      router.replace("/");
+      router.replace("/onboarding?mode=first_run");
     } catch (error) {
       setAccountError(
         error instanceof Error

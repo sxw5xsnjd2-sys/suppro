@@ -45,3 +45,9 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/research-pending-supplements/deno.json"
 entrypoint = "./functions/research-pending-supplements/index.ts"
+
+[functions.enrich-product-image]
+enabled = true
+verify_jwt = true
+import_map = "./functions/enrich-product-image/deno.json"
+entrypoint = "./functions/enrich-product-image/index.ts"
