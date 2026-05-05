@@ -146,6 +146,17 @@ const GENERIC_CORE_WORDS = new Set([
   "3",
 ]);
 
+const PRODUCT_FORM_PATTERNS = [
+  { form: "tablets", pattern: /\b(?:tablets?|tabs?)\b/i },
+  { form: "capsules", pattern: /\bcapsules?\b/i },
+  { form: "softgels", pattern: /\bsoftgels?\b/i },
+  { form: "gummies", pattern: /\bgummies?\b/i },
+  { form: "powder", pattern: /\bpowder\b/i },
+  { form: "sachets", pattern: /\bsachets?\b/i },
+  { form: "liquid", pattern: /\bliquid\b/i },
+  { form: "drops", pattern: /\bdrops?\b/i },
+] as const;
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
@@ -398,6 +409,17 @@ function variantClues(product: Record<string, unknown>): string[] {
   return uniqueWords(clues).slice(0, 8);
 }
 
+function expectedProductForm(product: Record<string, unknown>): string | null {
+  const servingSizeText = trimString(product.serving_size_text);
+  if (!servingSizeText) return null;
+
+  const match = PRODUCT_FORM_PATTERNS.find(({ pattern }) =>
+    pattern.test(servingSizeText)
+  );
+
+  return match?.form ?? null;
+}
+
 function isGenericActiveIngredient(product: Record<string, unknown>): boolean {
   const name = getProductName(product);
   const brand = getProductBrand(product);
@@ -541,7 +563,9 @@ function buildFallbackVariantQuery(product: Record<string, unknown>): string {
 }
 
 function buildPrimaryOfficialQuery(product: Record<string, unknown>): string {
-  return `${buildCleanQueryBase(product)} official product`
+  const form = expectedProductForm(product);
+
+  return `${buildCleanQueryBase(product)} ${form ?? ""} official product`
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -703,6 +727,42 @@ function getDimension(result: Record<string, unknown>, key: string): number | nu
   return Number.isFinite(original) ? original : null;
 }
 
+function hasPlaceholderImageSignal(result: Record<string, unknown>): boolean {
+  const original = trimString(result.original);
+  const thumbnail = trimString(result.thumbnail);
+  const title = trimString(result.title);
+  const combined = normalizeLookupText([original, thumbnail, title].join(" "));
+  const width = getDimension(result, "original_width");
+  const height = getDimension(result, "original_height");
+
+  if (!original && !thumbnail) return true;
+  if (/^data:/i.test(original) || /^data:/i.test(thumbnail)) return true;
+  if (/\.svg(?:$|[?#])/i.test(original) || /\.svg(?:$|[?#])/i.test(thumbnail)) {
+    return true;
+  }
+  if (
+    /\b(?:placeholder|transparent|blank|fallback|default|missing|no[\s_-]?image|spacer|pixel)\b/i.test(
+      combined
+    )
+  ) {
+    return true;
+  }
+  if (
+    (Number.isFinite(width) && width! < 120) ||
+    (Number.isFinite(height) && height! < 120)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function matchedProductForms(text: string): string[] {
+  return PRODUCT_FORM_PATTERNS.filter(({ pattern }) => pattern.test(text)).map(
+    ({ form }) => form
+  );
+}
+
 function scoreImageResult(
   result: Record<string, unknown>,
   product: Record<string, unknown>,
@@ -720,6 +780,14 @@ function scoreImageResult(
   const normalizedCombined = normalizeLookupText(combined);
   const width = getDimension(result, "original_width");
   const height = getDimension(result, "original_height");
+  const hasPlaceholderSignal = hasPlaceholderImageSignal(result);
+  const expectedForm = expectedProductForm(product);
+  const formsInCandidate = matchedProductForms(combined);
+  const formMatch = Boolean(expectedForm && formsInCandidate.includes(expectedForm));
+  const formMismatch = Boolean(
+    expectedForm &&
+      formsInCandidate.some((form) => form !== expectedForm)
+  );
 
   const normalizedProductName = normalizeLookupText(cleanProductDisplayName(productName, brand));
   const barcode = normalizeBarcodeValue(product.barcode);
@@ -757,7 +825,15 @@ function scoreImageResult(
   }
 
   if (matchedVariantClueCount > 0) {
-    score += 25;
+    score += Math.min(matchedVariantClueCount, 2) * 12;
+  }
+
+  if (formMatch) {
+    score += 18;
+  }
+
+  if (formMismatch) {
+    score -= 55;
   }
 
   if (matchedTitleKeywords.length >= 2) {
@@ -795,6 +871,10 @@ function scoreImageResult(
     score -= 40;
   }
 
+  if (hasPlaceholderSignal) {
+    score -= 120;
+  }
+
   if (BAD_SOURCE_PATTERNS.some((pattern) => pattern.test(combined))) {
     score -= 60;
   }
@@ -817,8 +897,13 @@ function scoreImageResult(
     officialDomain: isOfficialBrandDomain(result, product),
     barcodeMatch: hasBarcodeMatch,
     variantClueMatches: matchedVariantClueCount,
+    expectedProductForm: expectedForm,
+    formMatch,
+    formMismatch,
+    placeholderLike: hasPlaceholderSignal,
     query,
     imageUrl: original || thumbnail,
+    originalUrl: original || null,
     thumbnailUrl: thumbnail || null,
     sourceUrl: trimString(result.link) || null,
   };
@@ -826,28 +911,67 @@ function scoreImageResult(
 
 function selectionReason(selected: ReturnType<typeof scoreImageResult>) {
   if (selected.barcodeMatch) return "barcode_match_preferred";
-  if (selected.variantClueMatches > 0) return "variant_clues_preferred";
   if (selected.sourceTier === 0) return "official_domain_preferred";
+  if (selected.variantClueMatches > 0) return "variant_clues_preferred";
   if (selected.sourceTier === 1) return "retailer_preferred";
   if (selected.sourceTier === 2) return "marketplace_selected";
   if (selected.sourceTier === 3) return "low_quality_source_selected";
   return "highest_score_selected";
 }
 
+function isClearlyDifferentProduct(
+  scored: ReturnType<typeof scoreImageResult>,
+  product: Record<string, unknown>
+) {
+  if (scored.barcodeMatch) return false;
+  if (scored.placeholderLike) return true;
+
+  const combined = sourceText(scored.result);
+  const matchedKeyWords = countMatchedKeyProductWords(combined, product);
+  const normalizedCombined = normalizeLookupText(combined);
+  const normalizedProductName = normalizeLookupText(
+    cleanProductDisplayName(getProductName(product), getProductBrand(product))
+  );
+
+  if (normalizedProductName && normalizedCombined.includes(normalizedProductName)) {
+    return false;
+  }
+
+  return matchedKeyWords === 0 && scored.variantClueMatches === 0;
+}
+
 function compareScoredResults(
   left: ReturnType<typeof scoreImageResult>,
-  right: ReturnType<typeof scoreImageResult>
+  right: ReturnType<typeof scoreImageResult>,
+  product: Record<string, unknown>
 ) {
   if (left.barcodeMatch !== right.barcodeMatch) {
     return left.barcodeMatch ? -1 : 1;
   }
 
+  if (left.placeholderLike !== right.placeholderLike) {
+    return left.placeholderLike ? 1 : -1;
+  }
+
+  if (left.officialDomain !== right.officialDomain) {
+    const leftOfficialUsable = left.officialDomain && !isClearlyDifferentProduct(left, product);
+    const rightOfficialUsable =
+      right.officialDomain && !isClearlyDifferentProduct(right, product);
+
+    if (leftOfficialUsable !== rightOfficialUsable) {
+      return leftOfficialUsable ? -1 : 1;
+    }
+  }
+
   if (left.variantClueMatches !== right.variantClueMatches) {
-    return right.variantClueMatches - left.variantClueMatches;
+    const variantDelta = right.variantClueMatches - left.variantClueMatches;
+    if (Math.abs(variantDelta) >= 2) {
+      return variantDelta;
+    }
   }
 
   const scoreDelta = right.score - left.score;
-  if (Math.abs(scoreDelta) <= 25 && left.sourceTier !== right.sourceTier) {
+  if (Math.abs(scoreDelta) <= 40 && left.sourceTier !== right.sourceTier) {
     return left.sourceTier - right.sourceTier;
   }
 
@@ -859,10 +983,21 @@ function isAcceptableImageMatch(
   scored: ReturnType<typeof scoreImageResult> | null,
   product: Record<string, unknown>
 ) {
-  if (!scored?.imageUrl) return false;
+  if (!scored?.imageUrl || scored.placeholderLike) return false;
   if (scored.score >= 35) return true;
 
   return scored.score >= 25 && hasAtLeastTwoKeyProductWords(scored.result, product);
+}
+
+function shouldEarlyStop(
+  scored: ReturnType<typeof scoreImageResult> | null,
+  product: Record<string, unknown>
+) {
+  if (!isAcceptableImageMatch(scored, product) || !scored) return false;
+  if (!scored.officialDomain && !scored.barcodeMatch) return false;
+  if (scored.formMismatch) return false;
+  if (scored.sourceTier > 1) return false;
+  return scored.score >= 55;
 }
 
 async function updateProductImage(
@@ -1079,17 +1214,37 @@ Deno.serve(async (req) => {
 
       const bestForQuery =
         scoredForQuery.length > 0
-          ? [...scoredForQuery].sort(compareScoredResults)[0]
+          ? [...scoredForQuery].sort((left, right) =>
+              compareScoredResults(left, right, product)
+            )[0]
           : null;
 
-      if (isAcceptableImageMatch(bestForQuery, product)) {
+      console.log("[enrich-product-image] firstResults", {
+        productId: effectiveProductId,
+        query,
+        queryStrategy,
+        expectedProductForm: expectedProductForm(product),
+        firstResults: scoredForQuery.slice(0, 3).map((entry) => ({
+          title: trimString(entry.result.title) || null,
+          source: trimString(entry.result.source) || null,
+          link: trimString(entry.result.link) || null,
+          score: entry.score,
+          officialDomain: entry.officialDomain,
+          formMatch: entry.formMatch,
+          formMismatch: entry.formMismatch,
+        })),
+      });
+
+      if (shouldEarlyStop(bestForQuery, product)) {
         selectedResult = bestForQuery;
         earlyStop = true;
         break;
       }
     }
 
-    const scored = scoredResults.sort(compareScoredResults);
+    const scored = scoredResults.sort((left, right) =>
+      compareScoredResults(left, right, product)
+    );
     const best = selectedResult ?? scored[0] ?? null;
 
     if (!isAcceptableImageMatch(best, product)) {
@@ -1130,12 +1285,21 @@ Deno.serve(async (req) => {
     });
     console.log("[enrich-product-image] selected image", {
       productId: effectiveProductId,
+      expectedProductForm: best.expectedProductForm,
       selectedTitle: trimString(best.result.title) || null,
       selectedSource: trimString(best.result.source) || null,
       selectedLink: trimString(best.result.link) || null,
+      selectedImageUrl: best.imageUrl,
+      selectedOriginalUrl: best.originalUrl,
+      selectedThumbnailUrl: best.thumbnailUrl,
       finalScore: best.score,
       selectedQuery: best.query,
       selectionReason: selectionReason(best),
+      officialDomain: best.officialDomain,
+      barcodeMatch: best.barcodeMatch,
+      formMatch: best.formMatch,
+      formMismatch: best.formMismatch,
+      placeholderLike: best.placeholderLike,
       deepSearch,
       serpApiCallCount,
       earlyStop,
