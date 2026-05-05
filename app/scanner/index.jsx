@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -43,12 +53,23 @@ const BARCODE_TYPES = [
   "code93",
 ];
 
+function inferBarcodeType(text) {
+  const digits = text.replace(/\D/g, "");
+  if (/^\d{13}$/.test(digits)) return "ean13";
+  if (/^\d{12}$/.test(digits)) return "upc_a";
+  if (/^\d{8}$/.test(digits)) return "ean8";
+  return "code128";
+}
+
 export default function ScannerScreen() {
   const params = useLocalSearchParams();
   const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
   const [hasScanned, setHasScanned] = useState(false);
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
+  const [torchEnabled, setTorchEnabled] = useState(false);
+  const [manualEntryOpen, setManualEntryOpen] = useState(false);
+  const [manualBarcodeText, setManualBarcodeText] = useState("");
   const cameraRef = useRef(null);
   const hasRequestedRef = useRef(false);
   const hasScannedRef = useRef(false);
@@ -72,7 +93,12 @@ export default function ScannerScreen() {
       : undefined;
 
   useEffect(() => {
-    if (!isFocused) return;
+    if (!isFocused) {
+      setTorchEnabled(false);
+      setManualEntryOpen(false);
+      setManualBarcodeText("");
+      return;
+    }
     resetScan();
     setHasScanned(false);
     hasScannedRef.current = false;
@@ -137,6 +163,44 @@ export default function ScannerScreen() {
       params: {
         scanSessionId: String(scanSessionId),
         origin: scannerOrigin,
+      },
+    });
+  };
+
+  const handleManualBarcodeSubmit = async () => {
+    const raw = manualBarcodeText.trim().replace(/[\s-]/g, "");
+    if (!raw) return;
+
+    const barcodeType = inferBarcodeType(raw);
+
+    const barcode = normalizeBarcode(raw, barcodeType);
+    if (!isValidBarcode(barcode, barcodeType)) return;
+
+    Keyboard.dismiss();
+    setManualEntryOpen(false);
+    hasScannedRef.current = true;
+    setHasScanned(true);
+    await processBarcode(barcode, barcodeType);
+
+    const nextScanState = useScannerStore.getState();
+    const nextScanSessionId = nextScanState.scanSessionId;
+    if (!Number.isFinite(nextScanSessionId) || nextScanSessionId <= 0) return;
+    if (
+      nextScanState.status === "not_found" ||
+      nextScanState.status === "error"
+    )
+      return;
+
+    router.push({
+      pathname: "/modal/supplement-info",
+      params: {
+        source: "scanned",
+        origin: scannerOrigin,
+        scanSessionId: String(nextScanSessionId),
+        name:
+          nextScanState.product?.productName ||
+          nextScanState.product?.name ||
+          "Scanned supplement",
       },
     });
   };
@@ -255,6 +319,7 @@ export default function ScannerScreen() {
           style={StyleSheet.absoluteFill}
           facing="back"
           barcodeScannerSettings={{ barcodeTypes: BARCODE_TYPES }}
+          enableTorch={torchEnabled}
           onBarcodeScanned={isProcessingScan ? undefined : handleBarcodeScanned}
         />
       ) : null}
@@ -271,26 +336,120 @@ export default function ScannerScreen() {
             style={styles.closeButton}
             textStyle={styles.closeButtonText}
           />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              torchEnabled ? "Turn torch off" : "Turn torch on"
+            }
+            onPress={() => setTorchEnabled((prev) => !prev)}
+            style={({ pressed }) => [
+              styles.torchButton,
+              torchEnabled && styles.torchButtonActive,
+              pressed && styles.torchButtonPressed,
+            ]}
+          >
+            <Ionicons
+              name={torchEnabled ? "flashlight" : "flashlight-outline"}
+              size={20}
+              color="#FFFFFF"
+            />
+          </Pressable>
         </View>
 
         <View style={styles.centerContent}>
-          <View
-            style={[
-              styles.scanFrame,
-              isProcessingScan && styles.scanFrameProcessing,
-            ]}
-          />
-          <Text style={styles.title}>Scan a barcode</Text>
+          {!manualEntryOpen ? (
+            <View
+              style={[
+                styles.scanFrame,
+                isProcessingScan && styles.scanFrameProcessing,
+              ]}
+            />
+          ) : null}
+          {!manualEntryOpen ? (
+            <Text style={styles.title}>Scan a barcode</Text>
+          ) : null}
           <Text
             style={[
               styles.description,
-              isProcessingScan && styles.descriptionHidden,
+              (isProcessingScan || manualEntryOpen) && styles.descriptionHidden,
             ]}
           >
             Center the barcode inside the frame. We&apos;ll do the rest.
           </Text>
         </View>
       </View>
+
+      {!isProcessingScan &&
+      !showProductNotFoundPopup &&
+      !showScannerErrorPopup ? (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.manualEntryKAV}
+        >
+          {manualEntryOpen ? (
+            <View style={styles.manualEntryRow}>
+              <TextInput
+                autoFocus
+                style={styles.manualEntryInput}
+                value={manualBarcodeText}
+                onChangeText={setManualBarcodeText}
+                placeholder="Enter barcode number"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                keyboardType="default"
+                returnKeyType="go"
+                autoCapitalize="none"
+                autoCorrect={false}
+                onSubmitEditing={handleManualBarcodeSubmit}
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Submit barcode"
+                onPress={handleManualBarcodeSubmit}
+                style={({ pressed }) =>
+                  pressed && styles.manualEntrySubmitPressed
+                }
+              >
+                <Ionicons
+                  name="arrow-forward-circle"
+                  size={38}
+                  color="#FFFFFF"
+                />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close barcode entry"
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setManualEntryOpen(false);
+                  setManualBarcodeText("");
+                }}
+                style={({ pressed }) =>
+                  pressed && styles.manualEntrySubmitPressed
+                }
+              >
+                <Ionicons
+                  name="close-circle"
+                  size={38}
+                  color="rgba(255,255,255,0.6)"
+                />
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setManualEntryOpen(true)}
+              style={({ pressed }) => [
+                styles.manualEntryPrompt,
+                pressed && styles.manualEntryPromptPressed,
+              ]}
+            >
+              <Text style={styles.manualEntryPromptText}>
+                Can&apos;t scan the barcode? Enter it here
+              </Text>
+            </Pressable>
+          )}
+        </KeyboardAvoidingView>
+      ) : null}
 
       {showProductNotFoundPopup ? (
         <View style={styles.notFoundPopupOverlay}>
@@ -423,7 +582,24 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: spacing.xl * 1.6,
     left: spacing.md,
-    alignItems: "flex-start",
+    right: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  torchButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  torchButtonActive: {
+    backgroundColor: "rgba(255,220,0,0.35)",
+  },
+  torchButtonPressed: {
+    opacity: 0.72,
   },
   closeButton: {
     backgroundColor: "rgba(255,255,255,0.18)",
@@ -453,6 +629,51 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.heading,
     color: "#FFFFFF",
     letterSpacing: -0.8,
+  },
+  manualEntryKAV: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  manualEntryPrompt: {
+    alignSelf: "center",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.xl * 1.5,
+  },
+  manualEntryPromptPressed: {
+    opacity: 0.65,
+  },
+  manualEntryPromptText: {
+    fontSize: 14,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "rgba(255,255,255,0.85)",
+    textAlign: "center",
+    textDecorationLine: "underline",
+  },
+  manualEntryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.xl * 1.5,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
+  },
+  manualEntryInput: {
+    flex: 1,
+    fontSize: 16,
+    fontFamily: typography.fontFamily.body,
+    color: "#FFFFFF",
+    paddingVertical: 6,
+  },
+  manualEntrySubmitPressed: {
+    opacity: 0.65,
   },
   description: {
     maxWidth: 320,

@@ -1949,6 +1949,19 @@ export default function SupplementInfoModal() {
                                   </Text>
                                 ) : null}
                               </View>
+                              {item?.doseConfidence === "unverified" ? (
+                                <View style={styles.doseUnverifiedBadge}>
+                                  <Ionicons
+                                    name="alert-circle-outline"
+                                    size={11}
+                                    color="#7A6010"
+                                    style={styles.doseUnverifiedIcon}
+                                  />
+                                  <Text style={styles.doseUnverifiedText}>
+                                    Unverified dose
+                                  </Text>
+                                </View>
+                              ) : null}
                               {item?.doseStatusLabel
                                 ? (() => {
                                     const tooltipKey = `${
@@ -2687,6 +2700,27 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textSecondary,
+  },
+  doseUnverifiedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    marginTop: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: "rgba(239,197,82,0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(239,197,82,0.4)",
+  },
+  doseUnverifiedIcon: {
+    marginRight: 3,
+  },
+  doseUnverifiedText: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "#7A6010",
   },
   ingredientMeta: {
     marginTop: 2,

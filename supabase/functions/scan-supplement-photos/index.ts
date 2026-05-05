@@ -30,6 +30,7 @@ const TABLES = {
 const REVIEW_TYPES = {
   aliasUnresolved: "alias_unresolved",
   dosageMalformed: "dosage_malformed",
+  doseUnverified: "dose_unverified",
 };
 
 const ALLOWED_UNITS = new Set(["mcg", "mg", "g", "ml", "IU", "CFU"]);
@@ -599,6 +600,138 @@ function normalizeUnit(value: unknown) {
   if (normalized === "iu") return "IU";
   if (normalized === "cfu") return "CFU";
   return normalized;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getUnitSearchVariants(rawUnit: string): string[] {
+  const normalized = normalizeUnit(rawUnit);
+  switch (normalized) {
+    case "mcg":
+      return ["mcg", "µg", "μg", "ug", "micrograms", "microgram"];
+    case "mg":
+      return ["mg", "milligrams", "milligram"];
+    case "g":
+      return ["g", "grams", "gram"];
+    case "ml":
+      return ["ml", "mL"];
+    case "IU":
+      return ["IU", "i.u.", "iu"];
+    case "CFU":
+      return ["CFU", "cfu"];
+    default:
+      return rawUnit ? [rawUnit] : [];
+  }
+}
+
+function buildDoseSearchPatterns(
+  rawValue: number,
+  rawUnit: string | null,
+  originalText: string | null
+): RegExp[] {
+  const patterns: RegExp[] = [];
+
+  if (originalText) {
+    try {
+      patterns.push(new RegExp(escapeRegExp(originalText.trim()), "i"));
+    } catch {}
+  }
+
+  if (!rawUnit) return patterns;
+
+  const unitVariants = getUnitSearchVariants(rawUnit);
+  const valueStr = String(rawValue);
+
+  for (const unitVariant of unitVariants) {
+    try {
+      patterns.push(
+        new RegExp(
+          `\\b${escapeRegExp(valueStr)}\\s*${escapeRegExp(unitVariant)}\\b`,
+          "i"
+        )
+      );
+    } catch {}
+  }
+
+  return patterns;
+}
+
+function verifyDoseAgainstOcr({
+  ingredientName,
+  rawDosageValue,
+  rawDosageUnit,
+  dosageOriginalText,
+  ocrText,
+}: {
+  ingredientName: string;
+  rawDosageValue: number | null;
+  rawDosageUnit: string | null;
+  dosageOriginalText: string | null;
+  ocrText: string;
+}): { confidence: "verified" | "unverified" | "missing"; reason: string | null } {
+  if (!Number.isFinite(rawDosageValue)) {
+    return { confidence: "missing", reason: null };
+  }
+
+  const cleanedOcr = ocrText.trim();
+  if (!cleanedOcr) {
+    return {
+      confidence: "unverified",
+      reason: "No OCR text available for verification",
+    };
+  }
+
+  const dosePatterns = buildDoseSearchPatterns(
+    rawDosageValue as number,
+    rawDosageUnit,
+    dosageOriginalText
+  );
+
+  if (!dosePatterns.length) {
+    return { confidence: "unverified", reason: "No dose patterns to verify" };
+  }
+
+  const ingredientKey = normalizeBroadIngredientName(ingredientName);
+  if (!ingredientKey) {
+    return {
+      confidence: "unverified",
+      reason: "Could not normalize ingredient name",
+    };
+  }
+
+  const ingredientWords = ingredientKey.split(" ").filter(Boolean);
+  const lines = cleanedOcr
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  for (let i = 0; i < lines.length; i++) {
+    const normalizedLine = normalizePlainText(lines[i]);
+
+    const ingredientOnLine =
+      normalizedLine.includes(ingredientKey) ||
+      (ingredientWords.length > 1 &&
+        ingredientWords.every((word) => normalizedLine.includes(word)));
+
+    if (!ingredientOnLine) continue;
+
+    const start = Math.max(0, i - 1);
+    const end = Math.min(lines.length - 1, i + 2);
+    const context = lines.slice(start, end + 1).join(" ");
+
+    for (const pattern of dosePatterns) {
+      if (pattern.test(context)) {
+        return { confidence: "verified", reason: null };
+      }
+    }
+  }
+
+  return {
+    confidence: "unverified",
+    reason: "Extracted dose could not be verified against OCR text",
+  };
 }
 
 function normalizeDosage({
@@ -1174,6 +1307,7 @@ function buildResolvedActiveIngredientRows({
   ingredients,
   aliasIndex,
   supplementNameIndex,
+  ocrText,
 }: {
   productId: string;
   ingredients: NormalizedIngredient[];
@@ -1185,6 +1319,7 @@ function buildResolvedActiveIngredientRows({
     string,
     { supplement_id: string; canonical_name: string }
   >;
+  ocrText: string;
 }) {
   const rowsBySignature = new Map<string, Record<string, unknown>>();
   const unresolvedRows: {
@@ -1196,6 +1331,11 @@ function buildResolvedActiveIngredientRows({
     raw_name: string;
     dosage_original_text: string | null;
     invalid_reason: string;
+  }[] = [];
+  const unverifiedDoses: {
+    ingredient_name: string;
+    extracted_dose: string | null;
+    reason: string;
   }[] = [];
 
   for (const ingredient of ingredients) {
@@ -1240,6 +1380,27 @@ function buildResolvedActiveIngredientRows({
       });
     }
 
+    const doseVerification = verifyDoseAgainstOcr({
+      ingredientName: canonicalName || rawName,
+      rawDosageValue: ingredient.dosage_value,
+      rawDosageUnit: ingredient.dosage_unit,
+      dosageOriginalText: ingredient.dosage_original_text,
+      ocrText,
+    });
+
+    if (doseVerification.confidence === "unverified") {
+      unverifiedDoses.push({
+        ingredient_name: canonicalName || rawName,
+        extracted_dose:
+          dosage.originalText ||
+          stringifyDosage(ingredient.dosage_value, ingredient.dosage_unit) ||
+          null,
+        reason:
+          doseVerification.reason ||
+          "Extracted dose could not be verified against OCR text",
+      });
+    }
+
     const nextRow = {
       product_id: productId,
       raw_name: rawName || canonicalName,
@@ -1263,6 +1424,8 @@ function buildResolvedActiveIngredientRows({
       source_model: openAiModel,
       source_prompt_version: EXTRACTION_PROMPT_VERSION,
       display_name: canonicalName || rawName,
+      dose_confidence: doseVerification.confidence,
+      dose_review_reason: doseVerification.reason,
     };
 
     const signature = buildActiveIngredientSignature(nextRow);
@@ -1304,6 +1467,10 @@ function buildResolvedActiveIngredientRows({
       (row) =>
         `${row.raw_name}|${row.dosage_original_text}|${row.invalid_reason}`
     ),
+    unverifiedDoses: dedupeByKey(
+      unverifiedDoses,
+      (row) => `${row.ingredient_name}|${row.extracted_dose}`
+    ),
   };
 }
 
@@ -1321,6 +1488,15 @@ function buildMasterActiveIngredients(activeRows: Record<string, unknown>[]) {
           null,
         chemicalForm: trimString(row.chemical_form) || null,
         amountBasis: trimString(row.amount_basis) || "unknown",
+        doseConfidence: ["verified", "unverified", "missing"].includes(
+          trimString(row.dose_confidence)
+        )
+          ? (trimString(row.dose_confidence) as
+              | "verified"
+              | "unverified"
+              | "missing")
+          : null,
+        doseReviewReason: trimString(row.dose_review_reason) || null,
       }))
       .filter((row) => row.name)
       .sort((left, right) => {
@@ -1628,6 +1804,7 @@ async function replaceReviewArtifacts({
   productId,
   unresolvedRows,
   malformedDosages,
+  unverifiedDoses,
 }: {
   productId: string;
   unresolvedRows: {
@@ -1639,6 +1816,11 @@ async function replaceReviewArtifacts({
     raw_name: string;
     dosage_original_text: string | null;
     invalid_reason: string;
+  }[];
+  unverifiedDoses: {
+    ingredient_name: string;
+    extracted_dose: string | null;
+    reason: string;
   }[];
 }) {
   const previousOccurrences = await fetchMissingOccurrencesForProduct(
@@ -1666,6 +1848,7 @@ async function replaceReviewArtifacts({
     .in("review_type", [
       REVIEW_TYPES.aliasUnresolved,
       REVIEW_TYPES.dosageMalformed,
+      REVIEW_TYPES.doseUnverified,
     ])
     .eq("status", "pending");
 
@@ -1774,6 +1957,26 @@ async function replaceReviewArtifacts({
     if (dosageReviewInsertError) {
       throw new Error(
         `[supabase:${TABLES.reviewQueue}] ${dosageReviewInsertError.message}`
+      );
+    }
+  }
+
+  if (unverifiedDoses.length) {
+    const { error: unverifiedReviewInsertError } = await adminSupabase!
+      .from(TABLES.reviewQueue)
+      .insert({
+        product_id: productId,
+        review_type: REVIEW_TYPES.doseUnverified,
+        payload: {
+          items: unverifiedDoses,
+          count: unverifiedDoses.length,
+        },
+        status: "pending",
+      });
+
+    if (unverifiedReviewInsertError) {
+      throw new Error(
+        `[supabase:${TABLES.reviewQueue}] ${unverifiedReviewInsertError.message}`
       );
     }
   }
@@ -2085,11 +2288,16 @@ Deno.serve(async (req) => {
 
     const aliasIndex = buildAliasIndex(aliasRows);
     const supplementNameIndex = buildSupplementNameIndex(approvedSupplements);
+    const rawOcrText =
+      aiResult.productText.ingredient_panel_text ||
+      aiResult.productText.raw_text ||
+      "";
     const resolvedIngredients = buildResolvedActiveIngredientRows({
       productId: productResolution.productId,
       ingredients: aiResult.extraction.ingredients_found,
       aliasIndex,
       supplementNameIndex,
+      ocrText: rawOcrText,
     });
 
     if (!resolvedIngredients.activeRows.length) {
@@ -2115,6 +2323,7 @@ Deno.serve(async (req) => {
       productId: productResolution.productId,
       unresolvedRows: resolvedIngredients.unresolvedRows,
       malformedDosages: resolvedIngredients.malformedDosages,
+      unverifiedDoses: resolvedIngredients.unverifiedDoses,
     });
 
     if (affectedReviewNames.length) {

@@ -3,6 +3,7 @@ import {
   Alert,
   Linking,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -58,6 +59,28 @@ function ContactIcon({ width, height, color }) {
   );
 }
 
+function ShareIcon({ width, height, color }) {
+  return (
+    <Ionicons
+      name="paper-plane-outline"
+      size={Math.min(width, height)}
+      color={color}
+    />
+  );
+}
+
+async function inviteFriendsAndFamily() {
+  try {
+    await Share.share({
+      message:
+        "I've been using Suppro to track my supplements. Check it out at https://suppro.co.uk",
+      url: "https://suppro.co.uk",
+    });
+  } catch (_error) {
+    // share sheet dismissed or failed — no action needed
+  }
+}
+
 async function contactSupport() {
   await Linking.openURL("mailto:hello@suppro.co.uk");
 }
@@ -71,19 +94,19 @@ const SETTINGS_ITEMS = [
   },
   {
     key: "manage-subscription",
-    label: "Manage Subscription",
+    label: "Manage subscription",
     onPress: manageSubscription,
     Icon: SubscriptionIcon,
   },
   {
     key: "restore-purchases",
-    label: "Restore Purchases",
+    label: "Restore purchases",
     onPress: restorePurchases,
     Icon: RestoreIcon,
   },
   {
     key: "my-supplements",
-    label: "My Supplements",
+    label: "My supplements",
     route: "/my-supplements",
     Icon: SupplementsIcon,
   },
@@ -101,9 +124,15 @@ const SETTINGS_ITEMS = [
   },
   {
     key: "questionnaire",
-    label: "Retake Questionnaire",
+    label: "Retake questionnaire",
     route: "/onboarding?mode=retake",
     Icon: QuestionnaireIcon,
+  },
+  {
+    key: "invite",
+    label: "Invite friends and family",
+    onPress: inviteFriendsAndFamily,
+    Icon: ShareIcon,
   },
   {
     key: "contact-us",

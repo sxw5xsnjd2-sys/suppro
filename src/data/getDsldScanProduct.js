@@ -281,14 +281,17 @@ async function fetchCachedDsldMatch(barcode, barcodeType) {
 
 function scoreLabelMatch(input, label) {
   const normalizedInputBarcode = normalizeOpenFoodFactsBarcode(input.barcode, input.barcodeType);
-  const normalizedLabelBarcode = trimString(label?.upcSku).replace(/\D/g, "");
+  const rawLabelBarcode = trimString(label?.upcSku).replace(/\D/g, "");
+  const labelBarcodeCandidates = new Set(rawLabelBarcode ? [rawLabelBarcode] : []);
+  if (/^\d{12}$/.test(rawLabelBarcode)) labelBarcodeCandidates.add(`0${rawLabelBarcode}`);
+  else if (/^0\d{12}$/.test(rawLabelBarcode)) labelBarcodeCandidates.add(rawLabelBarcode.slice(1));
   const normalizedInputName = normalizeName(input.productName);
   const normalizedLabelName = normalizeName(label?.fullName);
 
   let score = 0;
   const reasons = [];
 
-  if (normalizedLabelBarcode && normalizedLabelBarcode === normalizedInputBarcode) {
+  if (rawLabelBarcode && labelBarcodeCandidates.has(normalizedInputBarcode)) {
     score += 70;
     reasons.push("exact barcode match");
   }
@@ -329,8 +332,8 @@ function scoreLabelMatch(input, label) {
 }
 
 async function searchDsldCandidates(input) {
-  const normalizedBarcode = normalizeOpenFoodFactsBarcode(input.barcode, input.barcodeType);
-  const queries = [normalizedBarcode, `"${normalizedBarcode}"`].filter(Boolean);
+  const barcodeCandidates = buildBarcodeLookupCandidates(input.barcode, input.barcodeType);
+  const queries = barcodeCandidates.flatMap((b) => [b, `"${b}"`]);
   const hits = [];
 
   for (const query of queries) {

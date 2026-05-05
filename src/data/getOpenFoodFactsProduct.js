@@ -74,7 +74,15 @@ export function normalizeBarcode(barcode, barcodeType) {
 
   // Retail EAN/UPC lookups rely on canonical digit-only barcodes.
   if (RETAIL_BARCODE_TYPES.includes(normalizedType)) {
-    return rawBarcode.replace(/\D/g, "");
+    const cleaned = rawBarcode.replace(/\D/g, "");
+
+    // Some scanners report UPC-A codes as ean13 but strip the leading 0.
+    // Restore it so OpenFoodFacts receives the full EAN-13 barcode.
+    if (normalizedType === "ean13" && /^\d{12}$/.test(cleaned)) {
+      return `0${cleaned}`;
+    }
+
+    return cleaned;
   }
 
   // Code128/39/93 may encode manufacturer IDs with letters, so preserve them.
@@ -151,7 +159,10 @@ function flattenOpenFoodFactsIngredients(ingredients, depth = 0) {
 
   return ingredients.flatMap((ingredient) => {
     const label = formatOpenFoodFactsIngredientLabel(ingredient, depth);
-    const nested = flattenOpenFoodFactsIngredients(ingredient?.ingredients, depth + 1);
+    const nested = flattenOpenFoodFactsIngredients(
+      ingredient?.ingredients,
+      depth + 1
+    );
 
     return [label, ...nested].filter(Boolean);
   });

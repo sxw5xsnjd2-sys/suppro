@@ -26,6 +26,13 @@ function normalizeIngredient(item) {
     return null;
   }
 
+  const rawDoseConfidence = item.doseConfidence ?? item.dose_confidence ?? null;
+  const doseConfidence = ["verified", "unverified", "missing"].includes(
+    rawDoseConfidence
+  )
+    ? rawDoseConfidence
+    : null;
+
   return {
     name,
     dosageValue: normalizeNumber(item.dosageValue ?? item.dosage_value),
@@ -40,6 +47,9 @@ function normalizeIngredient(item) {
     chemicalForm:
       normalizeString(item.chemicalForm ?? item.chemical_form) || null,
     amountBasis: normalizeString(item.amountBasis ?? item.amount_basis) || null,
+    doseConfidence,
+    doseReviewReason:
+      normalizeString(item.doseReviewReason ?? item.dose_review_reason) || null,
   };
 }
 
@@ -48,9 +58,7 @@ function normalizeIngredients(value) {
     return [];
   }
 
-  return value
-    .map((item) => normalizeIngredient(item))
-    .filter(Boolean);
+  return value.map((item) => normalizeIngredient(item)).filter(Boolean);
 }
 
 function normalizeNumber(value) {
@@ -69,17 +77,27 @@ export async function scanSupplementPhotos(payload) {
 
   const accessToken = await getAccessTokenOrCreateSession();
 
-  const response = await fetch(`${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  const response = await fetch(
+    `${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(payload),
+    }
+  );
 
   if (!response.ok) {
     const errorText = await response.text();
+
+    console.log("scan-supplement-photos error response", {
+      status: response.status,
+      statusText: response.statusText,
+      errorText,
+    });
+
     let errorMessage = "";
 
     try {

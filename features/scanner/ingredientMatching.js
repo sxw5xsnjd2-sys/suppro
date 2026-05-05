@@ -782,6 +782,8 @@ export function extractIngredientCandidatesFromList(values) {
                 dosageDisplay: structured?.dosageDisplay,
                 chemicalForm: structured?.chemicalForm,
                 amountBasis: structured?.amountBasis,
+                doseConfidence: value.doseConfidence ?? null,
+                doseReviewReason: value.doseReviewReason ?? null,
               }
             );
           }
@@ -962,6 +964,8 @@ export function matchIngredientsToCatalog(ingredients, catalogRows) {
           ingredient.amountBasis,
           Number.isFinite(ingredient.amount) && Boolean(ingredient.unit)
         ),
+        doseConfidence: ingredient.doseConfidence ?? null,
+        doseReviewReason: ingredient.doseReviewReason ?? null,
       };
 
       if (
