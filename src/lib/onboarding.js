@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "./supabase";
-import { hasNonAnonymousSession } from "./authState";
+import { canEnterAuthenticatedApp, hasNonAnonymousSession } from "./authState";
 
 export const QUESTIONNAIRE_STORAGE_KEY = "suppro.onboarding.questionnaire.v1";
 export const ONBOARDING_DRAFT_STORAGE_KEY = "suppro.onboarding.draft.v1";
@@ -9,6 +9,7 @@ export const SIGNUP_COMPLETED_STORAGE_KEY =
   "suppro.onboarding.signupCompleted.v1";
 export const ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY =
   "suppro.onboarding.premiumCompleted.v1";
+const ACCOUNT_SETUP_COMPLETIONS_TABLE = "account_setup_completions";
 
 const onboardingGateListeners = new Set();
 
@@ -114,34 +115,77 @@ export async function clearOnboardingPremiumComplete() {
   notifyOnboardingGateChange();
 }
 
-export async function getOnboardingGateState() {
-  const { data } = await supabase.auth.getSession();
-  const loggedIn = hasNonAnonymousSession(data?.session ?? null);
-
-  if (loggedIn) {
-    await AsyncStorage.setItem(SIGNUP_COMPLETED_STORAGE_KEY, "true");
-    return "complete";
+export function resolveLoggedOutOnboardingGateState({
+  hasCompletedQuestionnaire,
+  signupCompleted,
+  hasCompletedOnboardingPremium,
+}) {
+  if (signupCompleted) {
+    return "needs_login";
   }
 
-  const answers = await getQuestionnaireAnswers();
-
-  if (!answers?.completedAt) {
+  if (!hasCompletedQuestionnaire) {
     return "needs_questions";
+  }
+
+  if (!hasCompletedOnboardingPremium) {
+    return "needs_paywall";
+  }
+
+  return "needs_signup";
+}
+
+async function hasCompletedAccountSetup(userId) {
+  if (typeof userId !== "string" || !userId.trim()) {
+    return false;
+  }
+
+  const { data, error } = await supabase
+    .from(ACCOUNT_SETUP_COMPLETIONS_TABLE)
+    .select("user_id, completed_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return Boolean(
+    typeof data?.completed_at === "string" && data.completed_at.trim()
+  );
+}
+
+export async function getOnboardingGateState() {
+  const { data } = await supabase.auth.getSession();
+  const session = data?.session ?? null;
+  const loggedIn = hasNonAnonymousSession(session);
+
+  if (loggedIn) {
+    const hasCompletedAccountMarker = await hasCompletedAccountSetup(
+      session?.user?.id
+    );
+
+    if (
+      canEnterAuthenticatedApp({
+        session,
+        hasCompletedAccountSetup: hasCompletedAccountMarker,
+      })
+    ) {
+      await AsyncStorage.setItem(SIGNUP_COMPLETED_STORAGE_KEY, "true");
+      return "complete";
+    }
   }
 
   const signupCompleted = await AsyncStorage.getItem(
     SIGNUP_COMPLETED_STORAGE_KEY
   );
+  const answers = await getQuestionnaireAnswers();
 
-  if (signupCompleted === "true") {
-    return "needs_login";
-  }
-
-  if (!(await hasCompletedOnboardingPremium())) {
-    return "needs_paywall";
-  }
-
-  return "needs_signup";
+  return resolveLoggedOutOnboardingGateState({
+    hasCompletedQuestionnaire: Boolean(answers?.completedAt),
+    signupCompleted: signupCompleted === "true",
+    hasCompletedOnboardingPremium: await hasCompletedOnboardingPremium(),
+  });
 }
 
 export async function hasCompletedOnboarding() {

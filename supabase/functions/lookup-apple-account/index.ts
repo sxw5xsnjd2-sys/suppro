@@ -152,7 +152,7 @@ Deno.serve(async (req) => {
       });
 
       if (matchingUser?.id) {
-        return jsonResponse({ exists: true, userId: matchingUser.id });
+        return jsonResponse({ exists: true });
       }
 
       if (!data?.nextPage || users.length === 0 || page >= data.lastPage) {

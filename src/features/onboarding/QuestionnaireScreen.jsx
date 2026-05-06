@@ -46,7 +46,6 @@ import {
 } from "@/features/supplements/schedule";
 import { appTheme, typography } from "@/theme";
 import SupproLogo from "@/assets/icons/Supprologo.png";
-import { supabase } from "@src/lib/supabase";
 import {
   clearOnboardingDraft,
   getQuestionnaireAnswers,
@@ -55,7 +54,6 @@ import {
   QUESTIONNAIRE_STORAGE_KEY,
   saveOnboardingDraft,
   SIGNUP_COMPLETED_STORAGE_KEY,
-  SIGNUP_PROMPTED_STORAGE_KEY,
 } from "@src/lib/onboarding";
 import {
   CheckRow,
@@ -1985,13 +1983,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       );
       await clearOnboardingDraft();
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const activeUser = sessionData?.session?.user ?? null;
-      if (activeUser && activeUser.is_anonymous !== true) {
-        await AsyncStorage.setItem(SIGNUP_COMPLETED_STORAGE_KEY, "true");
-        await AsyncStorage.setItem(SIGNUP_PROMPTED_STORAGE_KEY, "true");
-      }
-
       router.setParams({ mode: draftMode, step: "building" });
       notifyOnboardingGateChange();
       dispatch({ type: "setStep", stepKey: BUILDING_STEP_KEY });
@@ -2023,19 +2014,8 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
 
   const routeAfterBuilding = useCallback(async () => {
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const activeUser = sessionData?.session?.user ?? null;
-      const hasNonAnonymousSession = Boolean(
-        activeUser && activeUser.is_anonymous !== true
-      );
       const signupCompleted =
-        hasNonAnonymousSession ||
         (await AsyncStorage.getItem(SIGNUP_COMPLETED_STORAGE_KEY)) === "true";
-
-      if (hasNonAnonymousSession) {
-        await AsyncStorage.setItem(SIGNUP_COMPLETED_STORAGE_KEY, "true");
-        await AsyncStorage.setItem(SIGNUP_PROMPTED_STORAGE_KEY, "true");
-      }
 
       notifyOnboardingGateChange();
       triggerSuccess();

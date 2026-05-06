@@ -2,6 +2,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Crypto from "expo-crypto";
 import * as WebBrowser from "expo-web-browser";
+import { useChatStore } from "@/features/ai/store";
+import { useHealthStore } from "@/features/health/store";
+import { syncSupplementsStoreAccountScope } from "@/features/supplements/store";
+import { hasNonAnonymousSession, isAnonymousUser } from "./authState";
 import { supabase } from "./supabase";
 import {
   parseHeightCm,
@@ -14,16 +18,20 @@ import {
   SIGNUP_COMPLETED_STORAGE_KEY,
   SIGNUP_PROMPTED_STORAGE_KEY,
 } from "./onboarding";
+import {
+  getDeleteAccountCleanupStorageKeys,
+  getSignOutCleanupStorageKeys,
+} from "./localDataCleanup";
+import {
+  hasCompletedSupproAccountMarker,
+  shouldAttemptAccidentalOauthUserCleanup,
+  shouldRejectLoginModeOauthUser,
+} from "./oauthLoginState";
 
 WebBrowser.maybeCompleteAuthSession();
-
-export const SUPPLEMENTS_STORAGE_KEY_PREFIX = "supplement-store";
-export const HEALTH_STORAGE_KEY = "health-store";
-export const CHAT_STORAGE_KEY = "suppro.chatStore.v1";
-export const HEART_FLAGS_STORAGE_KEY = "supplement-heart-flags";
-export const AI_SUMMARY_CACHE_STORAGE_KEY = "suppro.stats.aiSummary.v1";
 export const DELETE_ACCOUNT_FUNCTION_NAME = "delete-account";
 export const LOOKUP_APPLE_ACCOUNT_FUNCTION_NAME = "lookup-apple-account";
+export const ACCOUNT_SETUP_COMPLETIONS_TABLE = "account_setup_completions";
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -183,26 +191,7 @@ export function formatAppleName(fullName) {
     .trim();
 }
 
-async function lookupExistingAppleAccount({ appleUserId, email }) {
-  const { data, error } = await supabase.functions.invoke(
-    LOOKUP_APPLE_ACCOUNT_FUNCTION_NAME,
-    {
-      body: {
-        appleUserId: trimString(appleUserId) || null,
-        email: normalizeEmail(email) || null,
-      },
-    }
-  );
-
-  if (error) {
-    throw new Error(error.message || "Could not verify your Suppro account.");
-  }
-
-  return data;
-}
-
-export async function signInWithAppleIdentity(options = {}) {
-  const { requireExistingAccount = false } = options;
+export async function signInWithAppleIdentity() {
   const rawNonce = Crypto.randomUUID();
   const hashedNonce = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
@@ -219,19 +208,6 @@ export async function signInWithAppleIdentity(options = {}) {
 
   if (!credential.identityToken) {
     throw new Error("Apple Sign In did not return an identity token.");
-  }
-
-  if (requireExistingAccount) {
-    const existingAccount = await lookupExistingAppleAccount({
-      appleUserId: credential.user,
-      email: credential.email,
-    });
-
-    if (!existingAccount?.exists) {
-      throw new Error(
-        "No existing Suppro account was found for this Apple ID. Create an account instead."
-      );
-    }
   }
 
   const { data, error } = await supabase.auth.signInWithIdToken({
@@ -310,33 +286,251 @@ export async function signInWithGoogleIdentity() {
   };
 }
 
+function noExistingOauthAccountMessage(provider) {
+  const providerLabel = provider === "apple" ? "Apple ID" : "Google account";
+  return `No existing Suppro account was found for this ${providerLabel}. Create an account instead.`;
+}
+
+async function getSupproAccountState(userId) {
+  const [
+    { data: profileData, error: profileError },
+    { data: completionData, error: completionError },
+  ] = await Promise.all([
+      supabase.from("profiles").select("id").eq("id", userId).maybeSingle(),
+      supabase
+        .from(ACCOUNT_SETUP_COMPLETIONS_TABLE)
+        .select("user_id, completed_at")
+        .eq("user_id", userId)
+        .maybeSingle(),
+    ]);
+
+  if (profileError || completionError) {
+    throw new Error("Could not verify your Suppro account. Please try again.");
+  }
+
+  return {
+    profileExists: Boolean(profileData?.id),
+    hasCompletedAccountMarker: hasCompletedSupproAccountMarker(completionData),
+  };
+}
+
+export async function markServerAccountCreationComplete(userId) {
+  if (!trimString(userId)) {
+    throw new Error("Could not finish setting up your account.");
+  }
+
+  const { data: sessionData, error: sessionError } =
+    await supabase.auth.getSession();
+  if (sessionError) {
+    throw new Error("Could not finish setting up your account.");
+  }
+
+  if (!hasNonAnonymousSession(sessionData?.session ?? null)) {
+    throw new Error("Could not finish setting up your account.");
+  }
+
+  const { error } = await supabase
+    .from(ACCOUNT_SETUP_COMPLETIONS_TABLE)
+    .upsert(
+      {
+        user_id: userId,
+        completed_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    );
+
+  if (error) {
+    throw new Error("Could not finish setting up your account.");
+  }
+}
+
+async function cleanupRejectedOauthLoginAttempt(accessToken) {
+  if (accessToken) {
+    try {
+      const { error } = await supabase.functions.invoke(
+        DELETE_ACCOUNT_FUNCTION_NAME,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      if (error) {
+        console.error("Failed to delete rejected OAuth login account", error);
+      }
+    } catch (error) {
+      console.error("Failed to invoke rejected OAuth login cleanup", error);
+    }
+  }
+
+  try {
+    await signOutAndClearLocalState();
+  } catch (error) {
+    console.error("Failed to clear rejected OAuth login session", error);
+    await clearLocalPersistedAppData({ preserveSignupCompleted: true });
+  }
+}
+
+export async function assertOauthLoginAllowed({
+  isCreateMode = false,
+  provider,
+  authData,
+  user,
+}) {
+  if (isCreateMode) {
+    return;
+  }
+
+  if (!user?.id) {
+    throw new Error("OAuth sign in did not return a user id.");
+  }
+
+  let profileState = {
+    profileExists: false,
+    hasCompletedAccountMarker: false,
+  };
+
+  try {
+    profileState = await getSupproAccountState(user.id);
+  } catch (error) {
+    try {
+      await signOutAndClearLocalState();
+    } catch (signOutError) {
+      console.error(
+        "Failed to clear OAuth session after verification error",
+        signOutError
+      );
+      await clearLocalPersistedAppData({ preserveSignupCompleted: true });
+    }
+
+    throw error;
+  }
+
+  const shouldReject = shouldRejectLoginModeOauthUser({
+    isCreateMode,
+    isAnonymousUser: isAnonymousUser(user),
+    profileExists: profileState.profileExists,
+    hasCompletedAccountMarker: profileState.hasCompletedAccountMarker,
+  });
+
+  if (!shouldReject) {
+    return;
+  }
+
+  const shouldAttemptCleanup = shouldAttemptAccidentalOauthUserCleanup({
+    isCreateMode,
+    profileExists: profileState.profileExists,
+    hasCompletedAccountMarker: profileState.hasCompletedAccountMarker,
+    user,
+  });
+
+  if (shouldAttemptCleanup) {
+    await cleanupRejectedOauthLoginAttempt(authData?.session?.access_token);
+  } else {
+    try {
+      await signOutAndClearLocalState();
+    } catch (error) {
+      console.error("Failed to clear rejected OAuth login session", error);
+      await clearLocalPersistedAppData({ preserveSignupCompleted: true });
+    }
+  }
+
+  throw new Error(noExistingOauthAccountMessage(provider));
+}
+
 export async function markAccountCreationComplete() {
+  const { data: sessionData, error: sessionError } =
+    await supabase.auth.getSession();
+
+  if (sessionError || !hasNonAnonymousSession(sessionData?.session ?? null)) {
+    throw new Error("Could not verify your account session.");
+  }
+
   await AsyncStorage.setItem(SIGNUP_COMPLETED_STORAGE_KEY, "true");
   notifyOnboardingGateChange();
 }
 
-export async function clearLocalPersistedAppData() {
-  const storageKeys = await AsyncStorage.getAllKeys();
-  const supplementStorageKeys = storageKeys.filter(
-    (key) =>
-      key === SUPPLEMENTS_STORAGE_KEY_PREFIX ||
-      key.startsWith(`${SUPPLEMENTS_STORAGE_KEY_PREFIX}:`)
-  );
+async function resetSignedOutStoreState() {
+  const results = await Promise.allSettled([
+    Promise.resolve().then(() => {
+      useHealthStore.getState().resetStore?.();
+    }),
+    Promise.resolve().then(() => {
+      useChatStore.getState().resetStore?.();
+    }),
+    syncSupplementsStoreAccountScope(null),
+  ]);
 
-  await AsyncStorage.multiRemove([
+  results.forEach((result) => {
+    if (result.status === "rejected") {
+      console.error("Failed to reset signed-out local store state", result.reason);
+    }
+  });
+}
+
+export async function clearLocalPersistedAppData(options = {}) {
+  const {
+    preserveSignupCompleted = false,
+    removeAccountScopedLocalData = false,
+    accountScopedUserId = null,
+  } = options;
+  const storageKeys = await AsyncStorage.getAllKeys();
+  const onboardingStorageKeys = [
     QUESTIONNAIRE_STORAGE_KEY,
     ONBOARDING_DRAFT_STORAGE_KEY,
     ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY,
     SIGNUP_PROMPTED_STORAGE_KEY,
     SIGNUP_COMPLETED_STORAGE_KEY,
-    ...supplementStorageKeys,
-    HEALTH_STORAGE_KEY,
-    CHAT_STORAGE_KEY,
-    HEART_FLAGS_STORAGE_KEY,
-    AI_SUMMARY_CACHE_STORAGE_KEY,
-  ]);
+  ];
+  const cleanupOptions = {
+    storageKeys,
+    onboardingStorageKeys,
+    excludeStorageKeys: preserveSignupCompleted
+      ? [SIGNUP_COMPLETED_STORAGE_KEY]
+      : [],
+  };
+  const removableKeys = removeAccountScopedLocalData
+    ? getDeleteAccountCleanupStorageKeys({
+        ...cleanupOptions,
+        accountScopedUserId,
+      })
+    : getSignOutCleanupStorageKeys(cleanupOptions);
+
+  try {
+    if (removableKeys.length > 0) {
+      await AsyncStorage.multiRemove(removableKeys);
+    }
+  } finally {
+    await resetSignedOutStoreState();
+    notifyOnboardingGateChange();
+  }
+}
+
+export async function signOutAndClearLocalState(options = {}) {
+  const {
+    preserveLoginGate = true,
+    removeAccountScopedLocalData = false,
+  } = options;
+  const { data: sessionData, error: sessionError } =
+    await supabase.auth.getSession();
+  if (sessionError) {
+    throw new Error(sessionError.message || "Could not sign out.");
+  }
+
+  const accountScopedUserId = sessionData?.session?.user?.id ?? null;
+  const { error } = await supabase.auth.signOut();
+  if (error) {
+    throw new Error(error.message || "Could not sign out.");
+  }
 
   notifyOnboardingGateChange();
+
+  await clearLocalPersistedAppData({
+    preserveSignupCompleted: preserveLoginGate,
+    removeAccountScopedLocalData,
+    accountScopedUserId,
+  });
 }
 
 export async function loadCurrentAccountProfile() {
@@ -350,7 +544,7 @@ export async function loadCurrentAccountProfile() {
   const session = sessionData?.session ?? null;
   const user = session?.user ?? null;
 
-  if (!user?.id) {
+  if (!user?.id || !hasNonAnonymousSession(session)) {
     return {
       session: null,
       user: null,

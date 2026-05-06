@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getClientId } from "./clientId";
+import { hasNonAnonymousSession } from "./authState";
 import {
   assertSupabaseConfig,
   logSupabaseRuntimeDiagnostics,
@@ -24,6 +25,14 @@ const authConfig = {
   },
 };
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, authConfig);
+const guestSupabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: false,
+    detectSessionInUrl: false,
+    flowType: "pkce",
+  },
+});
 // Per-device client used for user-scoped data.
 let scopedClientPromise = null;
 export async function getScopedSupabase() {
@@ -41,14 +50,41 @@ export async function getScopedSupabase() {
   })();
   return scopedClientPromise;
 }
+
+export async function clearAnonymousSessionIfPresent() {
+  const { data: sessionData, error: sessionError } =
+    await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+
+  const session = sessionData?.session ?? null;
+  if (hasNonAnonymousSession(session) || !session?.access_token) {
+    return false;
+  }
+
+  const { error: signOutError } = await supabase.auth.signOut();
+  if (signOutError) throw signOutError;
+  return true;
+}
+
 export async function getAccessTokenOrCreateSession() {
   const { data: sessionData, error: sessionError } =
     await supabase.auth.getSession();
   if (sessionError) throw sessionError;
-  const existingToken = sessionData?.session?.access_token;
-  if (existingToken) return existingToken;
+  const existingSession = sessionData?.session ?? null;
+  const existingToken = existingSession?.access_token;
+  if (existingToken && hasNonAnonymousSession(existingSession)) {
+    return existingToken;
+  }
+
+  const { data: guestSessionData, error: guestSessionError } =
+    await guestSupabase.auth.getSession();
+  if (guestSessionError) throw guestSessionError;
+
+  const guestToken = guestSessionData?.session?.access_token;
+  if (guestToken) return guestToken;
+
   const { data: anonData, error: anonError } =
-    await supabase.auth.signInAnonymously();
+    await guestSupabase.auth.signInAnonymously();
   if (anonError) {
     const lowerMessage = String(anonError.message || "").toLowerCase();
     if (lowerMessage.includes("anonymous sign-ins are disabled")) {

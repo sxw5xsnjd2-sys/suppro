@@ -246,6 +246,11 @@ export const useHealthStore = create()(
     (set) => ({
       ...buildInitialState(),
 
+      resetStore: () =>
+        set(() => ({
+          ...buildInitialState(),
+        })),
+
       addEntry: (entry) =>
         set((state) => ({
           entries: addManualEntry(state.entries, entry),

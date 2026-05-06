@@ -62,6 +62,21 @@ Deno.serve(async (req) => {
       );
     }
 
+    const { error: completionDeleteError } = await adminSupabase
+      .from("account_setup_completions")
+      .delete()
+      .eq("user_id", user.id);
+
+    if (completionDeleteError) {
+      return jsonResponse(
+        {
+          error: "Could not delete account completion marker.",
+          details: completionDeleteError.message,
+        },
+        500
+      );
+    }
+
     const { error: profileDeleteError } = await adminSupabase
       .from("profiles")
       .delete()

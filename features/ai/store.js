@@ -43,6 +43,7 @@ export const useChatStore = create()(persist((set) => ({
     messages: [],
     status: "idle",
     error: undefined,
+    resetStore: () => set({ messages: [], status: "idle", error: undefined }),
     addMessage: (msg) => set((state) => ({
         messages: [
             ...(Array.isArray(state.messages) ? state.messages : []),

@@ -28,8 +28,10 @@ import {
   hasCompletedQuestionnaire,
 } from "@src/lib/onboarding";
 import {
+  assertOauthLoginAllowed,
   buildProfilePayload,
   isLikelyEmail,
+  markServerAccountCreationComplete,
   markAccountCreationComplete,
   normalizeEmail,
   signInWithAppleIdentity,
@@ -326,9 +328,15 @@ export default function LoginScreen() {
       });
 
       if (data?.session) {
-        await supabase
+        const { error: profileError } = await supabase
           .from("profiles")
-          .upsert(profilePayload, { onConflict: "id" });
+          .upsert(profilePayload, {
+            onConflict: "id",
+          });
+        if (profileError) {
+          throw new Error(profileError.message || "Could not create account.");
+        }
+        await markServerAccountCreationComplete(userId);
         await markAccountCreationComplete();
         await clearOnboardingDraft();
         router.replace("/");
@@ -366,9 +374,14 @@ export default function LoginScreen() {
       }
 
       const { appleName, credential, data, user } =
-        await signInWithAppleIdentity({
-          requireExistingAccount: !isCreateMode,
-        });
+        await signInWithAppleIdentity();
+
+      await assertOauthLoginAllowed({
+        isCreateMode,
+        provider: "apple",
+        authData: data,
+        user,
+      });
 
       if (isCreateMode) {
         const userId = user.id;
@@ -390,9 +403,17 @@ export default function LoginScreen() {
           userId,
         });
 
-        await supabase
+        const { error: profileError } = await supabase
           .from("profiles")
-          .upsert(profilePayload, { onConflict: "id" });
+          .upsert(profilePayload, {
+            onConflict: "id",
+          });
+        if (profileError) {
+          throw new Error(
+            profileError.message || "Could not complete Apple sign in."
+          );
+        }
+        await markServerAccountCreationComplete(userId);
 
         await clearOnboardingDraft();
       }
@@ -434,7 +455,14 @@ export default function LoginScreen() {
         return;
       }
 
-      const { user } = await signInWithGoogleIdentity();
+      const { data, user } = await signInWithGoogleIdentity();
+
+      await assertOauthLoginAllowed({
+        isCreateMode,
+        provider: "google",
+        authData: data,
+        user,
+      });
 
       if (isCreateMode) {
         const profilePayload = buildProfilePayload({
@@ -443,9 +471,17 @@ export default function LoginScreen() {
           userId: user.id,
         });
 
-        await supabase
+        const { error: profileError } = await supabase
           .from("profiles")
-          .upsert(profilePayload, { onConflict: "id" });
+          .upsert(profilePayload, {
+            onConflict: "id",
+          });
+        if (profileError) {
+          throw new Error(
+            profileError.message || "Could not complete Google sign in."
+          );
+        }
+        await markServerAccountCreationComplete(user.id);
 
         await clearOnboardingDraft();
       }

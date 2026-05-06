@@ -30,12 +30,13 @@ import {
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { syncSupplementsStoreAccountScope } from "@/features/supplements/store";
 import { GlobalToast } from "@/components/common/ui/GlobalToast";
+import { hasNonAnonymousUser } from "@src/lib/authState";
 import {
   getOnboardingGateState,
   subscribeOnboardingGateChange,
 } from "@src/lib/onboarding";
 import { provisionOnboardingSelections } from "@src/lib/onboardingProvisioning";
-import { supabase } from "@src/lib/supabase";
+import { clearAnonymousSessionIfPresent, supabase } from "@src/lib/supabase";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -53,8 +54,9 @@ async function resolveAccountScopedStores(sessionUser) {
     user = data?.session?.user ?? null;
   }
 
-  await syncSupplementsStoreAccountScope(user);
-  return user;
+  const scopedUser = hasNonAnonymousUser(user) ? user : null;
+  await syncSupplementsStoreAccountScope(scopedUser);
+  return scopedUser;
 }
 
 function LoadingScreen({ overlay = false }) {
@@ -106,6 +108,10 @@ function RootNavigator() {
       gateRequestRef.current = requestId;
 
       try {
+        clearAnonymousSessionIfPresent().catch((error) => {
+          console.error("Failed to clear anonymous app session", error);
+        });
+
         const scopedUser = await resolveAccountScopedStores(sessionUser);
         const nextState = await getOnboardingGateState();
         if (mounted && requestId === gateRequestRef.current) {
@@ -136,17 +142,7 @@ function RootNavigator() {
     try {
       const authListener = supabase.auth.onAuthStateChange((event, session) => {
         if (event === "SIGNED_OUT") {
-          gateRequestRef.current += 1;
-          setGateState("needs_login");
-          setGateResolved(true);
-
-          resolveAccountScopedStores(null).catch((error) => {
-            console.error(
-              "Failed to clear account-scoped stores after sign out",
-              error
-            );
-          });
-
+          resolveGate(null);
           return;
         }
 
@@ -187,7 +183,7 @@ function RootNavigator() {
     }
 
     if (gateState === "needs_login") {
-      return true;
+      return isLoginRoute;
     }
 
     if (gateState === "needs_questions") {

@@ -20,6 +20,7 @@ import {
   isLikelyEmail,
   loadCurrentAccountProfile,
   normalizeEmail,
+  signOutAndClearLocalState,
 } from "@src/lib/account";
 
 function trimString(value) {
@@ -220,11 +221,7 @@ export default function AccountScreen() {
     setSigningOut(true);
 
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        throw new Error(error.message || "Could not sign out.");
-      }
-
+      await signOutAndClearLocalState();
       router.replace("/login?mode=login");
     } catch (error) {
       setAccountError(
@@ -272,13 +269,19 @@ export default function AccountScreen() {
         );
       }
 
-      const { error: signOutError } = await supabase.auth.signOut();
-      if (signOutError) {
-        console.error("Failed to clear local auth session", signOutError);
-      }
-
-      await clearLocalPersistedAppData();
-      router.dismissAll();
+      await signOutAndClearLocalState({
+        preserveLoginGate: false,
+        removeAccountScopedLocalData: true,
+      }).catch(
+        async (error) => {
+        console.error("Failed to clear local auth session", error);
+        await clearLocalPersistedAppData({
+          removeAccountScopedLocalData: true,
+          preserveSignupCompleted: false,
+          accountScopedUserId: account.user?.id ?? null,
+        });
+        }
+      );
       router.replace("/onboarding?mode=first_run");
     } catch (error) {
       setAccountError(
