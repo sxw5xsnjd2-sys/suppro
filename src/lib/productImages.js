@@ -32,11 +32,14 @@ export async function enrichProductImageIfNeeded(product) {
     const productId = trimString(product?.product_id || product?.id);
     if (!productId) return null;
 
-    await getAccessTokenOrCreateSession();
+    const accessToken = await getAccessTokenOrCreateSession();
 
     const { data, error } = await supabase.functions.invoke(
       "enrich-product-image",
       {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: { productId },
       }
     );

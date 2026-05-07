@@ -1,5 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  assertActiveRevenueCatEntitlement,
+  authenticateSupabaseUser,
+} from "../_shared/revenuecat.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -404,24 +408,21 @@ Deno.serve(async (req) => {
     }
 
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+    const authenticatedUser = await authenticateSupabaseUser({
+      adminSupabase,
+      authHeader,
+    });
+    if (!authenticatedUser.ok) {
+      return jsonResponse(authenticatedUser.body, authenticatedUser.status);
     }
 
-    const token = authHeader.replace("Bearer ", "").trim();
-    if (!token) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+    const authenticatedUserId = authenticatedUser.user.id;
+    const entitlementAccess = await assertActiveRevenueCatEntitlement({
+      userId: authenticatedUserId,
+    });
+    if (!entitlementAccess.ok) {
+      return jsonResponse(entitlementAccess.body, entitlementAccess.status);
     }
-
-    const {
-      data: { user },
-      error: authError,
-    } = await adminSupabase.auth.getUser(token);
-    if (authError || !user) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
-    }
-
-    const authenticatedUserId = user.id;
 
     if (mode === "chat") {
       const question =

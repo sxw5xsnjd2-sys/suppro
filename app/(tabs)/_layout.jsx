@@ -3,6 +3,7 @@ import { View, Pressable, StyleSheet, Text } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Tabs, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { appTheme, typography } from "@/theme";
 import HomeIcon from "@/assets/icons/tab/home.svg";
 import SupplementsIcon from "@/assets/icons/tab/supplements.svg";
@@ -27,7 +28,7 @@ function TabIcon({ routeName, color }) {
   return <AccountIcon {...iconProps} />;
 }
 
-function TabItem({ route, label, focused, navigation }) {
+function TabItem({ route, label, focused, navigation, requireSubscriptionAccess }) {
   const tintColor = focused
     ? appTheme.tabBar.activeLabelColor
     : appTheme.tabBar.inactiveLabelColor;
@@ -45,6 +46,13 @@ function TabItem({ route, label, focused, navigation }) {
         });
 
         if (!focused && !event.defaultPrevented) {
+          if (
+            route.name === "health" &&
+            !requireSubscriptionAccess("health_tab")
+          ) {
+            return;
+          }
+
           navigation.navigate(route.name);
         }
       }}
@@ -76,6 +84,7 @@ function TabItem({ route, label, focused, navigation }) {
 }
 
 function CustomTabBar({ state, descriptors, navigation, insets }) {
+  const { requireSubscriptionAccess } = useSubscriptionAccess();
   const visibleRoutes = VISIBLE_TABS.map((name) =>
     state.routes.find((route) => route.name === name)
   ).filter(Boolean);
@@ -98,6 +107,7 @@ function CustomTabBar({ state, descriptors, navigation, insets }) {
         label={label}
         focused={currentRouteName === route.name}
         navigation={navigation}
+        requireSubscriptionAccess={requireSubscriptionAccess}
       />
     );
   };
@@ -123,7 +133,13 @@ function CustomTabBar({ state, descriptors, navigation, insets }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Scan product"
-        onPress={() => router.push("/scanner")}
+        onPress={() => {
+          if (!requireSubscriptionAccess("scanner")) {
+            return;
+          }
+
+          router.push("/scanner");
+        }}
         style={({ pressed }) => [
           styles.scanButton,
           {

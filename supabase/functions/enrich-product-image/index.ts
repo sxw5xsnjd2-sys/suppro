@@ -1,5 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  assertActiveRevenueCatEntitlement,
+  authenticateSupabaseUser,
+} from "../_shared/revenuecat.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1038,6 +1042,22 @@ Deno.serve(async (req) => {
         { error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY secret." },
         500
       );
+    }
+
+    const authHeader = req.headers.get("Authorization");
+    const authenticatedUser = await authenticateSupabaseUser({
+      adminSupabase,
+      authHeader,
+    });
+    if (!authenticatedUser.ok) {
+      return jsonResponse(authenticatedUser.body, authenticatedUser.status);
+    }
+
+    const entitlementAccess = await assertActiveRevenueCatEntitlement({
+      userId: authenticatedUser.user.id,
+    });
+    if (!entitlementAccess.ok) {
+      return jsonResponse(entitlementAccess.body, entitlementAccess.status);
     }
 
     const body = await req.json().catch(() => ({}));

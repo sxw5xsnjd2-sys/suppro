@@ -4,15 +4,10 @@ import { Redirect, Stack, useLocalSearchParams } from "expo-router";
 import QuestionnaireScreen from "@src/features/onboarding/QuestionnaireScreen";
 
 function OnboardingPaywallStep() {
-  const { RevenueCatProvider } = require("@/features/subscriptions/RevenueCatProvider");
   const OnboardingPaywallScreen =
     require("@src/features/onboarding/OnboardingPaywallScreen").default;
 
-  return (
-    <RevenueCatProvider>
-      <OnboardingPaywallScreen />
-    </RevenueCatProvider>
-  );
+  return <OnboardingPaywallScreen />;
 }
 
 export default function OnboardingScreen() {

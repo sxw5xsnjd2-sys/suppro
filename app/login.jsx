@@ -19,6 +19,7 @@ import { router, Stack, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
 import { typography } from "@/theme";
 import { supabase } from "@src/lib/supabase";
 import {
@@ -109,6 +110,7 @@ function AccountActionButton({
 export default function LoginScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+  const { syncIdentityForCurrentSession } = useRevenueCat();
   const { height } = useWindowDimensions();
   const [mode, setMode] = useState(() => modeFromParam(params.mode));
   const [questionnaireComplete, setQuestionnaireComplete] = useState(null);
@@ -287,6 +289,7 @@ export default function LoginScreen() {
       }
 
       await markAccountCreationComplete();
+      await syncIdentityForCurrentSession();
       router.replace("/");
     } catch (error) {
       setErrorMessage(
@@ -339,6 +342,7 @@ export default function LoginScreen() {
         await markServerAccountCreationComplete(userId);
         await markAccountCreationComplete();
         await clearOnboardingDraft();
+        await syncIdentityForCurrentSession();
         router.replace("/");
         return;
       }
@@ -419,6 +423,7 @@ export default function LoginScreen() {
       }
 
       await markAccountCreationComplete();
+      await syncIdentityForCurrentSession();
       router.replace("/");
     } catch (error) {
       if (
@@ -487,6 +492,7 @@ export default function LoginScreen() {
       }
 
       await markAccountCreationComplete();
+      await syncIdentityForCurrentSession();
       router.replace("/");
     } catch (error) {
       setErrorMessage(

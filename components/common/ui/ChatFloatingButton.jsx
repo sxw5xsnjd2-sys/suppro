@@ -3,11 +3,13 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { appTheme } from "@/theme";
 import MessagesIcon from "@/assets/icons/tab/messages.svg";
 
 export function ChatFloatingButton({ style }) {
   const insets = useSafeAreaInsets();
+  const { requireSubscriptionAccess } = useSubscriptionAccess();
 
   return (
     <View
@@ -23,7 +25,13 @@ export function ChatFloatingButton({ style }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Open AI chat"
-        onPress={() => router.push("/modal/ai-chat")}
+        onPress={() => {
+          if (!requireSubscriptionAccess("ai_chat")) {
+            return;
+          }
+
+          router.push("/modal/ai-chat");
+        }}
         style={({ pressed }) => [
           styles.button,
           pressed && styles.buttonPressed,

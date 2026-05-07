@@ -8,12 +8,18 @@ import {
   AppHeader,
   EmptyStateCard,
 } from "@/components/common/ui";
+import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { appTheme, spacing, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { Icon } from "@/features/supplements/icons/Icon";
 import { getSupplementScheduleLabel } from "@/features/supplements/schedule";
 
-function SupplementRow({ supplement, showBorder }) {
+function SupplementRow({
+  supplement,
+  showBorder,
+  requireSubscriptionAccess,
+}) {
   const scheduleLabel = getSupplementScheduleLabel(supplement);
 
   const meta = [supplement.time, supplement.dose?.trim()]
@@ -24,12 +30,16 @@ function SupplementRow({ supplement, showBorder }) {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Edit ${supplement.name}`}
-      onPress={() =>
+      onPress={() => {
+        if (!requireSubscriptionAccess("supplement_tracking")) {
+          return;
+        }
+
         router.push({
           pathname: "/(modals)/modal/supplement",
           params: { id: supplement.id },
-        })
-      }
+        });
+      }}
       style={({ pressed }) => [
         styles.row,
         showBorder && styles.rowBorder,
@@ -61,10 +71,32 @@ function SupplementRow({ supplement, showBorder }) {
 }
 
 export default function MySupplementsScreen() {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const supplements = useSupplementsStore((s) => s.supplements);
   const sorted = [...(supplements ?? [])].sort((a, b) =>
     (a.name ?? "").localeCompare(b.name ?? "")
   );
+  const safeBackAction = React.useMemo(
+    () =>
+      resolveBackNavigationAction({
+        canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
+        fallbackHref: "/settings",
+      }),
+    []
+  );
+
+  React.useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
 
   return (
     <BackdropScreen
@@ -72,7 +104,14 @@ export default function MySupplementsScreen() {
         <AppHeader
           leftSlot={
             <AppButton
-              onPress={() => router.back()}
+              onPress={() => {
+                if (safeBackAction.type === "back") {
+                  router.back();
+                  return;
+                }
+
+                router.replace(safeBackAction.href);
+              }}
               variant="overlay"
               size="icon"
               accessibilityLabel="Go back"
@@ -109,6 +148,7 @@ export default function MySupplementsScreen() {
               key={supplement.id}
               supplement={supplement}
               showBorder={index < sorted.length - 1}
+              requireSubscriptionAccess={requireSubscriptionAccess}
             />
           ))}
         </View>

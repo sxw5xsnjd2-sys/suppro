@@ -46,6 +46,8 @@ import {
 } from "@/features/supplements/catalog";
 import { BenefitIconBadge } from "@/features/supplements/components/BenefitIconBadge";
 import { useSupplementsStore } from "@/features/supplements/store";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
+import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { useToastStore } from "@/features/toast/toastStore";
 import { getTrackedScanMatchedIngredients } from "@/features/supplements/trackedScanContext";
 import {
@@ -271,47 +273,6 @@ function buildEvidenceSnippets(text) {
     .filter(Boolean);
 
   return blocks.length ? blocks.slice(0, 3) : [body];
-}
-
-function parseEvidenceSnippet(text) {
-  const body = typeof text === "string" ? text.trim() : "";
-  if (!body) {
-    return {
-      studyMeta: "Study details unavailable",
-      studyTitle: "No study title available",
-      studyFindings: "No evidence summary is available for this benefit yet.",
-    };
-  }
-
-  const quotedTitleMatch = body.match(
-    /^(.*?)(?::\s*)?["“]([^"”]+)["”]\.?\s*(.*)$/s
-  );
-
-  if (quotedTitleMatch) {
-    const [, rawMeta, rawTitle, rawFindings] = quotedTitleMatch;
-    return {
-      studyMeta:
-        rawMeta.trim().replace(/[:\s]+$/, "") || "Study details unavailable",
-      studyTitle: rawTitle.trim() || "No study title available",
-      studyFindings:
-        rawFindings.trim() ||
-        "No evidence summary is available for this benefit yet.",
-    };
-  }
-
-  const sentences = body
-    .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean);
-
-  return {
-    studyMeta: sentences[0] || "Study details unavailable",
-    studyTitle: sentences[1] || "No study title available",
-    studyFindings:
-      sentences.slice(2).join(" ") ||
-      sentences[1] ||
-      "No evidence summary is available for this benefit yet.",
-  };
 }
 
 function EvidenceRatingGauge({ value, toneScore }) {
@@ -976,6 +937,12 @@ function BenefitRow({
 }
 
 export default function SupplementInfoModal() {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const source = normalizeParam(params.source);
@@ -1018,6 +985,14 @@ export default function SupplementInfoModal() {
   const [headerAreaHeight, setHeaderAreaHeight] = useState(0);
   const collapsedHeaderAnimation = useRef(new Animated.Value(0)).current;
   const isCollapsedRef = useRef(false);
+  const safeBackAction = useMemo(
+    () =>
+      resolveBackNavigationAction({
+        canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
+        fallbackHref: "/",
+      }),
+    []
+  );
   const toastMessage = useToastStore((state) => state.message);
   const toastTarget = useToastStore((state) => state.target);
   const clearToast = useToastStore((state) => state.clear);
@@ -1041,7 +1016,23 @@ export default function SupplementInfoModal() {
   ].includes(scannerStatus);
 
   useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
+
+  useEffect(() => {
     let active = true;
+
+    if (!hasActiveAccess) {
+      setData(null);
+      setLoaded(false);
+      return () => {
+        active = false;
+      };
+    }
 
     if (!id) {
       if (!isScanStyledSource) {
@@ -1187,6 +1178,7 @@ export default function SupplementInfoModal() {
       active = false;
     };
   }, [
+    hasActiveAccess,
     id,
     isLiveScanSource,
     isTrackedScannedSource,
@@ -1205,6 +1197,13 @@ export default function SupplementInfoModal() {
 
   useEffect(() => {
     let active = true;
+
+    if (!hasActiveAccess) {
+      setBenefitRankings({});
+      return () => {
+        active = false;
+      };
+    }
 
     const loadBenefitRankings = async () => {
       const currentBenefits = data?.supplement_benefits ?? [];
@@ -1242,7 +1241,7 @@ export default function SupplementInfoModal() {
     return () => {
       active = false;
     };
-  }, [data?.supplement_benefits]);
+  }, [data?.supplement_benefits, hasActiveAccess]);
 
   const rating = data?.evidence_score;
 
@@ -1528,6 +1527,10 @@ export default function SupplementInfoModal() {
   };
 
   const handleAddSupplement = () => {
+    if (!requireSubscriptionAccess("supplement_tracking")) {
+      return;
+    }
+
     if (!canAddSupplement) return;
 
     if (isLiveScanSource) {
@@ -1587,11 +1590,20 @@ export default function SupplementInfoModal() {
       return;
     }
 
-    router.back();
+    if (safeBackAction.type === "back") {
+      router.back();
+      return;
+    }
+
+    router.replace(safeBackAction.href);
   };
 
   const handleOpenIngredient = (item) => {
     if (!item?.catalogId) {
+      return;
+    }
+
+    if (!requireSubscriptionAccess("supplement_info")) {
       return;
     }
 
@@ -1606,10 +1618,14 @@ export default function SupplementInfoModal() {
 
   const handleRescan = () => {
     resetScan();
-    router.back();
+    handleClose();
   };
 
   const handleOpenBComplexReference = () => {
+    if (!requireSubscriptionAccess("supplement_info")) {
+      return;
+    }
+
     router.push({
       pathname: "/modal/supplement-info",
       params: {
@@ -1620,6 +1636,10 @@ export default function SupplementInfoModal() {
   };
 
   const handleImproveScanWithPhotos = () => {
+    if (!requireSubscriptionAccess("photo_rescue")) {
+      return;
+    }
+
     if (!canImproveScanWithPhotos) {
       return;
     }
@@ -1633,6 +1653,10 @@ export default function SupplementInfoModal() {
   };
 
   const handleFavourite = async () => {
+    if (!requireSubscriptionAccess("favourites")) {
+      return;
+    }
+
     if (!canFavourite) {
       return;
     }
@@ -1718,6 +1742,7 @@ export default function SupplementInfoModal() {
 
   useEffect(() => {
     if (
+      !hasActiveAccess ||
       !loaded ||
       !shouldShowProductImage ||
       !productId ||
@@ -1775,7 +1800,18 @@ export default function SupplementInfoModal() {
     return () => {
       active = false;
     };
-  }, [data, loaded, productId, productImageUrl, shouldShowProductImage]);
+  }, [
+    data,
+    hasActiveAccess,
+    loaded,
+    productId,
+    productImageUrl,
+    shouldShowProductImage,
+  ]);
+
+  if (!hasActiveAccess) {
+    return <View style={styles.screenRoot} />;
+  }
 
   if (loaded && isProductNotRecognizedFailure) {
     return (
@@ -2220,6 +2256,10 @@ export default function SupplementInfoModal() {
                             );
                           }}
                           onBenefitPress={() => {
+                            if (!requireSubscriptionAccess("benefit_ranking")) {
+                              return;
+                            }
+
                             setIsBenefitScoreTooltipOpen(false);
                             router.push({
                               pathname: "/benefit-ranking",
@@ -2248,6 +2288,10 @@ export default function SupplementInfoModal() {
                             );
                           }}
                           onBenefitPress={() => {
+                            if (!requireSubscriptionAccess("benefit_ranking")) {
+                              return;
+                            }
+
                             setIsBenefitScoreTooltipOpen(false);
                             router.push({
                               pathname: "/benefit-ranking",

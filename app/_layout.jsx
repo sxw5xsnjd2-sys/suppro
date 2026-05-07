@@ -28,6 +28,7 @@ import {
   useFonts as useGeistMonoFonts,
 } from "@expo-google-fonts/geist-mono";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { RevenueCatProvider, useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
 import { syncSupplementsStoreAccountScope } from "@/features/supplements/store";
 import { GlobalToast } from "@/components/common/ui/GlobalToast";
 import { hasNonAnonymousUser } from "@src/lib/authState";
@@ -75,6 +76,7 @@ function LoadingScreen({ overlay = false }) {
 function RootNavigator() {
   const segments = useSegments();
   const params = useGlobalSearchParams();
+  useRevenueCat();
   const [gateState, setGateState] = useState(null);
   const [gateResolved, setGateResolved] = useState(false);
   const gateRequestRef = useRef(0);
@@ -92,12 +94,16 @@ function RootNavigator() {
   const isRetakeOnboarding = isOnboardingRoute && modeParam === "retake";
   const isBuildingOnboardingRoute =
     isOnboardingRoute && stepParam === "building";
+  const isAppSubscriptionGateRoute =
+    isOnboardingRoute &&
+    !isRetakeOnboarding &&
+    stepParam === "paywall" &&
+    originParam === "app";
   const isOnboardingScannerFlow =
     (segments[0] === "scanner" &&
       (sourceParam === "onboarding" || originParam === "onboarding")) ||
     ((segments[0] === "(modals)" || segments[0] === "modal") &&
       originParam === "onboarding");
-
   useEffect(() => {
     let mounted = true;
     let subscription = null;
@@ -231,13 +237,19 @@ function RootNavigator() {
     }
 
     if (gateState === "complete") {
-      return (isOnboardingRoute && !isRetakeOnboarding) || isLoginRoute;
+      return (
+        ((isOnboardingRoute &&
+          !isRetakeOnboarding &&
+          !isAppSubscriptionGateRoute) ||
+          isLoginRoute)
+      );
     }
 
     return !isOnRequiredGateRoute;
   }, [
     gateResolved,
     gateState,
+    isAppSubscriptionGateRoute,
     isLoginRoute,
     isOnRequiredGateRoute,
     isOnboardingRoute,
@@ -249,6 +261,9 @@ function RootNavigator() {
 
     if (gateState === "complete") {
       if ((isOnboardingRoute && !isRetakeOnboarding) || isLoginRoute) {
+        if (isAppSubscriptionGateRoute) {
+          return;
+        }
         router.replace("/");
       }
       return;
@@ -261,6 +276,7 @@ function RootNavigator() {
     gateState,
     gatedHref,
     gateResolved,
+    isAppSubscriptionGateRoute,
     isLoginRoute,
     isOnRequiredGateRoute,
     isOnboardingRoute,
@@ -333,7 +349,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider value={DefaultTheme}>
-          {fontsLoaded ? <RootNavigator /> : <LoadingScreen />}
+          <RevenueCatProvider>
+            {fontsLoaded ? <RootNavigator /> : <LoadingScreen />}
+          </RevenueCatProvider>
           <StatusBar style="dark" />
         </ThemeProvider>
       </SafeAreaProvider>

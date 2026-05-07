@@ -21,6 +21,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { AppButton, AppHeader, PrimaryCard } from "@/components/common/ui";
+import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { appTheme, spacing, typography } from "@/theme";
 import { useChatStore } from "@/features/ai/store";
 import { useSupplementsStore } from "@/features/supplements/store";
@@ -370,6 +372,12 @@ function MessageBubble({ message }) {
 }
 
 export function AiChatScreen({ presentation = "screen" }) {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const insets = useSafeAreaInsets();
   const isModal = presentation === "modal";
   const isTab = presentation === "tab";
@@ -395,6 +403,22 @@ export function AiChatScreen({ presentation = "screen" }) {
     bySupplement: {},
   });
   const scrollRef = useRef(null);
+  const safeBackAction = useMemo(
+    () =>
+      resolveBackNavigationAction({
+        canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
+        fallbackHref: "/",
+      }),
+    []
+  );
+
+  useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
 
   const chatStatsInput = useMemo(
     () =>
@@ -417,6 +441,16 @@ export function AiChatScreen({ presentation = "screen" }) {
   );
 
   useEffect(() => {
+    if (!hasActiveAccess) {
+      setEvidenceCatalog({
+        topOverall: [],
+        byBenefit: {},
+        benefitRoutes: {},
+        bySupplement: {},
+      });
+      return;
+    }
+
     let active = true;
 
     publicSupabase
@@ -447,7 +481,7 @@ export function AiChatScreen({ presentation = "screen" }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [hasActiveAccess]);
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -456,6 +490,10 @@ export function AiChatScreen({ presentation = "screen" }) {
   }, [messages, status]);
 
   const sendMessage = useCallback(async () => {
+    if (!requireSubscriptionAccess("ai_chat")) {
+      return;
+    }
+
     const question = draft.trim();
     if (!question || status === "loading") return;
 
@@ -523,13 +561,25 @@ export function AiChatScreen({ presentation = "screen" }) {
           : "Chat is unavailable right now. Please try again.";
       setStatus("error", message);
     }
-  }, [addMessage, chatStatsInput, draft, messages, setStatus, status]);
+  }, [
+    addMessage,
+    chatStatsInput,
+    draft,
+    requireSubscriptionAccess,
+    messages,
+    setStatus,
+    status,
+  ]);
 
   const isLoading = status === "loading";
   const canSend = draft.trim().length > 0 && !isLoading;
   const composerBottomSpacing = isModal
     ? Math.max(insets.bottom, spacing.sm)
     : 0;
+
+  if (!hasActiveAccess) {
+    return <BackdropScreen scrollable={false} />;
+  }
 
   return (
     <BackdropScreen
@@ -544,7 +594,14 @@ export function AiChatScreen({ presentation = "screen" }) {
           leftSlot={
             isModal ? (
               <AppButton
-                onPress={() => router.back()}
+                onPress={() => {
+                  if (safeBackAction.type === "back") {
+                    router.back();
+                    return;
+                  }
+
+                  router.replace(safeBackAction.href);
+                }}
                 variant="overlay"
                 size="icon"
                 accessibilityLabel="Close AI chat"

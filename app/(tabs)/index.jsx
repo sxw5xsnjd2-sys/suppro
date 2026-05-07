@@ -6,6 +6,7 @@ import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { HomeHeader } from "@/features/supplements/components/HomeHeader";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import {
   ChatFloatingButton,
   EvidenceDots,
@@ -36,6 +37,8 @@ const AI_SUMMARY_CACHE_KEY = "suppro.stats.aiSummary.v1";
 const AI_SUMMARY_WINDOW_DAYS = 30;
 
 function EmptyState() {
+  const { requireSubscriptionAccess } = useSubscriptionAccess();
+
   return (
     <PrimaryCard style={emptyStateStyles.card}>
       <Text style={emptyStateStyles.title}>No supplements due</Text>
@@ -47,7 +50,13 @@ function EmptyState() {
 
       <View style={emptyStateStyles.actionsRow}>
         <Pressable
-          onPress={() => router.push("/scanner")}
+          onPress={() => {
+            if (!requireSubscriptionAccess("scanner")) {
+              return;
+            }
+
+            router.push("/scanner");
+          }}
           style={({ pressed }) => [
             emptyStateStyles.action,
             pressed && emptyStateStyles.actionPressed,
@@ -69,12 +78,16 @@ function EmptyState() {
         <View style={emptyStateStyles.verticalDivider} />
 
         <Pressable
-          onPress={() =>
+          onPress={() => {
+            if (!requireSubscriptionAccess("supplement_search")) {
+              return;
+            }
+
             router.push({
               pathname: "/supplement-search",
               params: { mode: "info" },
-            })
-          }
+            });
+          }}
           style={({ pressed }) => [
             emptyStateStyles.action,
             pressed && emptyStateStyles.actionPressed,
@@ -490,6 +503,7 @@ function SupplementRow({
 }
 
 export default function HomeScreen() {
+  const { hasActiveAccess, requireSubscriptionAccess } = useSubscriptionAccess();
   const isFocused = useIsFocused();
   const supplements = useSupplementsStore((s) => s.supplements);
   const selectedDate = useSupplementsStore((s) => s.selectedDate);
@@ -530,9 +544,11 @@ export default function HomeScreen() {
 
   useEffect(() => {
     let active = true;
-    if (!supplements?.length) {
+    if (!hasActiveAccess || !supplements?.length) {
       setRatingBySupplementId({});
-      return;
+      return () => {
+        active = false;
+      };
     }
     getTrackedSupplementEvidenceScores(supplements)
       .then((map) => {
@@ -544,7 +560,7 @@ export default function HomeScreen() {
     return () => {
       active = false;
     };
-  }, [supplements]);
+  }, [hasActiveAccess, supplements]);
 
   const analysisStart = useMemo(() => {
     const dateCandidates = [today];
@@ -895,6 +911,16 @@ export default function HomeScreen() {
   }, [aiSummaryGeneratedAt]);
 
   useEffect(() => {
+    if (!hasActiveAccess) {
+      setAiSummaryText("");
+      setAiSummaryRecommendations([]);
+      setAiSummaryGeneratedAt(null);
+      setAiSummarySource("openai");
+      setAiSummaryLoading(false);
+      setAiSummaryError(null);
+      return undefined;
+    }
+
     if (!isFocused) return undefined;
     let cancelled = false;
 
@@ -1010,7 +1036,7 @@ export default function HomeScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isFocused, today, aiSummaryInput, aiFallbackSummary]);
+  }, [aiFallbackSummary, aiSummaryInput, hasActiveAccess, isFocused, today]);
 
   useEffect(() => {
     setAiSummaryExpanded(false);
@@ -1034,12 +1060,16 @@ export default function HomeScreen() {
       />
 
       <Pressable
-        onPress={() =>
+        onPress={() => {
+          if (!requireSubscriptionAccess("supplement_search")) {
+            return;
+          }
+
           router.push({
             pathname: "/supplement-search",
             params: { mode: "info" },
-          })
-        }
+          });
+        }}
         style={styles.searchField}
       >
         <Ionicons
@@ -1053,15 +1083,17 @@ export default function HomeScreen() {
         </Text>
       </Pressable>
 
-      <AISummaryCard
-        summary={aiSummaryText}
-        loading={aiSummaryLoading}
-        expanded={aiSummaryExpanded}
-        onToggleExpanded={() => setAiSummaryExpanded((prev) => !prev)}
-        generatedLabel={aiSummaryGeneratedLabel}
-        error={aiSummaryError}
-        source={aiSummarySource}
-      />
+      {hasActiveAccess ? (
+        <AISummaryCard
+          summary={aiSummaryText}
+          loading={aiSummaryLoading}
+          expanded={aiSummaryExpanded}
+          onToggleExpanded={() => setAiSummaryExpanded((prev) => !prev)}
+          generatedLabel={aiSummaryGeneratedLabel}
+          error={aiSummaryError}
+          source={aiSummarySource}
+        />
+      ) : null}
 
       {dueSupplements.length === 0 ? (
         <EmptyState />
@@ -1078,14 +1110,29 @@ export default function HomeScreen() {
                 taken={taken}
                 takenAt={takenTimes[supplement.id]}
                 score={score}
-                onPress={() => toggleTaken(supplement.id)}
-                onLongPress={() => openTrackedSupplementInfo(supplement)}
-                onEditPress={() =>
+                onPress={() => {
+                  if (!requireSubscriptionAccess("supplement_tracking")) {
+                    return;
+                  }
+
+                  toggleTaken(supplement.id);
+                }}
+                onLongPress={() =>
+                  openTrackedSupplementInfo(
+                    supplement,
+                    requireSubscriptionAccess
+                  )
+                }
+                onEditPress={() => {
+                  if (!requireSubscriptionAccess("supplement_tracking")) {
+                    return;
+                  }
+
                   router.push({
                     pathname: "/modal/supplement",
                     params: { id: supplement.id },
-                  })
-                }
+                  });
+                }}
               />
             );
           })}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Pressable,
@@ -11,6 +11,8 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { AppBackdrop } from "@/components/common/ui";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
+import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { appTheme, typography } from "@/theme";
 import {
   BLOOD_PRESSURE_METRIC_KEY,
@@ -193,11 +195,29 @@ function TrashIcon({ size = 15, color: c = appTheme.colors.textTertiary }) {
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function MetricDetailScreen() {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const { metric: metricKey } = useLocalSearchParams();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [period, setPeriod] = useState("W");
   const [addOpen, setAddOpen] = useState(false);
+  const safeBackAction = resolveBackNavigationAction({
+    canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
+    fallbackHref: "/(tabs)/health",
+  });
+
+  useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
 
   const rawMetric = PRESET_METRICS_BY_KEY[metricKey];
   const metric = useMemo(() => (rawMetric ? normalizeMetric(rawMetric) : null), [rawMetric]);
@@ -235,6 +255,10 @@ export default function MetricDetailScreen() {
   );
 
   const commitScore = (v) => {
+    if (!requireSubscriptionAccess("health_metric_entry")) {
+      return;
+    }
+
     setScoreValue(v);
     addEntry({
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -253,6 +277,10 @@ export default function MetricDetailScreen() {
     );
   }
 
+  if (!hasActiveAccess) {
+    return <View style={[styles.screen, { paddingTop: insets.top + 12 }]} />;
+  }
+
   const recentEntries = metricEntries.slice(-5).reverse();
 
   return (
@@ -269,7 +297,14 @@ export default function MetricDetailScreen() {
         {/* Top bar */}
         <View style={styles.topBar}>
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => {
+              if (safeBackAction.type === "back") {
+                router.back();
+                return;
+              }
+
+              router.replace(safeBackAction.href);
+            }}
             style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.7 }]}
           >
             <ArrowLeftIcon />
@@ -278,7 +313,13 @@ export default function MetricDetailScreen() {
             {metric.shortLabel || metric.label}
           </Text>
           <Pressable
-            onPress={() => setAddOpen(true)}
+            onPress={() => {
+              if (!requireSubscriptionAccess("health_metrics")) {
+                return;
+              }
+
+              setAddOpen(true);
+            }}
             style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.7 }]}
           >
             <PlusIcon />

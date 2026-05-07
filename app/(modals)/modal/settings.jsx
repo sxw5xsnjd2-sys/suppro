@@ -8,11 +8,16 @@ import {
   Text,
   View,
 } from "react-native";
-import Purchases from "react-native-purchases";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { AppButton, AppHeader } from "@/components/common/ui";
+import { REVENUECAT_ENTITLEMENT_ID } from "@/features/subscriptions/revenueCatConfig";
+import {
+  getRevenueCatSdk,
+  getRevenueCatUnavailableMessage,
+} from "@/features/subscriptions/revenueCatSdk";
+import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import ConnectionsIcon from "@/assets/icons/profile/connections.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
@@ -187,8 +192,18 @@ function SettingsItemRow({ item, showBorder = false }) {
 }
 
 async function manageSubscription() {
+  const sdk = getRevenueCatSdk();
+
+  if (!sdk.purchasesAvailable || !sdk.Purchases) {
+    Alert.alert(
+      "Manage subscription error",
+      getRevenueCatUnavailableMessage(sdk.error)
+    );
+    return;
+  }
+
   try {
-    await Purchases.showManageSubscriptions();
+    await sdk.Purchases.showManageSubscriptions();
   } catch (_error) {
     console.log("Manage subscription error:", _error);
 
@@ -197,13 +212,16 @@ async function manageSubscription() {
 }
 
 async function restorePurchases() {
+  const sdk = getRevenueCatSdk();
+
+  if (!sdk.purchasesAvailable || !sdk.Purchases) {
+    Alert.alert("Restore failed", getRevenueCatUnavailableMessage(sdk.error));
+    return;
+  }
+
   try {
-    const customerInfo = await Purchases.restorePurchases();
-
-    const entitlementId =
-      process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID || "Suppro Premium";
-
-    const isPremium = !!customerInfo.entitlements.active[entitlementId];
+    const customerInfo = await sdk.Purchases.restorePurchases();
+    const isPremium = !!customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
 
     if (isPremium) {
       Alert.alert("Purchases restored", "Your premium access is active.");
@@ -215,6 +233,20 @@ async function restorePurchases() {
   }
 }
 
+function goBackOrFallback() {
+  const action = resolveBackNavigationAction({
+    canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
+    fallbackHref: "/",
+  });
+
+  if (action.type === "back") {
+    router.back();
+    return;
+  }
+
+  router.replace(action.href);
+}
+
 export default function SettingsScreen() {
   return (
     <BackdropScreen
@@ -222,7 +254,7 @@ export default function SettingsScreen() {
         <AppHeader
           leftSlot={
             <AppButton
-              onPress={() => router.back()}
+              onPress={goBackOrFallback}
               variant="overlay"
               size="icon"
               accessibilityLabel="Go back"

@@ -6,8 +6,6 @@ import React, {
   useRef,
   useState,
 } from "react";
-import Purchases from "react-native-purchases";
-import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
 import { supabase } from "@src/lib/supabase";
 import { hasNonAnonymousUser } from "@src/lib/authState";
 import { getUserAuthProvider, getUserDisplayName } from "@src/lib/account";
@@ -16,9 +14,18 @@ import {
   REVENUECAT_ENTITLEMENT_ID,
   REVENUECAT_YEARLY_IDENTIFIER,
 } from "./revenueCatConfig";
+import {
+  resolveRevenueCatAccessState,
+  resolveRevenueCatIdentityAction,
+} from "./accessPolicy";
+import {
+  getRevenueCatSdk,
+  installRevenueCatLogHandler,
+  getRevenueCatUnavailableMessage,
+} from "./revenueCatSdk";
 
 const RevenueCatContext = createContext(null);
-const REVENUECAT_DEBUG_LOGS_ENABLED = true;
+const REVENUECAT_DEBUG_LOGS_ENABLED = false;
 
 function getRevenueCatAppUserId(user) {
   return hasNonAnonymousUser(user) ? user.id : null;
@@ -71,8 +78,12 @@ function getPreferredOffering(offerings) {
 }
 
 function isPurchaseCancelled(error) {
+  const sdk = getRevenueCatSdk();
+  const cancelledCode =
+    sdk.Purchases?.PURCHASES_ERROR_CODE?.PURCHASE_CANCELLED_ERROR ?? null;
+
   return (
-    error?.code === Purchases.PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR ||
+    (cancelledCode && error?.code === cancelledCode) ||
     error?.userCancelled === true
   );
 }
@@ -86,6 +97,7 @@ function toRevenueCatErrorMessage(error, fallbackMessage) {
 }
 
 export function RevenueCatProvider({ children }) {
+  const revenueCatSdk = useMemo(() => getRevenueCatSdk(), []);
   const [isReady, setIsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [configurationError, setConfigurationError] = useState("");
@@ -95,6 +107,7 @@ export function RevenueCatProvider({ children }) {
   const [customerInfo, setCustomerInfo] = useState(null);
   const [offerings, setOfferings] = useState(null);
   const [appUserId, setAppUserId] = useState("");
+  const [isIdentitySyncing, setIsIdentitySyncing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
@@ -103,6 +116,8 @@ export function RevenueCatProvider({ children }) {
 
   const hasConfiguredRef = useRef(false);
   const currentIdentifiedAppUserIdRef = useRef(null);
+  const identitySyncPromiseRef = useRef(null);
+  const identitySyncTargetRef = useRef("");
   const isMountedRef = useRef(false);
 
   const currentOffering = useMemo(
@@ -121,10 +136,22 @@ export function RevenueCatProvider({ children }) {
     () => isPremiumActive(customerInfo),
     [customerInfo]
   );
+  const accessState = useMemo(
+    () =>
+      resolveRevenueCatAccessState({
+        isReady,
+        isLoading,
+        isIdentitySyncing,
+        configurationError,
+        premiumActive,
+      }),
+    [configurationError, isIdentitySyncing, isLoading, isReady, premiumActive]
+  );
 
   const syncSubscriberAttributes = async (user) => {
     if (!hasConfiguredRef.current) return null;
     if (!hasNonAnonymousUser(user)) return null;
+    if (!revenueCatSdk.Purchases) return null;
 
     const displayName = getUserDisplayName({ user }) || null;
     const authProvider = getUserAuthProvider(user) || "";
@@ -132,15 +159,15 @@ export function RevenueCatProvider({ children }) {
 
     try {
       await Promise.all([
-        Purchases.setEmail(user?.email ?? null),
-        Purchases.setDisplayName(displayName),
-        Purchases.setAttributes({
+        revenueCatSdk.Purchases.setEmail(user?.email ?? null),
+        revenueCatSdk.Purchases.setDisplayName(displayName),
+        revenueCatSdk.Purchases.setAttributes({
           auth_provider: authProvider,
           suppro_user_id: stableUserId,
         }),
       ]);
 
-      return await Purchases.syncAttributesAndOfferingsIfNeeded();
+      return await revenueCatSdk.Purchases.syncAttributesAndOfferingsIfNeeded();
     } catch (error) {
       console.warn("[revenuecat] Failed to sync subscriber attributes", error);
       return null;
@@ -149,6 +176,7 @@ export function RevenueCatProvider({ children }) {
 
   const refreshState = async ({ silent = false } = {}) => {
     if (!hasConfiguredRef.current) return null;
+    if (!revenueCatSdk.Purchases) return null;
 
     if (!silent && isMountedRef.current) {
       setIsRefreshing(true);
@@ -162,12 +190,14 @@ export function RevenueCatProvider({ children }) {
 
       const [nextCustomerInfo, nextOfferings, nextAppUserId] =
         await Promise.all([
-          Purchases.getCustomerInfo(),
-          Purchases.getOfferings().catch((error) => {
-            console.log("[revenuecat] Error fetching offerings:", error);
+          revenueCatSdk.Purchases.getCustomerInfo(),
+          revenueCatSdk.Purchases.getOfferings().catch((error) => {
+            if (REVENUECAT_DEBUG_LOGS_ENABLED) {
+              console.log("[revenuecat] Error fetching offerings:", error);
+            }
             return null;
           }),
-          Purchases.getAppUserID(),
+          revenueCatSdk.Purchases.getAppUserID(),
         ]);
 
       if (REVENUECAT_DEBUG_LOGS_ENABLED && nextOfferings) {
@@ -209,34 +239,87 @@ export function RevenueCatProvider({ children }) {
 
   const syncIdentityForUser = async (user) => {
     if (!hasConfiguredRef.current) return null;
+    if (!revenueCatSdk.Purchases) return null;
 
     const nextIdentifiedAppUserId = getRevenueCatAppUserId(user);
+    const identityTarget = nextIdentifiedAppUserId ?? "";
+    const identityAction = resolveRevenueCatIdentityAction({
+      hasConfigured: hasConfiguredRef.current,
+      sessionAppUserId: identityTarget,
+      currentIdentifiedAppUserId: currentIdentifiedAppUserIdRef.current ?? "",
+    });
 
-    try {
-      if (
-        nextIdentifiedAppUserId &&
-        currentIdentifiedAppUserIdRef.current !== nextIdentifiedAppUserId
-      ) {
-        const result = await Purchases.logIn(nextIdentifiedAppUserId);
-        currentIdentifiedAppUserIdRef.current = nextIdentifiedAppUserId;
+    if (identityAction === "skip") {
+      return null;
+    }
 
+    if (
+      identitySyncPromiseRef.current &&
+      identitySyncTargetRef.current === identityTarget
+    ) {
+      return identitySyncPromiseRef.current;
+    }
+
+    const syncPromise = (async () => {
+      if (isMountedRef.current) {
+        setIsIdentitySyncing(true);
+        setActionError("");
+      }
+
+      try {
+        if (identityAction === "log_in" && nextIdentifiedAppUserId) {
+          const result = await revenueCatSdk.Purchases.logIn(
+            nextIdentifiedAppUserId
+          );
+          currentIdentifiedAppUserIdRef.current = nextIdentifiedAppUserId;
+
+          if (isMountedRef.current) {
+            setCustomerInfo(result.customerInfo);
+          }
+        } else if (identityAction === "log_out") {
+          const nextCustomerInfo = await revenueCatSdk.Purchases.logOut();
+          currentIdentifiedAppUserIdRef.current = null;
+
+          if (isMountedRef.current) {
+            setCustomerInfo(nextCustomerInfo);
+          }
+        }
+
+        await syncSubscriberAttributes(user);
+        return await refreshState({ silent: true });
+      } catch (error) {
         if (isMountedRef.current) {
-          setCustomerInfo(result.customerInfo);
+          setActionError(
+            toRevenueCatErrorMessage(
+              error,
+              "Could not sync your account with RevenueCat."
+            )
+          );
+        }
+        return null;
+      } finally {
+        if (identitySyncPromiseRef.current === syncPromise) {
+          identitySyncPromiseRef.current = null;
+          identitySyncTargetRef.current = "";
+        }
+        if (isMountedRef.current) {
+          setIsIdentitySyncing(false);
         }
       }
+    })();
 
-      await syncSubscriberAttributes(user);
-      await refreshState({ silent: true });
-    } catch (error) {
-      if (isMountedRef.current) {
-        setActionError(
-          toRevenueCatErrorMessage(
-            error,
-            "Could not sync your account with RevenueCat."
-          )
-        );
-      }
-    }
+    identitySyncPromiseRef.current = syncPromise;
+    identitySyncTargetRef.current = identityTarget;
+
+    return syncPromise;
+  };
+
+  const syncIdentityForCurrentSession = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    return syncIdentityForUser(session?.user ?? null);
   };
 
   useEffect(() => {
@@ -250,6 +333,16 @@ export function RevenueCatProvider({ children }) {
 
       const selection = getRevenueCatApiKeySelection();
       setConfigurationMode(selection.mode);
+
+      if (!revenueCatSdk.purchasesAvailable) {
+        if (isMountedRef.current) {
+          setConfigurationError(
+            getRevenueCatUnavailableMessage(revenueCatSdk.error)
+          );
+          setIsLoading(false);
+        }
+        return;
+      }
 
       if (!selection.apiKey) {
         if (isMountedRef.current) {
@@ -265,27 +358,26 @@ export function RevenueCatProvider({ children }) {
         } = await supabase.auth.getSession();
         const initialUser = session?.user ?? null;
         const initialAppUserId = getRevenueCatAppUserId(initialUser);
-        await Purchases.setLogLevel(
+        installRevenueCatLogHandler(revenueCatSdk.Purchases);
+        await revenueCatSdk.Purchases.setLogLevel(
           REVENUECAT_DEBUG_LOGS_ENABLED
-            ? Purchases.LOG_LEVEL.DEBUG
-            : Purchases.LOG_LEVEL.WARN
+            ? revenueCatSdk.Purchases.LOG_LEVEL.DEBUG
+            : revenueCatSdk.Purchases.LOG_LEVEL.WARN
         );
 
-        Purchases.configure({
+        const configuration = {
           apiKey: selection.apiKey,
           diagnosticsEnabled: REVENUECAT_DEBUG_LOGS_ENABLED,
-          storeKitVersion: Purchases.STOREKIT_VERSION.STOREKIT_2,
           ...(initialAppUserId ? { appUserID: initialAppUserId } : {}),
-        });
+        };
+        const storeKitVersion =
+          revenueCatSdk.Purchases.STOREKIT_VERSION?.STOREKIT_2;
 
-        if (REVENUECAT_DEBUG_LOGS_ENABLED) {
-          console.log("[revenuecat] Configured Purchases", {
-            mode: selection.mode,
-            hasAppUserID: Boolean(initialAppUserId),
-            entitlementId: REVENUECAT_ENTITLEMENT_ID,
-            yearlyIdentifier: REVENUECAT_YEARLY_IDENTIFIER,
-          });
+        if (storeKitVersion) {
+          configuration.storeKitVersion = storeKitVersion;
         }
+
+        revenueCatSdk.Purchases.configure(configuration);
 
         hasConfiguredRef.current = true;
         currentIdentifiedAppUserIdRef.current = initialAppUserId ?? null;
@@ -296,7 +388,9 @@ export function RevenueCatProvider({ children }) {
           }
         };
 
-        Purchases.addCustomerInfoUpdateListener(customerInfoListener);
+        revenueCatSdk.Purchases.addCustomerInfoUpdateListener(
+          customerInfoListener
+        );
 
         await syncSubscriberAttributes(initialUser);
         await refreshState({ silent: true });
@@ -330,20 +424,23 @@ export function RevenueCatProvider({ children }) {
       isMountedRef.current = false;
       subscription.unsubscribe();
       if (customerInfoListener) {
-        Purchases.removeCustomerInfoUpdateListener(customerInfoListener);
+        revenueCatSdk.Purchases.removeCustomerInfoUpdateListener(
+          customerInfoListener
+        );
       }
     };
-  }, []);
+  }, [revenueCatSdk]);
 
   const restorePurchases = async () => {
     if (!hasConfiguredRef.current) return false;
+    if (!revenueCatSdk.Purchases) return false;
 
     setIsRestoring(true);
     setActionError("");
     setActionMessage("");
 
     try {
-      const nextCustomerInfo = await Purchases.restorePurchases();
+      const nextCustomerInfo = await revenueCatSdk.Purchases.restorePurchases();
       if (isMountedRef.current) {
         setCustomerInfo(nextCustomerInfo);
         setActionMessage(
@@ -352,6 +449,7 @@ export function RevenueCatProvider({ children }) {
             : "Restore completed, but no active Suppro Premium entitlement was found."
         );
       }
+      await refreshState({ silent: true });
       return isPremiumActive(nextCustomerInfo);
     } catch (error) {
       if (isMountedRef.current) {
@@ -369,6 +467,7 @@ export function RevenueCatProvider({ children }) {
 
   const purchaseYearly = async () => {
     if (!hasConfiguredRef.current) return false;
+    if (!revenueCatSdk.Purchases) return false;
     if (!yearlyPackage) {
       setActionError(
         "No yearly package is available. Confirm your current RevenueCat offering includes the yearly product."
@@ -381,11 +480,14 @@ export function RevenueCatProvider({ children }) {
     setActionMessage("");
 
     try {
-      const result = await Purchases.purchasePackage(yearlyPackage);
+      const result = await revenueCatSdk.Purchases.purchasePackage(
+        yearlyPackage
+      );
       if (isMountedRef.current) {
         setCustomerInfo(result.customerInfo);
         setActionMessage("Suppro Premium unlocked.");
       }
+      await refreshState({ silent: true });
       return true;
     } catch (error) {
       if (isMountedRef.current) {
@@ -407,6 +509,12 @@ export function RevenueCatProvider({ children }) {
 
   const presentPremiumPaywall = async ({ ifNeeded = true } = {}) => {
     if (!hasConfiguredRef.current) return false;
+    if (!revenueCatSdk.uiAvailable || !revenueCatSdk.RevenueCatUI) {
+      if (isMountedRef.current) {
+        setActionError("The RevenueCat paywall could not be presented.");
+      }
+      return false;
+    }
 
     setIsPresentingPaywall(true);
     setActionError("");
@@ -415,30 +523,34 @@ export function RevenueCatProvider({ children }) {
     try {
       const options = currentOffering ? { offering: currentOffering } : {};
       const paywallResult = ifNeeded
-        ? await RevenueCatUI.presentPaywallIfNeeded({
+        ? await revenueCatSdk.RevenueCatUI.presentPaywallIfNeeded({
             requiredEntitlementIdentifier: REVENUECAT_ENTITLEMENT_ID,
             ...options,
           })
-        : await RevenueCatUI.presentPaywall(options);
+        : await revenueCatSdk.RevenueCatUI.presentPaywall(options);
 
       if (
-        paywallResult === PAYWALL_RESULT.PURCHASED ||
-        paywallResult === PAYWALL_RESULT.RESTORED
+        paywallResult === revenueCatSdk.PAYWALL_RESULT.PURCHASED ||
+        paywallResult === revenueCatSdk.PAYWALL_RESULT.RESTORED
       ) {
-        const nextCustomerInfo = await Purchases.getCustomerInfo();
+        const nextCustomerInfo = await revenueCatSdk.Purchases.getCustomerInfo();
         if (isMountedRef.current) {
           setCustomerInfo(nextCustomerInfo);
           setActionMessage(
-            paywallResult === PAYWALL_RESULT.PURCHASED
+            paywallResult === revenueCatSdk.PAYWALL_RESULT.PURCHASED
               ? "Suppro Premium unlocked."
               : "Purchases restored."
           );
         }
+        await refreshState({ silent: true });
         return true;
       }
 
-      if (paywallResult === PAYWALL_RESULT.NOT_PRESENTED && ifNeeded) {
-        const nextCustomerInfo = await Purchases.getCustomerInfo();
+      if (
+        paywallResult === revenueCatSdk.PAYWALL_RESULT.NOT_PRESENTED &&
+        ifNeeded
+      ) {
+        const nextCustomerInfo = await revenueCatSdk.Purchases.getCustomerInfo();
         const alreadyPremium = isPremiumActive(nextCustomerInfo);
         if (isMountedRef.current) {
           setCustomerInfo(nextCustomerInfo);
@@ -446,13 +558,14 @@ export function RevenueCatProvider({ children }) {
             setActionMessage("Suppro Premium is already active.");
           }
         }
+        await refreshState({ silent: true });
         return alreadyPremium;
       }
 
       if (isMountedRef.current) {
-        if (paywallResult === PAYWALL_RESULT.CANCELLED) {
+        if (paywallResult === revenueCatSdk.PAYWALL_RESULT.CANCELLED) {
           setActionMessage("Paywall dismissed.");
-        } else if (paywallResult === PAYWALL_RESULT.ERROR) {
+        } else if (paywallResult === revenueCatSdk.PAYWALL_RESULT.ERROR) {
           setActionError("The RevenueCat paywall could not be presented.");
         }
       }
@@ -473,19 +586,28 @@ export function RevenueCatProvider({ children }) {
   };
 
   const ensurePremiumAccess = async () => {
-    if (premiumActive) return true;
+    if (accessState.hasActiveAccess) return true;
+    if (!isReady || isLoading || isIdentitySyncing || configurationError) {
+      return false;
+    }
     return presentPremiumPaywall({ ifNeeded: true });
   };
 
   const openCustomerCenter = async () => {
     if (!hasConfiguredRef.current) return false;
+    if (!revenueCatSdk.uiAvailable || !revenueCatSdk.RevenueCatUI) {
+      if (isMountedRef.current) {
+        setActionError("Could not open Customer Center.");
+      }
+      return false;
+    }
 
     setIsOpeningCustomerCenter(true);
     setActionError("");
     setActionMessage("");
 
     try {
-      await RevenueCatUI.presentCustomerCenter({
+      await revenueCatSdk.RevenueCatUI.presentCustomerCenter({
         callbacks: {
           onRestoreCompleted: ({ customerInfo: nextCustomerInfo }) => {
             if (isMountedRef.current) {
@@ -536,6 +658,11 @@ export function RevenueCatProvider({ children }) {
       yearlyPackage,
       premiumEntitlement,
       premiumActive,
+      accessState,
+      hasActiveAccess: accessState.hasActiveAccess,
+      isIdentitySyncing,
+      sdkAvailable: revenueCatSdk.available,
+      uiAvailable: revenueCatSdk.uiAvailable,
       appUserId,
       entitlementId: REVENUECAT_ENTITLEMENT_ID,
       yearlyIdentifier: REVENUECAT_YEARLY_IDENTIFIER,
@@ -545,6 +672,7 @@ export function RevenueCatProvider({ children }) {
       isPresentingPaywall,
       isOpeningCustomerCenter,
       refreshState,
+      syncIdentityForCurrentSession,
       ensurePremiumAccess,
       purchaseYearly,
       presentPremiumPaywall,
@@ -559,6 +687,7 @@ export function RevenueCatProvider({ children }) {
       configurationMode,
       currentOffering,
       customerInfo,
+      isIdentitySyncing,
       isLoading,
       isOpeningCustomerCenter,
       isPresentingPaywall,
@@ -569,6 +698,10 @@ export function RevenueCatProvider({ children }) {
       offerings,
       premiumActive,
       premiumEntitlement,
+      accessState,
+      syncIdentityForCurrentSession,
+      revenueCatSdk.available,
+      revenueCatSdk.uiAvailable,
       yearlyPackage,
     ]
   );

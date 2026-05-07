@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
@@ -10,19 +10,25 @@ import {
   EmptyStateCard,
   PrimaryCard,
 } from "@/components/common/ui";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
+import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { appTheme, spacing, typography } from "@/theme";
 import { getSupplementById } from "@src/data/getSupplement";
 import { getHeartedSupplementIds } from "@/features/supplements/favouritesStorage";
 
-function FavouriteRow({ item }) {
+function FavouriteRow({ item, requireSubscriptionAccess }) {
   return (
     <PrimaryCard
-      onPress={() =>
+      onPress={() => {
+        if (!requireSubscriptionAccess("supplement_info")) {
+          return;
+        }
+
         router.push({
           pathname: "/modal/supplement-info",
           params: { id: item.id, name: item.name },
-        })
-      }
+        });
+      }}
       style={styles.rowCard}
       pressedStyle={styles.rowCardPressed}
     >
@@ -38,9 +44,31 @@ function FavouriteRow({ item }) {
 }
 
 export default function FavouritesScreen() {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const isFocused = useIsFocused();
   const [favourites, setFavourites] = useState([]);
   const [loading, setLoading] = useState(true);
+  const safeBackAction = useMemo(
+    () =>
+      resolveBackNavigationAction({
+        canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
+        fallbackHref: "/settings",
+      }),
+    []
+  );
+
+  useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
 
   const loadFavourites = useCallback(async () => {
     setLoading(true);
@@ -74,9 +102,13 @@ export default function FavouritesScreen() {
   }, []);
 
   useEffect(() => {
-    if (!isFocused) return;
+    if (!hasActiveAccess || !isFocused) return;
     loadFavourites();
-  }, [isFocused, loadFavourites]);
+  }, [hasActiveAccess, isFocused, loadFavourites]);
+
+  if (!hasActiveAccess) {
+    return <BackdropScreen scrollable={false} />;
+  }
 
   return (
     <BackdropScreen
@@ -84,7 +116,14 @@ export default function FavouritesScreen() {
         <AppHeader
           leftSlot={
             <AppButton
-              onPress={() => router.back()}
+              onPress={() => {
+                if (safeBackAction.type === "back") {
+                  router.back();
+                  return;
+                }
+
+                router.replace(safeBackAction.href);
+              }}
               variant="overlay"
               size="icon"
               accessibilityLabel="Go back"
@@ -122,7 +161,11 @@ export default function FavouritesScreen() {
       ) : (
         <View style={styles.cardsList}>
           {favourites.map((item) => (
-            <FavouriteRow key={item.id} item={item} />
+            <FavouriteRow
+              key={item.id}
+              item={item}
+              requireSubscriptionAccess={requireSubscriptionAccess}
+            />
           ))}
         </View>
       )}

@@ -20,6 +20,7 @@ import { BenefitIconBadge } from "@/features/supplements/components/BenefitIconB
 import {
   getBenefitIconComponent,
 } from "@/features/supplements/benefits";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { appTheme, spacing, typography } from "@/theme";
 import { supabase } from "@src/lib/supabase";
 
@@ -91,7 +92,7 @@ function normalizeBenefits(rows) {
   );
 }
 
-function BenefitListItem({ item, showBorder }) {
+function BenefitListItem({ item, showBorder, requireSubscriptionAccess }) {
   const Icon = getBenefitIconComponent(item.label);
   const badgeColor =
     BENEFIT_BADGE_COLORS[item.label] ?? appTheme.colors.iconSurfaceMuted;
@@ -101,12 +102,16 @@ function BenefitListItem({ item, showBorder }) {
       accessibilityRole="button"
       accessibilityLabel={item.label}
       accessibilityHint={`Open supplement rankings for ${item.label}.`}
-      onPress={() =>
+      onPress={() => {
+        if (!requireSubscriptionAccess("benefit_ranking")) {
+          return;
+        }
+
         router.push({
           pathname: "/benefit-ranking",
           params: { label: item.label },
-        })
-      }
+        });
+      }}
       style={({ pressed }) => [
         styles.benefitItem,
         showBorder && styles.benefitItemBorder,
@@ -134,18 +139,22 @@ function BenefitListItem({ item, showBorder }) {
   );
 }
 
-function SupplementResultItem({ item, showBorder }) {
+function SupplementResultItem({ item, showBorder, requireSubscriptionAccess }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={item.name}
       accessibilityHint={`Open supplement details for ${item.name}.`}
-      onPress={() =>
+      onPress={() => {
+        if (!requireSubscriptionAccess("supplement_info")) {
+          return;
+        }
+
         router.push({
           pathname: "/(modals)/modal/supplement-info",
           params: { id: item.id, name: item.name },
-        })
-      }
+        });
+      }}
       style={({ pressed }) => [
         styles.searchResultItem,
         showBorder && styles.searchResultBorder,
@@ -167,6 +176,7 @@ function SupplementResultItem({ item, showBorder }) {
 }
 
 export default function SupplementsScreen() {
+  const { hasActiveAccess, requireSubscriptionAccess } = useSubscriptionAccess();
   const [benefits, setBenefits] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [supplementMatches, setSupplementMatches] = useState([]);
@@ -187,6 +197,13 @@ export default function SupplementsScreen() {
   }, [benefits, hasSearchQuery, trimmedQuery]);
 
   useEffect(() => {
+    if (!hasActiveAccess) {
+      setBenefits([]);
+      setLoading(false);
+      setErrorMessage("");
+      return;
+    }
+
     let active = true;
 
     const loadBenefits = async () => {
@@ -217,9 +234,15 @@ export default function SupplementsScreen() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [hasActiveAccess]);
 
   useEffect(() => {
+    if (!hasActiveAccess) {
+      setSupplementMatches([]);
+      setSearchLoading(false);
+      return;
+    }
+
     if (!hasSearchQuery) {
       setSupplementMatches([]);
       setSearchLoading(false);
@@ -256,7 +279,7 @@ export default function SupplementsScreen() {
     return () => {
       active = false;
     };
-  }, [hasSearchQuery, trimmedQuery]);
+  }, [hasActiveAccess, hasSearchQuery, trimmedQuery]);
 
   const showEmptySearchState =
     hasSearchQuery &&
@@ -325,25 +348,44 @@ export default function SupplementsScreen() {
         />
       }
     >
-      <View style={styles.searchField}>
-        <Ionicons
-          name="search"
-          size={18}
-          color="#8B8595"
-          style={styles.searchFieldIcon}
-        />
-        <TextInput
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder="Search supplements or benefits"
-          placeholderTextColor="#8B8595"
-          selectionColor="#A6685B"
-          style={styles.searchFieldInput}
-          autoCapitalize="words"
-          clearButtonMode="while-editing"
+      {hasActiveAccess ? (
+        <View style={styles.searchField}>
+          <Ionicons
+            name="search"
+            size={18}
+            color="#8B8595"
+            style={styles.searchFieldIcon}
+          />
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search supplements or benefits"
+            placeholderTextColor="#8B8595"
+            selectionColor="#A6685B"
+            style={styles.searchFieldInput}
+            autoCapitalize="words"
+            clearButtonMode="while-editing"
+            accessibilityLabel="Search supplement rankings"
+          />
+        </View>
+      ) : (
+        <Pressable
+          accessibilityRole="button"
           accessibilityLabel="Search supplement rankings"
-        />
-      </View>
+          onPress={() => requireSubscriptionAccess("supplement_search")}
+          style={styles.searchField}
+        >
+          <Ionicons
+            name="search"
+            size={18}
+            color="#8B8595"
+            style={styles.searchFieldIcon}
+          />
+          <Text style={styles.searchFieldPlaceholder}>
+            Search supplements or benefits
+          </Text>
+        </Pressable>
+      )}
 
       {loading ? (
         <View style={styles.stateCard}>
@@ -358,7 +400,7 @@ export default function SupplementsScreen() {
         />
       ) : null}
 
-      {!loading && !errorMessage && benefits.length === 0 ? (
+      {hasActiveAccess && !loading && !errorMessage && benefits.length === 0 ? (
         <EmptyStateCard
           title="No ranked benefits"
           description="No approved supplement benefits are available yet."
@@ -385,6 +427,7 @@ export default function SupplementsScreen() {
                   key={item.id}
                   item={item}
                   showBorder={index < supplementMatches.length - 1}
+                  requireSubscriptionAccess={requireSubscriptionAccess}
                 />
               ))}
             </PrimaryCard>
@@ -398,6 +441,7 @@ export default function SupplementsScreen() {
                   key={item.label}
                   item={item}
                   showBorder={index < filteredBenefits.length - 1}
+                  requireSubscriptionAccess={requireSubscriptionAccess}
                 />
               ))}
             </PrimaryCard>
@@ -508,6 +552,13 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textPrimary,
     paddingVertical: 0,
+  },
+  searchFieldPlaceholder: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: "#8B8595",
   },
   stateCard: {
     marginBottom: spacing.md,

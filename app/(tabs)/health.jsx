@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { ChatFloatingButton } from "@/components/common/ui";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { appTheme, colors, typography } from "@/theme";
 import {
   INPUT_ARCHETYPES,
@@ -156,6 +157,12 @@ function PlusIcon({ size = 16, color: c = appTheme.colors.textStrong }) {
 }
 
 export default function HealthScreen() {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const isFocused = useIsFocused();
@@ -175,6 +182,14 @@ export default function HealthScreen() {
 
   const today = useMemo(() => todayYYYYMMDD(), []);
   const [metricPickerOpen, setMetricPickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
 
   const normalizedMetrics = useMemo(() => {
     const currentMetrics = new Map(
@@ -228,6 +243,10 @@ export default function HealthScreen() {
   };
 
   const handleScoreChange = (metric, value) => {
+    if (!requireSubscriptionAccess("health_metric_entry")) {
+      return;
+    }
+
     setScoreDrafts((prev) => ({ ...prev, [metric.key]: value }));
     addEntry({
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -247,6 +266,10 @@ export default function HealthScreen() {
     refreshAppleHealth();
   }, [isAppleHealthConnected, isFocused, isIOS, isSyncing, lastSyncedAt, refreshAppleHealth]);
 
+  if (!hasActiveAccess) {
+    return <BackdropScreen scrollable={false} />;
+  }
+
   return (
     <BackdropScreen
       headerBehavior="collapsible"
@@ -259,7 +282,13 @@ export default function HealthScreen() {
           <View style={styles.headerTop}>
             <Text style={styles.headerTitle}>HEALTH</Text>
             <Pressable
-              onPress={() => setMetricPickerOpen(true)}
+              onPress={() => {
+                if (!requireSubscriptionAccess("health_metrics")) {
+                  return;
+                }
+
+                setMetricPickerOpen(true);
+              }}
               style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.7 }]}
               accessibilityLabel="Add metric"
             >
@@ -279,7 +308,13 @@ export default function HealthScreen() {
             Pick a few daily metrics, then log them inline alongside your supplement routine.
           </Text>
           <Pressable
-            onPress={() => setMetricPickerOpen(true)}
+            onPress={() => {
+              if (!requireSubscriptionAccess("health_metrics")) {
+                return;
+              }
+
+              setMetricPickerOpen(true);
+            }}
             style={({ pressed }) => [styles.emptyAction, pressed && { opacity: 0.8 }]}
           >
             <Text style={styles.emptyActionText}>Pick metrics to track</Text>
@@ -315,7 +350,13 @@ export default function HealthScreen() {
                   metric={m}
                   todayEntry={todayEntry}
                   entries={entries}
-                  onPress={() => router.push(`/health/${m.key}`)}
+                  onPress={() => {
+                    if (!requireSubscriptionAccess("health_metric_detail")) {
+                      return;
+                    }
+
+                    router.push(`/health/${m.key}`);
+                  }}
                 />
               );
             }
@@ -333,12 +374,26 @@ export default function HealthScreen() {
                         entries={entries}
                         value={getScoreValue(m)}
                         onValueChange={(v) => handleScoreChange(m, v)}
-                        onPress={() => router.push(`/health/${m.key}`)}
+                        onPress={() => {
+                          if (!requireSubscriptionAccess("health_metric_detail")) {
+                            return;
+                          }
+
+                          router.push(`/health/${m.key}`);
+                        }}
                       />
                     );
                   })}
                   {row.showAdd && (
-                    <AddMetricPlaceholder onPress={() => setMetricPickerOpen(true)} />
+                    <AddMetricPlaceholder
+                      onPress={() => {
+                        if (!requireSubscriptionAccess("health_metrics")) {
+                          return;
+                        }
+
+                        setMetricPickerOpen(true);
+                      }}
+                    />
                   )}
                 </View>
               );

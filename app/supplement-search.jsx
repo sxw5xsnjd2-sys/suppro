@@ -18,6 +18,8 @@ import {
   EmptyStateCard,
   PrimaryCard,
 } from "@/components/common/ui";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
+import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { CATALOG_TYPES } from "@/features/supplements/catalog";
 import { appTheme, spacing, typography } from "@/theme";
 import { searchSupplementCatalog } from "@src/data/searchSupplementCatalog";
@@ -109,6 +111,12 @@ function LoadingCard() {
 }
 
 export default function SupplementSearchScreen() {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const params = useLocalSearchParams();
   const mode = asString(params.mode) === "picker" ? "picker" : "info";
   const initialQuery = asString(params.initialQuery);
@@ -122,8 +130,30 @@ export default function SupplementSearchScreen() {
     mode === "picker"
       ? "Pick an active ingredient or supplement product."
       : "Browse active ingredients and supplement products.";
+  const safeBackAction = useMemo(
+    () =>
+      resolveBackNavigationAction({
+        canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
+        fallbackHref: "/",
+      }),
+    []
+  );
 
   useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
+
+  useEffect(() => {
+    if (!hasActiveAccess) {
+      setSections([]);
+      setLoading(false);
+      return;
+    }
+
     if (!trimmedQuery) {
       setSections([]);
       setLoading(false);
@@ -148,7 +178,7 @@ export default function SupplementSearchScreen() {
     return () => {
       active = false;
     };
-  }, [trimmedQuery]);
+  }, [hasActiveAccess, trimmedQuery]);
 
   useEffect(() => {
     let active = true;
@@ -211,6 +241,10 @@ export default function SupplementSearchScreen() {
   };
 
   const handleSelect = (item) => {
+    if (!requireSubscriptionAccess("supplement_info")) {
+      return;
+    }
+
     saveRecentSearch(item);
 
     if (mode === "picker") {
@@ -264,6 +298,10 @@ export default function SupplementSearchScreen() {
     );
   };
 
+  if (!hasActiveAccess) {
+    return <BackdropScreen scrollable={false} />;
+  }
+
   return (
     <BackdropScreen
       scrollable={false}
@@ -276,7 +314,14 @@ export default function SupplementSearchScreen() {
           bottomPadding={8}
           leftSlot={
             <AppButton
-              onPress={() => router.back()}
+              onPress={() => {
+                if (safeBackAction.type === "back") {
+                  router.back();
+                  return;
+                }
+
+                router.replace(safeBackAction.href);
+              }}
               variant="overlay"
               size="icon"
               accessibilityLabel="Close supplement search"

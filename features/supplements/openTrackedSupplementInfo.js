@@ -2,8 +2,18 @@ import { router } from "expo-router";
 import { CATALOG_TYPES, getCatalogType } from "@/features/supplements/catalog";
 import { hasTrackedScanContext } from "@/features/supplements/trackedScanContext";
 
-export function openTrackedSupplementInfo(supplement) {
+export function openTrackedSupplementInfo(
+  supplement,
+  requireSubscriptionAccess = null
+) {
   if (!supplement) {
+    return;
+  }
+
+  if (
+    typeof requireSubscriptionAccess === "function" &&
+    !requireSubscriptionAccess("supplement_info")
+  ) {
     return;
   }
 

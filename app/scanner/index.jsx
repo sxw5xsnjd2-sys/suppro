@@ -14,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import { AppButton, PrimaryCard } from "@/components/common/ui";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { leaveScannerScreen } from "@/features/scanner/navigation";
 import { appTheme, spacing, typography } from "@/theme";
 import { useScannerStore } from "@/features/scanner/store";
@@ -62,6 +63,12 @@ function inferBarcodeType(text) {
 }
 
 export default function ScannerScreen() {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const params = useLocalSearchParams();
   const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
@@ -117,6 +124,14 @@ export default function ScannerScreen() {
   }, []);
 
   useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
+
+  useEffect(() => {
     if (!isFocused || !permission || hasRequestedRef.current) return;
     if (permission.granted || permission.status !== "undetermined") return;
 
@@ -154,6 +169,10 @@ export default function ScannerScreen() {
   };
 
   const handleTakePictures = () => {
+    if (!requireSubscriptionAccess("photo_rescue")) {
+      return;
+    }
+
     if (!Number.isFinite(scanSessionId) || scanSessionId <= 0) {
       return;
     }
@@ -168,6 +187,10 @@ export default function ScannerScreen() {
   };
 
   const handleManualBarcodeSubmit = async () => {
+    if (!requireSubscriptionAccess("scanner")) {
+      return;
+    }
+
     const raw = manualBarcodeText.trim().replace(/[\s-]/g, "");
     if (!raw) return;
 
@@ -206,6 +229,10 @@ export default function ScannerScreen() {
   };
 
   const handleBarcodeScanned = async (event) => {
+    if (!requireSubscriptionAccess("scanner")) {
+      return;
+    }
+
     if (!isFocused || hasScannedRef.current || hasScanned) return;
 
     const barcodeType = event?.type;
@@ -265,6 +292,10 @@ export default function ScannerScreen() {
       console.warn("[scanner] failed to resume preview", error);
     });
   }, [isFocused, isProcessingScan]);
+
+  if (!hasActiveAccess) {
+    return <View style={styles.screen} />;
+  }
 
   if (!CameraView) {
     return (

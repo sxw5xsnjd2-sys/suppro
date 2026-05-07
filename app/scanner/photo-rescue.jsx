@@ -11,6 +11,7 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import { AppButton, PrimaryCard } from "@/components/common/ui";
 import { leaveScannerScreen } from "@/features/scanner/navigation";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { useScannerStore } from "@/features/scanner/store";
 import { appTheme, spacing, typography } from "@/theme";
 
@@ -89,6 +90,12 @@ function PhotoRescueFallback({
 }
 
 export default function ScannerPhotoRescueScreen() {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const params = useLocalSearchParams();
   const requestedScanSessionId = normalizeIntegerParam(params.scanSessionId);
   const [permission, requestPermission] = useCameraPermissions();
@@ -124,6 +131,14 @@ export default function ScannerPhotoRescueScreen() {
       cameraModuleError
     );
   }, []);
+
+  useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
 
   const permissionDenied = useMemo(() => {
     return permission && !permission.granted && permission.status !== "undetermined";
@@ -183,6 +198,10 @@ export default function ScannerPhotoRescueScreen() {
   };
 
   const handleCapture = async () => {
+    if (!requireSubscriptionAccess("photo_rescue")) {
+      return;
+    }
+
     if (submitting) return;
 
     setCaptureError("");
@@ -275,6 +294,10 @@ export default function ScannerPhotoRescueScreen() {
         onPrimaryPress={() => Linking.openSettings()}
       />
     );
+  }
+
+  if (!hasActiveAccess) {
+    return <View style={styles.screen} />;
   }
 
   return (

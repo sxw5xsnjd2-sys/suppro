@@ -16,6 +16,8 @@ import {
   getBenefitColor,
   getBenefitIconComponent,
 } from "@/features/supplements/benefits";
+import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
+import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { appTheme, spacing, typography } from "@/theme";
 import { supabase } from "@src/lib/supabase";
 
@@ -25,13 +27,38 @@ function normalizeParam(value) {
 }
 
 export default function BenefitRankingScreen() {
+  const {
+    hasActiveAccess,
+    isResolved,
+    openSubscriptionPaywall,
+    requireSubscriptionAccess,
+  } = useSubscriptionAccess();
   const params = useLocalSearchParams();
   const benefitLabel = normalizeParam(params.label).trim();
   const [rankedSupplements, setRankedSupplements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const safeBackAction = resolveBackNavigationAction({
+    canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
+    fallbackHref: "/(tabs)/supplements",
+  });
 
   useEffect(() => {
+    if (hasActiveAccess || !isResolved) {
+      return;
+    }
+
+    openSubscriptionPaywall({ replace: true });
+  }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
+
+  useEffect(() => {
+    if (!hasActiveAccess) {
+      setRankedSupplements([]);
+      setLoading(false);
+      setErrorMessage("");
+      return;
+    }
+
     let active = true;
 
     const loadRankings = async () => {
@@ -73,7 +100,11 @@ export default function BenefitRankingScreen() {
     return () => {
       active = false;
     };
-  }, [benefitLabel]);
+  }, [benefitLabel, hasActiveAccess]);
+
+  if (!hasActiveAccess) {
+    return <BackdropScreen scrollable={false} />;
+  }
 
   return (
     <BackdropScreen
@@ -83,7 +114,14 @@ export default function BenefitRankingScreen() {
         <AppHeader
           leftSlot={
             <AppButton
-              onPress={() => router.back()}
+              onPress={() => {
+                if (safeBackAction.type === "back") {
+                  router.back();
+                  return;
+                }
+
+                router.replace(safeBackAction.href);
+              }}
               variant="overlay"
               size="icon"
               accessibilityLabel="Go back"
@@ -141,12 +179,16 @@ export default function BenefitRankingScreen() {
             return (
               <PrimaryCard
                 key={item.id}
-                onPress={() =>
+                onPress={() => {
+                  if (!requireSubscriptionAccess("supplement_info")) {
+                    return;
+                  }
+
                   router.push({
                     pathname: "/modal/supplement-info",
                     params: { id: item.id, name: item.name },
-                  })
-                }
+                  });
+                }}
                 style={styles.rankCard}
                 pressedStyle={styles.rankCardPressed}
               >

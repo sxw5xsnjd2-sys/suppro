@@ -1,5 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  assertActiveRevenueCatEntitlement,
+  authenticateSupabaseUser,
+} from "../_shared/revenuecat.ts";
 
 declare const EdgeRuntime:
   | {
@@ -2067,22 +2071,20 @@ Deno.serve(async (req) => {
     }
 
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+    const authenticatedUser = await authenticateSupabaseUser({
+      adminSupabase,
+      authHeader,
+    });
+
+    if (!authenticatedUser.ok) {
+      return jsonResponse(authenticatedUser.body, authenticatedUser.status);
     }
 
-    const token = authHeader.replace("Bearer ", "").trim();
-    if (!token) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
-    }
-
-    const {
-      data: { user },
-      error: authError,
-    } = await adminSupabase.auth.getUser(token);
-
-    if (authError || !user) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+    const entitlementAccess = await assertActiveRevenueCatEntitlement({
+      userId: authenticatedUser.user.id,
+    });
+    if (!entitlementAccess.ok) {
+      return jsonResponse(entitlementAccess.body, entitlementAccess.status);
     }
 
     const body = await req.json();
