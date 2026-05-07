@@ -34,37 +34,15 @@ function normalizeEmail(value: unknown) {
   return trimString(value).toLowerCase();
 }
 
-function isAppleIdentityMatch(
-  identity: Record<string, unknown> | null | undefined,
-  appleUserId: string,
-  email: string
-) {
-  if (!identity || trimString(identity.provider) !== "apple") {
-    return false;
-  }
+function isLikelyEmail(value: string) {
+  return /^\S+@\S+\.\S+$/.test(value);
+}
 
-  const identityData =
-    identity.identity_data && typeof identity.identity_data === "object"
-      ? (identity.identity_data as Record<string, unknown>)
-      : null;
-
-  const candidateIds = [
-    trimString(identity.id),
-    trimString(identity.identity_id),
-    trimString(identity.user_id),
-    trimString(identityData?.sub),
-  ].filter(Boolean);
-
-  if (appleUserId && candidateIds.includes(appleUserId)) {
-    return true;
-  }
-
-  if (!email) {
-    return false;
-  }
-
-  const identityEmail = normalizeEmail(identityData?.email);
-  return identityEmail === email;
+function extractBearerToken(req: Request) {
+  const authorization =
+    req.headers.get("authorization") ?? req.headers.get("Authorization") ?? "";
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : "";
 }
 
 function userHasAppleProvider(user: Record<string, unknown>) {
@@ -92,6 +70,54 @@ function userHasAppleProvider(user: Record<string, unknown>) {
   return providers.some((provider) => trimString(provider) === "apple");
 }
 
+function getAuthenticatedAppleAccount(user: Record<string, unknown>) {
+  const identities = Array.isArray(user.identities) ? user.identities : [];
+  const appleIds = new Set<string>();
+  const appleEmails = new Set<string>();
+
+  for (const identity of identities) {
+    if (!identity || typeof identity !== "object") {
+      continue;
+    }
+
+    const identityRecord = identity as Record<string, unknown>;
+    if (trimString(identityRecord.provider) !== "apple") {
+      continue;
+    }
+
+    const identityData =
+      identityRecord.identity_data &&
+      typeof identityRecord.identity_data === "object"
+        ? (identityRecord.identity_data as Record<string, unknown>)
+        : null;
+
+    [
+      trimString(identityRecord.id),
+      trimString(identityRecord.identity_id),
+      trimString(identityRecord.user_id),
+      trimString(identityData?.sub),
+    ]
+      .filter(Boolean)
+      .forEach((candidateId) => appleIds.add(candidateId));
+
+    const identityEmail = normalizeEmail(identityData?.email);
+    if (identityEmail) {
+      appleEmails.add(identityEmail);
+    }
+  }
+
+  const userEmail = normalizeEmail(user.email);
+  if (userEmail && userHasAppleProvider(user)) {
+    appleEmails.add(userEmail);
+  }
+
+  return {
+    hasAppleProvider: userHasAppleProvider(user),
+    appleIds,
+    appleEmails,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -102,9 +128,18 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const requestBody = await req.json().catch(() => ({}));
-    const appleUserId = trimString(requestBody?.appleUserId);
-    const email = normalizeEmail(requestBody?.email);
+    const requestBody = await req.json().catch(() => null);
+    if (
+      !requestBody ||
+      typeof requestBody !== "object" ||
+      Array.isArray(requestBody)
+    ) {
+      return jsonResponse({ error: "Invalid request payload." }, 400);
+    }
+
+    const request = requestBody as Record<string, unknown>;
+    const appleUserId = trimString(request.appleUserId);
+    const email = normalizeEmail(request.email);
 
     if (!appleUserId && !email) {
       return jsonResponse(
@@ -113,63 +148,38 @@ Deno.serve(async (req) => {
       );
     }
 
-    let page = 1;
-
-    while (true) {
-      const { data, error } = await adminSupabase.auth.admin.listUsers({
-        page,
-        perPage: 200,
-      });
-
-      if (error) {
-        return jsonResponse(
-          {
-            error: "Could not verify Apple account.",
-            details: error.message,
-          },
-          500
-        );
-      }
-
-      const users = data?.users ?? [];
-      const matchingUser = users.find((user) => {
-        const userEmail = normalizeEmail(user.email);
-        const identities = Array.isArray(user.identities) ? user.identities : [];
-
-        const identityMatch = identities.some((identity) =>
-          isAppleIdentityMatch(
-            identity as Record<string, unknown>,
-            appleUserId,
-            email
-          )
-        );
-
-        if (identityMatch) {
-          return true;
-        }
-
-        return email ? userEmail === email && userHasAppleProvider(user) : false;
-      });
-
-      if (matchingUser?.id) {
-        return jsonResponse({ exists: true });
-      }
-
-      if (!data?.nextPage || users.length === 0 || page >= data.lastPage) {
-        break;
-      }
-
-      page = data.nextPage;
+    if (email && !isLikelyEmail(email)) {
+      return jsonResponse({ error: "Invalid email." }, 400);
     }
 
-    return jsonResponse({ exists: false });
-  } catch (error) {
-    return jsonResponse(
-      {
-        error: "Unexpected Apple account lookup failure.",
-        details: error instanceof Error ? error.message : String(error),
-      },
-      500
+    const accessToken = extractBearerToken(req);
+    if (!accessToken) {
+      return jsonResponse({ error: "Unauthorized." }, 401);
+    }
+
+    const { data, error } = await adminSupabase.auth.getUser(accessToken);
+    if (error || !data?.user) {
+      return jsonResponse({ error: "Unauthorized." }, 401);
+    }
+
+    const authenticatedAccount = getAuthenticatedAppleAccount(
+      data.user as Record<string, unknown>
     );
+
+    if (!authenticatedAccount.hasAppleProvider) {
+      return jsonResponse({ error: "Forbidden." }, 403);
+    }
+
+    const matchesAuthenticatedAppleAccount =
+      (appleUserId && authenticatedAccount.appleIds.has(appleUserId)) ||
+      (email && authenticatedAccount.appleEmails.has(email));
+
+    if (!matchesAuthenticatedAppleAccount) {
+      return jsonResponse({ error: "Forbidden." }, 403);
+    }
+
+    return jsonResponse({ exists: true });
+  } catch {
+    return jsonResponse({ error: "Unexpected Apple account lookup failure." }, 500);
   }
 });
