@@ -16,6 +16,13 @@ import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
 import { fetchIngredientMatchCatalog } from "@src/data/getIngredientMatchCatalog";
 import { queueMissingActiveIngredients } from "@src/data/queueMissingActiveIngredients";
 import { scanSupplementPhotos } from "@src/data/scanSupplementPhotos";
+import {
+  buildPartialProductDetailFailure,
+  createScannerFailure,
+  normalizeBarcodeScanFailure,
+  normalizePhotoRescueFailure,
+  SCANNER_FAILURE_CATEGORIES,
+} from "@src/lib/scannerFailure";
 import { ENABLE_DSLD_LOOKUP } from "@src/lib/runtimeConfig";
 import {
   extractIngredientCandidatesFromList,
@@ -119,30 +126,6 @@ function buildPhotoRescueProduct({
   };
 }
 
-function normalizePhotoRescueErrorMessage(value) {
-  const message = trimString(value);
-  const normalized = message.toLowerCase();
-
-  if (
-    normalized.includes("scansessionid") ||
-    normalized.includes("scan session") ||
-    normalized.includes("scan is no longer active") ||
-    normalized.includes("scan expired")
-  ) {
-    return "That scan expired. Rescan the barcode and try photo rescue again.";
-  }
-
-  if (
-    normalized.includes("not a supplement") ||
-    normalized.includes("couldn't confirm") ||
-    normalized.includes("could not confirm")
-  ) {
-    return "We couldn't confirm from those photos that this product is a supplement.";
-  }
-
-  return message || "We could not improve that scan with the photos you captured.";
-}
-
 function createInitialState() {
   return {
     status: "idle",
@@ -160,50 +143,6 @@ function createInitialState() {
     photoRescueError: null,
     extractionSource: null,
     extractionConfidence: null,
-  };
-}
-
-function normalizeScannerError(error) {
-  const code = error?.code || "scanner_error";
-
-  if (code === "invalid_barcode") {
-    return {
-      status: "error",
-      error: {
-        code,
-        message: "That barcode could not be read. Try scanning again.",
-      },
-    };
-  }
-
-  if (code === "product_not_found") {
-    return {
-      status: "not_found",
-      error: {
-        code,
-        message:
-          "Sorry, we couldn't find that product, please take pictures to add it to the app",
-      },
-    };
-  }
-
-  if (code === "open_food_facts_unavailable") {
-    return {
-      status: "error",
-      error: {
-        code,
-        message: "We couldn't connect, please try again.",
-      },
-    };
-  }
-
-  return {
-    status: "error",
-    error: {
-      code,
-      message:
-        error?.message || "Something went wrong while processing that barcode.",
-    },
   };
 }
 
@@ -321,7 +260,9 @@ export const useScannerStore = create((set, get) => ({
       let dsldConfidence = null;
 
       if (!retailBarcode) {
-        const notFound = normalizeScannerError({ code: "product_not_found" });
+          const notFound = normalizeBarcodeScanFailure({
+            code: "product_not_found",
+          });
 
         set(() => ({
           status: notFound.status,
@@ -453,7 +394,7 @@ export const useScannerStore = create((set, get) => ({
       if (!product.ingredientsText || ingredients.length === 0) {
         set(() => ({
           status: "no_ingredients",
-          error: null,
+          error: buildPartialProductDetailFailure(),
           scanSessionId: nextScanSessionId,
           barcode: nextBarcode,
           barcodeType: nextBarcodeType,
@@ -510,7 +451,7 @@ export const useScannerStore = create((set, get) => ({
 
       return get();
     } catch (error) {
-      const normalized = normalizeScannerError(error);
+      const normalized = normalizeBarcodeScanFailure(error);
 
       set(() => ({
         status: normalized.status,
@@ -551,10 +492,12 @@ export const useScannerStore = create((set, get) => ({
       const error = new Error(
         "That scan is no longer active. Please rescan the barcode and try again."
       );
+      error.category = SCANNER_FAILURE_CATEGORIES.expiredScanSession;
+      error.code = "expired_scan_session";
 
       set(() => ({
         photoRescueStatus: "error",
-        photoRescueError: error.message,
+        photoRescueError: normalizePhotoRescueFailure(error),
       }));
 
       throw error;
@@ -565,10 +508,12 @@ export const useScannerStore = create((set, get) => ({
 
     if (!ingredientsImage || !productImage) {
       const error = new Error("Both photos are required to improve this scan.");
+      error.category = SCANNER_FAILURE_CATEGORIES.backendValidationFailure;
+      error.code = "missing_photo_payload";
 
       set(() => ({
         photoRescueStatus: "error",
-        photoRescueError: error.message,
+        photoRescueError: normalizePhotoRescueFailure(error),
       }));
 
       throw error;
@@ -600,16 +545,22 @@ export const useScannerStore = create((set, get) => ({
       );
 
       if (extraction.isSupplement === false) {
-        throw new Error(
-          extraction.message ||
-            "We couldn't confirm from those photos that this product is a supplement."
-        );
+        throw createScannerFailure({
+          category: SCANNER_FAILURE_CATEGORIES.aiExtractionFailure,
+          code: "ai_extraction_failed",
+          message:
+            extraction.message ||
+            "We couldn't confirm from those photos that this product is a supplement.",
+        });
       }
 
       if (extraction.wroteCanonicalData && !trimString(extraction.productId)) {
-        throw new Error(
-          "Photo rescue finished without returning a canonical supplement product."
-        );
+        throw createScannerFailure({
+          category: SCANNER_FAILURE_CATEGORIES.backendValidationFailure,
+          code: "missing_canonical_product",
+          message:
+            "Photo rescue finished without returning a canonical supplement product.",
+        });
       }
 
       let matchedIngredients = [];
@@ -636,9 +587,12 @@ export const useScannerStore = create((set, get) => ({
       }
 
       if (!extraction.wroteCanonicalData && !ingredients.length) {
-        throw new Error(
-          "We couldn't read any usable supplement ingredients from those photos."
-        );
+        throw createScannerFailure({
+          category: SCANNER_FAILURE_CATEGORIES.aiExtractionFailure,
+          code: "ai_extraction_failed",
+          message:
+            "We couldn't read any usable supplement ingredients from those photos.",
+        });
       }
 
       set(() => ({
@@ -677,16 +631,14 @@ export const useScannerStore = create((set, get) => ({
 
       return get();
     } catch (error) {
-      const message = normalizePhotoRescueErrorMessage(
-        error instanceof Error ? error.message : ""
-      );
+      const normalized = normalizePhotoRescueFailure(error);
 
       set(() => ({
         photoRescueStatus: "error",
-        photoRescueError: message,
+        photoRescueError: normalized,
       }));
 
-      throw new Error(message);
+      throw normalized;
     }
   },
 }));

@@ -1,32 +1,126 @@
 import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
 import { normalizeEdgeFunctionError } from "@src/lib/edgeFunctionErrors";
+import {
+  createScannerFailure,
+  SCANNER_FAILURE_CATEGORIES,
+} from "@src/lib/scannerFailure";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 
 const FUNCTION_NAME = "scan-supplement-photos";
+const TRAILING_DOSE_PATTERN =
+  /^(.*?)\s+(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|μg|ug|pg|g|kg|ml|l|iu|cfu)\b(?:\s*(?:[A-Z]{1,4}|% ?NRV|NRV))?$/i;
 
 function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function normalizeIngredient(item) {
+function normalizeDoseUnit(value) {
+  const normalized = normalizeString(value)
+    .toLowerCase()
+    .replace(/[µμ]/g, "u");
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "ug") return "mcg";
+  if (normalized === "iu") return "IU";
+  if (normalized === "cfu") return "CFU";
+  return normalized;
+}
+
+function formatDoseDisplay(value, unit) {
+  if (!Number.isFinite(value) || !unit) {
+    return null;
+  }
+
+  const displayValue = Number.isInteger(value) ? String(value) : String(value);
+  return `${displayValue} ${unit}`;
+}
+
+function parseTrailingDoseFromText(value) {
+  const text = normalizeString(value);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(TRAILING_DOSE_PATTERN);
+  if (!match) {
+    return null;
+  }
+
+  const name = normalizeString(match[1]).replace(/[-,;:]+$/g, "").trim();
+  const dosageValue = normalizeNumber(match[2]);
+  const dosageUnit = normalizeDoseUnit(match[3]);
+
+  if (!name || !Number.isFinite(dosageValue) || !dosageUnit) {
+    return null;
+  }
+
+  return {
+    name,
+    dosageValue,
+    dosageUnit,
+    dosageDisplay: formatDoseDisplay(dosageValue, dosageUnit),
+  };
+}
+
+export function normalizePhotoRescueIngredient(item) {
   if (typeof item === "string") {
-    return normalizeString(item);
+    const parsed = parseTrailingDoseFromText(item);
+    const cleanedName = parsed?.name || normalizeString(item);
+
+    return cleanedName
+      ? {
+          name: cleanedName,
+          raw_name: cleanedName,
+          dosageValue: parsed?.dosageValue ?? null,
+          dosageUnit: parsed?.dosageUnit ?? null,
+          dosageDisplay: parsed?.dosageDisplay ?? null,
+          chemicalForm: null,
+          amountBasis: null,
+          doseConfidence: null,
+          doseReviewReason: null,
+        }
+      : null;
   }
 
   if (!item || typeof item !== "object") {
     return null;
   }
 
-  const name =
+  const rawName =
     normalizeString(item.name) ||
+    normalizeString(item.raw_name) ||
+    normalizeString(item.rawName) ||
     normalizeString(item.canonicalName) ||
-    normalizeString(item.canonical_name) ||
-    normalizeString(item.raw_name);
-
-  if (!name) {
-    return null;
-  }
-
+    normalizeString(item.canonical_name);
+  const parsedFromName = parseTrailingDoseFromText(rawName);
+  const explicitValue = normalizeNumber(item.dosageValue ?? item.dosage_value);
+  const explicitUnit = normalizeDoseUnit(item.dosageUnit ?? item.dosage_unit);
+  const explicitDisplay =
+    normalizeString(
+      item.dosageDisplay ??
+        item.dosage_display ??
+        item.dosageOriginalText ??
+        item.dosage_original_text
+    ) || null;
+  const hasExplicitDose =
+    Number.isFinite(explicitValue) && Boolean(explicitUnit);
+  const name = parsedFromName?.name || rawName;
+  const dosageValue = hasExplicitDose
+    ? explicitValue
+    : parsedFromName?.dosageValue ?? null;
+  const dosageUnit = hasExplicitDose
+    ? explicitUnit
+    : parsedFromName?.dosageUnit ?? null;
+  const dosageDisplay =
+    explicitDisplay &&
+    normalizeString(explicitDisplay).toLowerCase() !== rawName.toLowerCase()
+      ? explicitDisplay
+      : formatDoseDisplay(dosageValue, dosageUnit) ||
+        parsedFromName?.dosageDisplay ||
+        null;
   const rawDoseConfidence = item.doseConfidence ?? item.dose_confidence ?? null;
   const doseConfidence = ["verified", "unverified", "missing"].includes(
     rawDoseConfidence
@@ -34,17 +128,16 @@ function normalizeIngredient(item) {
     ? rawDoseConfidence
     : null;
 
+  if (!name) {
+    return null;
+  }
+
   return {
     name,
-    dosageValue: normalizeNumber(item.dosageValue ?? item.dosage_value),
-    dosageUnit: normalizeString(item.dosageUnit ?? item.dosage_unit) || null,
-    dosageDisplay:
-      normalizeString(
-        item.dosageDisplay ??
-          item.dosage_display ??
-          item.dosageOriginalText ??
-          item.dosage_original_text
-      ) || null,
+    raw_name: name,
+    dosageValue,
+    dosageUnit,
+    dosageDisplay,
     chemicalForm:
       normalizeString(item.chemicalForm ?? item.chemical_form) || null,
     amountBasis: normalizeString(item.amountBasis ?? item.amount_basis) || null,
@@ -52,6 +145,10 @@ function normalizeIngredient(item) {
     doseReviewReason:
       normalizeString(item.doseReviewReason ?? item.dose_review_reason) || null,
   };
+}
+
+function normalizeIngredient(item) {
+  return normalizePhotoRescueIngredient(item);
 }
 
 function normalizeIngredients(value) {
@@ -77,18 +174,23 @@ export async function scanSupplementPhotos(payload) {
   }
 
   const accessToken = await getAccessTokenOrCreateSession();
+  let response;
 
-  const response = await fetch(
-    `${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`,
-    {
+  try {
+    response = await fetch(`${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify(payload),
-    }
-  );
+    });
+  } catch {
+    throw createScannerFailure({
+      category: SCANNER_FAILURE_CATEGORIES.networkError,
+      code: "network_error",
+    });
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -106,7 +208,23 @@ export async function scanSupplementPhotos(payload) {
       isQuotaLimited: normalizedError.isQuotaLimited,
     });
 
-    throw new Error(normalizedError.message);
+    throw createScannerFailure({
+      category:
+        response.status === 401
+          ? SCANNER_FAILURE_CATEGORIES.authSessionRequired
+          : normalizedError.isQuotaLimited ||
+            response.status === 400 ||
+            response.status === 413 ||
+            response.status === 422 ||
+            response.status === 429
+          ? SCANNER_FAILURE_CATEGORIES.backendValidationFailure
+          : SCANNER_FAILURE_CATEGORIES.networkError,
+      code: normalizedError.code,
+      message: normalizedError.message,
+      status: response.status,
+      retryAfterSeconds: normalizedError.retryAfterSeconds,
+      isQuotaLimited: normalizedError.isQuotaLimited,
+    });
   }
 
   const data = await response.json();

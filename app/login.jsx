@@ -246,6 +246,12 @@ export default function LoginScreen() {
     return true;
   };
 
+  const finalizeAuthenticatedAccount = async () => {
+    await markAccountCreationComplete();
+    await syncIdentityForCurrentSession();
+    // Root gate owns the post-login transition into the app shell.
+  };
+
   const selectMode = async (nextMode) => {
     if (nextMode === "create" && !(await ensureCanCreateAccount())) {
       return;
@@ -288,9 +294,7 @@ export default function LoginScreen() {
         throw new Error(error.message || "Could not sign in.");
       }
 
-      await markAccountCreationComplete();
-      await syncIdentityForCurrentSession();
-      router.replace("/");
+      await finalizeAuthenticatedAccount();
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -340,10 +344,8 @@ export default function LoginScreen() {
           throw new Error(profileError.message || "Could not create account.");
         }
         await markServerAccountCreationComplete(userId);
-        await markAccountCreationComplete();
+        await finalizeAuthenticatedAccount();
         await clearOnboardingDraft();
-        await syncIdentityForCurrentSession();
-        router.replace("/");
         return;
       }
 
@@ -422,9 +424,7 @@ export default function LoginScreen() {
         await clearOnboardingDraft();
       }
 
-      await markAccountCreationComplete();
-      await syncIdentityForCurrentSession();
-      router.replace("/");
+      await finalizeAuthenticatedAccount();
     } catch (error) {
       if (
         error &&
@@ -491,9 +491,7 @@ export default function LoginScreen() {
         await clearOnboardingDraft();
       }
 
-      await markAccountCreationComplete();
-      await syncIdentityForCurrentSession();
-      router.replace("/");
+      await finalizeAuthenticatedAccount();
     } catch (error) {
       setErrorMessage(
         error instanceof Error

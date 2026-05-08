@@ -14,6 +14,11 @@ import { leaveScannerScreen } from "@/features/scanner/navigation";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { useScannerStore } from "@/features/scanner/store";
 import { appTheme, spacing, typography } from "@/theme";
+import {
+  getPhotoRescueFailurePresentation,
+  getScannerFailureCategory,
+  SCANNER_FAILURE_CATEGORIES,
+} from "@src/lib/scannerFailure";
 
 const cameraModule = (() => {
   try {
@@ -65,6 +70,14 @@ function goBackOrLeaveScanner() {
   leaveScannerScreen();
 }
 
+function normalizeOriginParam(value) {
+  if (Array.isArray(value)) {
+    return normalizeOriginParam(value[0]);
+  }
+
+  return value === "onboarding" ? "onboarding" : "";
+}
+
 function PhotoRescueFallback({
   title,
   description,
@@ -98,6 +111,7 @@ export default function ScannerPhotoRescueScreen() {
   } = useSubscriptionAccess();
   const params = useLocalSearchParams();
   const requestedScanSessionId = normalizeIntegerParam(params.scanSessionId);
+  const originParam = normalizeOriginParam(params.origin);
   const [permission, requestPermission] = useCameraPermissions();
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [step, setStep] = useState("ingredients");
@@ -152,6 +166,14 @@ export default function ScannerPhotoRescueScreen() {
     effectiveScanSessionId === currentScanSessionId;
   const submitting = photoRescueStatus === "processing";
   const visibleError = photoRescueError || captureError;
+  const errorPresentation =
+    photoRescueError && typeof photoRescueError === "object"
+      ? getPhotoRescueFailurePresentation(photoRescueError)
+      : null;
+  const visibleErrorMessage =
+    errorPresentation?.message ||
+    (typeof photoRescueError?.message === "string" ? photoRescueError.message : "") ||
+    captureError;
 
   const stepLabel = step === "ingredients" ? "Step 1 of 2" : "Step 2 of 2";
   const stepTitle =
@@ -195,6 +217,14 @@ export default function ScannerPhotoRescueScreen() {
     setIngredientsPhoto("");
     setCaptureError("");
     resetPhotoRescueState();
+  };
+
+  const restartScannerFlow = () => {
+    resetPhotoRescueState();
+    router.replace({
+      pathname: "/scanner",
+      params: originParam ? { origin: originParam } : undefined,
+    });
   };
 
   const handleCapture = async () => {
@@ -256,9 +286,9 @@ export default function ScannerPhotoRescueScreen() {
     return (
       <PhotoRescueFallback
         title="Scan expired"
-        description="That barcode scan is no longer active. Go back, rescan the barcode, and try the photo rescue flow again."
-        primaryLabel="Back"
-        onPrimaryPress={goBackOrLeaveScanner}
+        description="That barcode scan is no longer active. Rescan the barcode, then try photo rescue again."
+        primaryLabel="Rescan barcode"
+        onPrimaryPress={restartScannerFlow}
       />
     );
   }
@@ -389,16 +419,23 @@ export default function ScannerPhotoRescueScreen() {
       {visibleError ? (
         <View style={styles.feedbackOverlay}>
           <PrimaryCard style={styles.feedbackCard}>
-            <Text style={styles.feedbackTitle}>Photo rescue failed</Text>
-            <Text style={styles.feedbackBody}>{visibleError}</Text>
+            <Text style={styles.feedbackTitle}>
+              {errorPresentation?.title || "Photo rescue failed"}
+            </Text>
+            <Text style={styles.feedbackBody}>{visibleErrorMessage}</Text>
             <View style={styles.feedbackActions}>
               <AppButton
-                label="Retake photos"
+                label={errorPresentation?.primaryLabel || "Retake photos"}
                 variant="primary"
-                onPress={restartFlow}
+                onPress={
+                  getScannerFailureCategory(photoRescueError) ===
+                  SCANNER_FAILURE_CATEGORIES.expiredScanSession
+                    ? restartScannerFlow
+                    : restartFlow
+                }
               />
               <AppButton
-                label="Cancel"
+                label={errorPresentation?.secondaryLabel || "Cancel"}
                 variant="ghost"
                 onPress={goBackOrLeaveScanner}
               />

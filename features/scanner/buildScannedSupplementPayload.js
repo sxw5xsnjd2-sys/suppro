@@ -78,6 +78,10 @@ export function buildScannedSupplementFailurePayload(scanState) {
     why_use_it: null,
     risks_and_interactions: null,
     scanFailureStatus: status || null,
+    scanFailureCategory:
+      typeof scanState?.error?.category === "string"
+        ? scanState.error.category
+        : null,
     scanFailureMessage,
   };
 }

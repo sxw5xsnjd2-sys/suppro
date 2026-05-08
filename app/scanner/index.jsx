@@ -22,6 +22,10 @@ import {
   isValidBarcode,
   normalizeBarcode,
 } from "@src/data/getOpenFoodFactsProduct";
+import {
+  getScannerFailureCategory,
+  SCANNER_FAILURE_CATEGORIES,
+} from "@src/lib/scannerFailure";
 
 const cameraModule = (() => {
   try {
@@ -154,7 +158,15 @@ export default function ScannerScreen() {
     (typeof scannerError?.message === "string" &&
       scannerError.message.trim()) ||
     "Sorry, we couldn't find that product, please take pictures to add it to the app";
-  const scannerErrorMessage = "We couldn't connect, please try again";
+  const scannerErrorCategory = getScannerFailureCategory(scannerError);
+  const scannerErrorMessage =
+    (typeof scannerError?.message === "string" &&
+      scannerError.message.trim()) ||
+    "We couldn't connect, please try again.";
+  const scannerErrorPrimaryLabel =
+    scannerErrorCategory === SCANNER_FAILURE_CATEGORIES.authSessionRequired
+      ? "Close"
+      : "Rescan";
 
   const dismissProductNotFoundPopup = () => {
     resetScan();
@@ -555,12 +567,14 @@ export default function ScannerScreen() {
                 {scannerErrorMessage}
               </Text>
               <AppButton
-                accessibilityLabel="Rescan"
+                accessibilityLabel={scannerErrorPrimaryLabel}
                 variant="primary"
                 onPress={dismissScannerErrorPopup}
                 style={styles.notFoundPrimaryButton}
               >
-                <Text style={styles.notFoundPrimaryButtonText}>Rescan</Text>
+                <Text style={styles.notFoundPrimaryButtonText}>
+                  {scannerErrorPrimaryLabel}
+                </Text>
               </AppButton>
             </View>
           </PrimaryCard>
