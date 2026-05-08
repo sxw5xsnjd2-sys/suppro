@@ -15,8 +15,8 @@ import { appTheme, spacing, typography } from "@/theme";
 import ExitIcon from "@/assets/icons/profile/exit.svg";
 import { supabase } from "@src/lib/supabase";
 import {
-  clearLocalPersistedAppData,
   DELETE_ACCOUNT_FUNCTION_NAME,
+  forceClearDeletedAccountLocalState,
   isLikelyEmail,
   loadCurrentAccountProfile,
   normalizeEmail,
@@ -271,16 +271,14 @@ export default function AccountScreen() {
       await signOutAndClearLocalState({
         preserveLoginGate: false,
         removeAccountScopedLocalData: true,
-      }).catch(
-        async (error) => {
-        console.error("Failed to clear local auth session", error);
-        await clearLocalPersistedAppData({
-          removeAccountScopedLocalData: true,
-          preserveSignupCompleted: false,
+      }).catch(async () => {
+        console.warn(
+          "Falling back to forced local cleanup after account deletion."
+        );
+        await forceClearDeletedAccountLocalState({
           accountScopedUserId: account.user?.id ?? null,
         });
-        }
-      );
+      });
       router.replace("/onboarding?mode=first_run");
     } catch (error) {
       setAccountError(

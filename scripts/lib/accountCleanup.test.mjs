@@ -50,6 +50,10 @@ function loadAccountCleanupModule(dependencies) {
       ""
     )
     .replace(
+      /import \{ getRevenueCatSdk \} from "@\/features\/subscriptions\/revenueCatSdk";\n/,
+      ""
+    )
+    .replace(
       /import \{ hasNonAnonymousSession, isAnonymousUser \} from "\.\/authState";\n/,
       ""
     )
@@ -78,6 +82,7 @@ function loadAccountCleanupModule(dependencies) {
     "useChatStore",
     "useHealthStore",
     "syncSupplementsStoreAccountScope",
+    "getRevenueCatSdk",
     "hasNonAnonymousSession",
     "isAnonymousUser",
     "supabase",
@@ -98,6 +103,8 @@ function loadAccountCleanupModule(dependencies) {
     `${transformed}
 return {
   clearLocalPersistedAppData,
+  forceClearDeletedAccountLocalState,
+  getSupabaseAuthStorageKeys,
   signOutAndClearLocalState,
 };`
   );
@@ -114,6 +121,7 @@ return {
     dependencies.useChatStore,
     dependencies.useHealthStore,
     dependencies.syncSupplementsStoreAccountScope,
+    dependencies.getRevenueCatSdk,
     dependencies.hasNonAnonymousSession,
     dependencies.isAnonymousUser,
     dependencies.supabase,
@@ -177,15 +185,16 @@ const {
 function createAccountCleanupHarness({
   storageKeys,
   sessionUserId = "user-a",
-  preserveLoginGate = true,
-  removeAccountScopedLocalData = false,
+  signOutImpl,
+  revenueCatLogOutImpl,
 } = {}) {
   const asyncStorage = createAsyncStorage(storageKeys);
   const healthTracker = createStoreResetTracker();
   const chatTracker = createStoreResetTracker();
   const supplementScopeCalls = [];
-  let signOutCalls = 0;
+  const signOutCalls = [];
   let notifyCalls = 0;
+  let revenueCatLogOutCalls = 0;
 
   const module = loadAccountCleanupModule({
     AsyncStorage: asyncStorage.api,
@@ -194,6 +203,14 @@ function createAccountCleanupHarness({
     syncSupplementsStoreAccountScope: async (nextUser) => {
       supplementScopeCalls.push(nextUser);
     },
+    getRevenueCatSdk: () => ({
+      Purchases: {
+        async logOut() {
+          revenueCatLogOutCalls += 1;
+          return revenueCatLogOutImpl ? revenueCatLogOutImpl() : null;
+        },
+      },
+    }),
     hasNonAnonymousSession: (session) =>
       Boolean(session?.user && session.user.is_anonymous !== true),
     isAnonymousUser: (user) => Boolean(user?.is_anonymous === true),
@@ -214,8 +231,11 @@ function createAccountCleanupHarness({
             error: null,
           };
         },
-        async signOut() {
-          signOutCalls += 1;
+        async signOut(options) {
+          signOutCalls.push(options ?? null);
+          if (signOutImpl) {
+            return signOutImpl(options);
+          }
           return { error: null };
         },
       },
@@ -232,10 +252,9 @@ function createAccountCleanupHarness({
     chatTracker,
     healthTracker,
     module,
-    preserveLoginGate,
-    removeAccountScopedLocalData,
-    signOutCalls: () => signOutCalls,
     notifyCalls: () => notifyCalls,
+    revenueCatLogOutCalls: () => revenueCatLogOutCalls,
+    signOutCalls: () => [...signOutCalls],
     supplementScopeCalls,
   };
 }
@@ -262,7 +281,7 @@ test("normal sign-out preserves account-scoped supplement data, clears global se
 
   await harness.module.signOutAndClearLocalState();
 
-  assert.equal(harness.signOutCalls(), 1);
+  assert.deepEqual(harness.signOutCalls(), [null]);
   assert.deepEqual(harness.asyncStorage.removedKeySets, [
     [
       "suppro.onboarding.questionnaire.v1",
@@ -298,7 +317,6 @@ test("delete-account sign-out also removes the deleted user's account-scoped sup
       "suppro.stats.aiSummary.v1",
       "recent-supplement-searches",
     ],
-    removeAccountScopedLocalData: true,
   });
 
   await harness.module.signOutAndClearLocalState({
@@ -306,7 +324,7 @@ test("delete-account sign-out also removes the deleted user's account-scoped sup
     removeAccountScopedLocalData: true,
   });
 
-  assert.equal(harness.signOutCalls(), 1);
+  assert.deepEqual(harness.signOutCalls(), [null]);
   assert.deepEqual(harness.asyncStorage.removedKeySets, [
     [
       "suppro.onboarding.questionnaire.v1",
@@ -326,4 +344,66 @@ test("delete-account sign-out also removes the deleted user's account-scoped sup
   assert.equal(harness.healthTracker.resetCount, 1);
   assert.equal(harness.chatTracker.resetCount, 1);
   assert.deepEqual(harness.supplementScopeCalls, [null]);
+});
+
+test("forceClearDeletedAccountLocalState removes auth storage, resets RevenueCat, and clears deleted-user app data when sign-out fails", async () => {
+  const harness = createAccountCleanupHarness({
+    storageKeys: [
+      "sb-test-auth-token",
+      "suppro.onboarding.questionnaire.v1",
+      "suppro.onboarding.signupCompleted.v1",
+      "supplement-store",
+      "supplement-store:account:user-a",
+      "supplement-store:account:user-b",
+      "health-store",
+      "suppro.chatStore.v1",
+    ],
+    signOutImpl: async () => ({
+      error: { message: "network failure" },
+    }),
+  });
+
+  await harness.module.forceClearDeletedAccountLocalState({
+    accountScopedUserId: "user-a",
+  });
+
+  assert.deepEqual(harness.signOutCalls(), [{ scope: "local" }]);
+  assert.equal(harness.revenueCatLogOutCalls(), 1);
+  assert.deepEqual(harness.asyncStorage.removedKeySets, [
+    ["sb-test-auth-token"],
+    [
+      "suppro.onboarding.questionnaire.v1",
+      "suppro.onboarding.draft.v1",
+      "suppro.onboarding.premiumCompleted.v1",
+      "suppro.onboarding.signupPrompted.v1",
+      "suppro.onboarding.signupCompleted.v1",
+      "supplement-store",
+      "supplement-store:account:user-a",
+      "health-store",
+      "suppro.chatStore.v1",
+      "supplement-heart-flags",
+      "suppro.stats.aiSummary.v1",
+      "recent-supplement-searches",
+    ],
+  ]);
+  assert.equal(harness.healthTracker.resetCount, 1);
+  assert.equal(harness.chatTracker.resetCount, 1);
+  assert.deepEqual(harness.supplementScopeCalls, [null]);
+});
+
+test("getSupabaseAuthStorageKeys returns only persisted auth keys", () => {
+  const harness = createAccountCleanupHarness({
+    storageKeys: [],
+  });
+
+  assert.deepEqual(
+    harness.module.getSupabaseAuthStorageKeys([
+      "sb-test-auth-token",
+      "SUPABASE.auth.token",
+      "supplement-store:account:user-a",
+      "",
+      null,
+    ]),
+    ["sb-test-auth-token", "SUPABASE.auth.token"]
+  );
 });

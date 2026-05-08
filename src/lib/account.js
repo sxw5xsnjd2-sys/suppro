@@ -5,6 +5,7 @@ import * as WebBrowser from "expo-web-browser";
 import { useChatStore } from "@/features/ai/store";
 import { useHealthStore } from "@/features/health/store";
 import { syncSupplementsStoreAccountScope } from "@/features/supplements/store";
+import { getRevenueCatSdk } from "@/features/subscriptions/revenueCatSdk";
 import { hasNonAnonymousSession, isAnonymousUser } from "./authState";
 import { supabase } from "./supabase";
 import {
@@ -32,6 +33,10 @@ WebBrowser.maybeCompleteAuthSession();
 export const DELETE_ACCOUNT_FUNCTION_NAME = "delete-account";
 export const LOOKUP_APPLE_ACCOUNT_FUNCTION_NAME = "lookup-apple-account";
 export const ACCOUNT_SETUP_COMPLETIONS_TABLE = "account_setup_completions";
+const SUPABASE_AUTH_STORAGE_KEY_PATTERNS = [
+  /^sb-.*-auth-token$/i,
+  /^supabase\.auth\.token$/i,
+];
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -43,6 +48,20 @@ export function normalizeEmail(value) {
 
 export function isLikelyEmail(value) {
   return /^\S+@\S+\.\S+$/.test(normalizeEmail(value));
+}
+
+export function getSupabaseAuthStorageKeys(storageKeys) {
+  return Array.from(
+    new Set(
+      (Array.isArray(storageKeys) ? storageKeys : []).filter((key) =>
+        typeof key === "string"
+          ? SUPABASE_AUTH_STORAGE_KEY_PATTERNS.some((pattern) =>
+              pattern.test(key.trim())
+            )
+          : false
+      )
+    )
+  );
 }
 
 export function getUserAuthProvider(user) {
@@ -469,6 +488,33 @@ async function resetSignedOutStoreState() {
   });
 }
 
+async function clearPersistedSupabaseAuthStorage() {
+  const storageKeys = await AsyncStorage.getAllKeys();
+  const authStorageKeys = getSupabaseAuthStorageKeys(storageKeys);
+
+  if (authStorageKeys.length > 0) {
+    await AsyncStorage.multiRemove(authStorageKeys);
+  }
+}
+
+async function resetRevenueCatIdentityLocally() {
+  const revenueCatSdk = getRevenueCatSdk();
+  if (
+    !revenueCatSdk?.Purchases ||
+    typeof revenueCatSdk.Purchases.logOut !== "function"
+  ) {
+    return;
+  }
+
+  try {
+    await revenueCatSdk.Purchases.logOut();
+  } catch {
+    console.warn(
+      "Failed to reset local RevenueCat identity after account deletion."
+    );
+  }
+}
+
 export async function clearLocalPersistedAppData(options = {}) {
   const {
     preserveSignupCompleted = false,
@@ -531,6 +577,40 @@ export async function signOutAndClearLocalState(options = {}) {
     removeAccountScopedLocalData,
     accountScopedUserId,
   });
+}
+
+export async function forceClearDeletedAccountLocalState(options = {}) {
+  const { accountScopedUserId = null } = options;
+  let cleanupError = null;
+
+  try {
+    const { error } = await supabase.auth.signOut({ scope: "local" });
+    if (error) {
+      throw error;
+    }
+  } catch {
+    // Fall through to direct auth-storage removal below.
+  }
+
+  try {
+    await clearPersistedSupabaseAuthStorage();
+  } catch {
+    cleanupError = new Error(
+      "Could not finish clearing your deleted account from this device."
+    );
+  }
+
+  await resetRevenueCatIdentityLocally();
+
+  await clearLocalPersistedAppData({
+    preserveSignupCompleted: false,
+    removeAccountScopedLocalData: true,
+    accountScopedUserId,
+  });
+
+  if (cleanupError) {
+    throw cleanupError;
+  }
 }
 
 export async function loadCurrentAccountProfile() {

@@ -26,25 +26,37 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
+function errorResponse(code: string, error: string, status: number) {
+  return jsonResponse({ code, error }, status);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed." }, 405);
+    return errorResponse("method_not_allowed", "Method not allowed.", 405);
   }
 
   try {
     const authHeader = req.headers.get("Authorization");
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return jsonResponse({ error: "Missing bearer token." }, 401);
+      return errorResponse(
+        "auth_required",
+        "You must be signed in to delete your account.",
+        401
+      );
     }
 
     const token = authHeader.replace("Bearer ", "").trim();
     if (!token) {
-      return jsonResponse({ error: "Missing bearer token." }, 401);
+      return errorResponse(
+        "auth_required",
+        "You must be signed in to delete your account.",
+        401
+      );
     }
 
     const {
@@ -52,12 +64,10 @@ Deno.serve(async (req) => {
       error: authError,
     } = await adminSupabase.auth.getUser(token);
 
-    if (authError || !user?.id) {
-      return jsonResponse(
-        {
-          error: "Could not authenticate request.",
-          details: authError?.message ?? "Missing user.",
-        },
+    if (authError || !user?.id || user.is_anonymous === true) {
+      return errorResponse(
+        "auth_required",
+        "You must be signed in to delete your account.",
         401
       );
     }
@@ -68,11 +78,9 @@ Deno.serve(async (req) => {
       .eq("user_id", user.id);
 
     if (completionDeleteError) {
-      return jsonResponse(
-        {
-          error: "Could not delete account completion marker.",
-          details: completionDeleteError.message,
-        },
+      return errorResponse(
+        "delete_failed",
+        "Could not delete your account. Please try again.",
         500
       );
     }
@@ -83,11 +91,22 @@ Deno.serve(async (req) => {
       .eq("id", user.id);
 
     if (profileDeleteError) {
-      return jsonResponse(
-        {
-          error: "Could not delete profile.",
-          details: profileDeleteError.message,
-        },
+      return errorResponse(
+        "delete_failed",
+        "Could not delete your account. Please try again.",
+        500
+      );
+    }
+
+    const { error: quotaDeleteError } = await adminSupabase
+      .from("edge_function_quotas")
+      .delete()
+      .eq("user_id", user.id);
+
+    if (quotaDeleteError) {
+      return errorResponse(
+        "delete_failed",
+        "Could not delete your account. Please try again.",
         500
       );
     }
@@ -97,22 +116,19 @@ Deno.serve(async (req) => {
     );
 
     if (deleteUserError) {
-      return jsonResponse(
-        {
-          error: "Could not delete auth account.",
-          details: deleteUserError.message,
-        },
+      return errorResponse(
+        "delete_failed",
+        "Could not delete your account. Please try again.",
         500
       );
     }
 
     return jsonResponse({ success: true });
-  } catch (error) {
-    return jsonResponse(
-      {
-        error: "Unexpected delete-account failure.",
-        details: error instanceof Error ? error.message : String(error),
-      },
+  } catch {
+    console.error("[delete-account] Unexpected delete-account failure.");
+    return errorResponse(
+      "delete_failed",
+      "Could not delete your account. Please try again.",
       500
     );
   }
