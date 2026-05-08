@@ -16,6 +16,7 @@ Use this runbook before each TestFlight release candidate and before App Store s
 - [ ] Sign-out lands on logged-out state once, with no homepage bounce and no AI summary error.
 - [ ] Delete-account leaves a fresh-start state locally and removes server-side `profiles`, `account_setup_completions`, and `edge_function_quotas`.
 - [ ] Quota/rate-limit errors show friendly user copy, not raw JSON, codes, or HTTP errors.
+- [ ] Release/TestFlight logs do not emit verbose RevenueCat diagnostics or raw backend response bodies.
 - [ ] No GO_BACK warning, no repeat paywall loop, no anonymous session entering authenticated tabs.
 
 ## Backend Prerequisites
@@ -259,9 +260,39 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-## 7. Quota And Rate-Limit Errors
+## 7. Release Logging Hygiene
 
-### Test 7.1: AI quota error is friendly
+### Test 7.1: Purchase flow stays quiet in release
+- Preconditions: Preview, production, or TestFlight-style build with device logs available.
+- Steps:
+  1. Open paywall.
+  2. Start, cancel, restore, and complete purchase flows as applicable.
+  3. Inspect device logs.
+- Expected result: No verbose RevenueCat DEBUG or INFO diagnostics are emitted. Only concise warnings or errors may appear.
+- [ ] Pass
+- [ ] Fail
+
+### Test 7.2: Scan failures avoid raw body dumps in release
+- Preconditions: Preview, production, or TestFlight-style build with device logs available.
+- Steps:
+  1. Trigger a photo-rescue or scan failure such as offline mode, expired session, or quota-limited request.
+  2. Inspect device logs.
+- Expected result: Logs contain only sanitized status or code summaries. No raw backend body, OCR text, tokens, barcodes, or JSON payload dumps appear.
+- [ ] Pass
+- [ ] Fail
+
+### Test 7.3: Dev build still exposes actionable diagnostics
+- Preconditions: Local development build with Metro or native logs visible.
+- Steps:
+  1. Repeat one purchase flow and one scan failure flow.
+  2. Inspect development logs.
+- Expected result: Sanitized diagnostics remain available for debugging, including useful status or code summaries and high-level flow markers.
+- [ ] Pass
+- [ ] Fail
+
+## 8. Quota And Rate-Limit Errors
+
+### Test 8.1: AI quota error is friendly
 - Preconditions: Ability to trigger AI quota/rate-limit response for a premium account.
 - Steps:
   1. Repeatedly trigger AI chat or summary until limit is reached.
@@ -269,7 +300,7 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-### Test 7.2: Photo rescue quota error is friendly
+### Test 8.2: Photo rescue quota error is friendly
 - Preconditions: Ability to trigger photo-rescue quota/rate-limit response.
 - Steps:
   1. Repeatedly trigger photo rescue until limit is reached.
@@ -277,7 +308,7 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-### Test 7.3: Image enrichment quota error fails quietly
+### Test 8.3: Image enrichment quota error fails quietly
 - Preconditions: Ability to trigger image-enrichment quota/rate-limit response.
 - Steps:
   1. Repeatedly open enrichment-triggering product detail.
@@ -285,9 +316,9 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-## 8. RLS And Client Catalog Reads
+## 9. RLS And Client Catalog Reads
 
-### Test 8.1: Public catalog reads still work
+### Test 9.1: Public catalog reads still work
 - Preconditions: Logged-out user and signed-in user.
 - Steps:
   1. Search supplements.
@@ -297,7 +328,7 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-### Test 8.2: Private user data stays protected
+### Test 9.2: Private user data stays protected
 - Preconditions: Two distinct user accounts.
 - Steps:
   1. Sign in as User A and create some local/server state.
@@ -307,9 +338,9 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-## 9. Settings And Account Management
+## 10. Settings And Account Management
 
-### Test 9.1: Manage subscription works
+### Test 10.1: Manage subscription works
 - Preconditions: Build with RevenueCat available.
 - Steps:
   1. Open Settings.
@@ -318,7 +349,7 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-### Test 9.2: Restore purchases in Settings works
+### Test 10.2: Restore purchases in Settings works
 - Preconditions: Previously purchased account.
 - Steps:
   1. Open Settings.
@@ -327,7 +358,7 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-### Test 9.3: Questionnaire retake from Settings still works
+### Test 10.3: Questionnaire retake from Settings still works
 - Preconditions: Signed-in user.
 - Steps:
   1. Open Settings or Account path that retakes questionnaire.
@@ -336,9 +367,9 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-## 10. Regression Checks
+## 11. Regression Checks
 
-### Test 10.1: No GO_BACK warning
+### Test 11.1: No GO_BACK warning
 - Preconditions: Normal navigation through onboarding, settings, paywall, and account screens.
 - Steps:
   1. Use back navigation across those flows.
@@ -347,7 +378,7 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-### Test 10.2: No repeat paywall after successful purchase
+### Test 11.2: No repeat paywall after successful purchase
 - Preconditions: User who has just completed purchase.
 - Steps:
   1. Return from purchase.
@@ -356,7 +387,7 @@ These must already be deployed before running this sheet:
 - [ ] Pass
 - [ ] Fail
 
-### Test 10.3: Anonymous session cannot enter authenticated tabs
+### Test 11.3: Anonymous session cannot enter authenticated tabs
 - Preconditions: Fresh install or signed-out state.
 - Steps:
   1. Open app without real login.

@@ -1,3 +1,8 @@
+import {
+  IS_DEVELOPMENT_BUILD,
+  logDevelopmentDiagnostic,
+} from "@src/lib/runtimeConfig";
+
 function resolveModuleExport(moduleValue) {
   return moduleValue?.default ?? moduleValue ?? null;
 }
@@ -106,14 +111,24 @@ export function isExpectedRevenueCatCancellationLog({
 }
 
 function forwardRevenueCatLog(logLevel, message) {
+  const normalizedLevel =
+    typeof logLevel === "string" ? logLevel.trim().toUpperCase() : "";
+
+  if (
+    !IS_DEVELOPMENT_BUILD &&
+    (normalizedLevel === "DEBUG" || normalizedLevel === "INFO")
+  ) {
+    return;
+  }
+
   const formattedMessage = `[RevenueCat] ${message}`;
 
-  switch (logLevel) {
+  switch (normalizedLevel) {
     case "DEBUG":
-      console.debug(formattedMessage);
+      logDevelopmentDiagnostic("debug", formattedMessage);
       break;
     case "INFO":
-      console.info(formattedMessage);
+      logDevelopmentDiagnostic("info", formattedMessage);
       break;
     case "WARN":
       console.warn(formattedMessage);

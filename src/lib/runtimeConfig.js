@@ -55,6 +55,53 @@ export const SUPABASE_ANON_KEY = processEnvAnonKey || expoExtraAnonKey;
 export const ENABLE_DSLD_LOOKUP =
   (processEnvEnableDsldLookup || expoExtraEnableDsldLookup).toLowerCase() ===
   "true";
+export const IS_DEVELOPMENT_BUILD = __DEV__ === true;
+
+function getConsoleMethod(level) {
+  switch (level) {
+    case "debug":
+      return console.debug;
+    case "info":
+      return console.info;
+    case "warn":
+      return console.warn;
+    case "error":
+      return console.error;
+    case "log":
+    default:
+      return console.log;
+  }
+}
+
+function writeDiagnostic(level, message, details) {
+  const log = getConsoleMethod(level);
+
+  if (typeof details === "undefined") {
+    log(message);
+    return;
+  }
+
+  log(message, details);
+}
+
+export function logBuildAwareDiagnostic(
+  level,
+  message,
+  { developmentDetails, productionDetails } = {}
+) {
+  const details = IS_DEVELOPMENT_BUILD
+    ? developmentDetails
+    : productionDetails;
+  writeDiagnostic(level, message, details);
+}
+
+export function logDevelopmentDiagnostic(level, message, details) {
+  if (!IS_DEVELOPMENT_BUILD) {
+    return;
+  }
+
+  writeDiagnostic(level, message, details);
+}
 
 export function getSupabaseRuntimeDiagnostics() {
   return {
@@ -76,12 +123,18 @@ export const MISSING_SUPABASE_CONFIG_MESSAGE =
 
 export function logSupabaseRuntimeDiagnostics() {
   const diagnostics = getSupabaseRuntimeDiagnostics();
-  console.log("[supabase-config]", diagnostics);
+  logDevelopmentDiagnostic("log", "[supabase-config]", diagnostics);
 }
 
 export function assertSupabaseConfig() {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    logSupabaseRuntimeDiagnostics();
+    logBuildAwareDiagnostic("error", "[supabase-config] missing configuration", {
+      developmentDetails: getSupabaseRuntimeDiagnostics(),
+      productionDetails: {
+        urlPresent: Boolean(SUPABASE_URL),
+        anonKeyPresent: Boolean(SUPABASE_ANON_KEY),
+      },
+    });
     throw new Error(MISSING_SUPABASE_CONFIG_MESSAGE);
   }
 }

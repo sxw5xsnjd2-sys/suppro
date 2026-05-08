@@ -164,6 +164,15 @@ const PRODUCT_FORM_PATTERNS = [
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const edgeFunctionDebugFlag = trimString(
+  Deno.env.get("EDGE_FUNCTION_DEBUG_LOGS")
+).toLowerCase();
+const EDGE_VERBOSE_LOGS_ENABLED =
+  edgeFunctionDebugFlag === "1" ||
+  edgeFunctionDebugFlag === "true" ||
+  edgeFunctionDebugFlag === "yes" ||
+  edgeFunctionDebugFlag === "on" ||
+  !trimString(Deno.env.get("DENO_DEPLOYMENT_ID"));
 
 const adminSupabase =
   supabaseUrl && supabaseServiceRoleKey
@@ -212,6 +221,34 @@ function normalizeProductId(value: unknown): string {
   return clean.startsWith(SUPPLEMENT_PRODUCT_PREFIX)
     ? clean.slice(SUPPLEMENT_PRODUCT_PREFIX.length)
     : clean;
+}
+
+function logEdgeDiagnostic(
+  level: "log" | "warn" | "error",
+  message: string,
+  details?: unknown
+) {
+  if (!EDGE_VERBOSE_LOGS_ENABLED && level === "log") {
+    return;
+  }
+
+  const log =
+    level === "warn"
+      ? console.warn
+      : level === "error"
+      ? console.error
+      : console.log;
+
+  if (!EDGE_VERBOSE_LOGS_ENABLED || typeof details === "undefined") {
+    log(message);
+    return;
+  }
+
+  log(message, details);
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function responsePayload({
@@ -504,7 +541,10 @@ async function fetchProduct(productId: string) {
     .maybeSingle();
 
   if (namingError) {
-    console.warn("[enrich-product-image] naming lookup failed", namingError.message);
+    logEdgeDiagnostic("warn", "[enrich-product-image] naming lookup failed", {
+      productId,
+      message: namingError.message,
+    });
   }
 
   const { data: sourceProduct, error: sourceProductError } =
@@ -515,9 +555,13 @@ async function fetchProduct(productId: string) {
       .maybeSingle();
 
   if (sourceProductError) {
-    console.warn(
+    logEdgeDiagnostic(
+      "warn",
       "[enrich-product-image] source product barcode lookup failed",
-      sourceProductError.message
+      {
+        productId,
+        message: sourceProductError.message,
+      }
     );
   }
 
@@ -1097,7 +1141,7 @@ Deno.serve(async (req) => {
     }
 
     if (product.image_manual_override === true && trimString(product.image_url)) {
-      console.log("[enrich-product-image] cached manual image used", {
+      logEdgeDiagnostic("log", "[enrich-product-image] cached manual image used", {
         productId: effectiveProductId,
       });
       return jsonResponse(
@@ -1115,7 +1159,7 @@ Deno.serve(async (req) => {
     }
 
     if (trimString(product.image_url) && !force) {
-      console.log("[enrich-product-image] cached image used", {
+      logEdgeDiagnostic("log", "[enrich-product-image] cached image used", {
         productId: effectiveProductId,
       });
       return jsonResponse(
@@ -1133,7 +1177,7 @@ Deno.serve(async (req) => {
     }
 
     if (trimString(product.image_url) && force) {
-      console.log("[enrich-product-image] force refresh requested", {
+      logEdgeDiagnostic("log", "[enrich-product-image] force refresh requested", {
         productId: effectiveProductId,
       });
     }
@@ -1161,7 +1205,7 @@ Deno.serve(async (req) => {
     }
 
     if (isGenericActiveIngredient(product)) {
-      console.log("[enrich-product-image] skipped generic ingredient", {
+      logEdgeDiagnostic("log", "[enrich-product-image] skipped generic ingredient", {
         productId: effectiveProductId,
         name: getProductName(product),
       });
@@ -1260,7 +1304,7 @@ Deno.serve(async (req) => {
             )[0]
           : null;
 
-      console.log("[enrich-product-image] firstResults", {
+      logEdgeDiagnostic("log", "[enrich-product-image] firstResults", {
         productId: effectiveProductId,
         query,
         queryStrategy,
@@ -1292,7 +1336,7 @@ Deno.serve(async (req) => {
       const failureReason = scoredResults.length
         ? "No confident image match"
         : lastSerpApiError || "No confident image match";
-      console.log("[enrich-product-image] failed no confident match", {
+      logEdgeDiagnostic("log", "[enrich-product-image] failed no confident match", {
         productId: effectiveProductId,
         score: best?.score ?? null,
         deepSearch,
@@ -1317,14 +1361,14 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log("[enrich-product-image] found image with score", {
+    logEdgeDiagnostic("log", "[enrich-product-image] found image with score", {
       productId: effectiveProductId,
       score: best.score,
       deepSearch,
       serpApiCallCount,
       earlyStop,
     });
-    console.log("[enrich-product-image] selected image", {
+    logEdgeDiagnostic("log", "[enrich-product-image] selected image", {
       productId: effectiveProductId,
       expectedProductForm: best.expectedProductForm,
       selectedTitle: trimString(best.result.title) || null,
@@ -1371,13 +1415,15 @@ Deno.serve(async (req) => {
       })
     );
   } catch (error) {
-    console.error("[enrich-product-image] unexpected failure", error);
+    logEdgeDiagnostic("error", "[enrich-product-image] unexpected failure", {
+      message: getErrorMessage(error),
+    });
     return jsonResponse(
       {
         ok: false,
         status: "failed",
         error: "Unexpected enrich-product-image failure.",
-        details: error instanceof Error ? error.message : String(error),
+        code: "unexpected_failure",
       },
       500
     );

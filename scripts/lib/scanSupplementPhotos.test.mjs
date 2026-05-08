@@ -10,19 +10,19 @@ function loadScanSupplementPhotosModule() {
 
   const transformed = source
     .replace(
-      /import \{ getAccessTokenOrCreateSession \} from "@src\/lib\/supabase";\n/,
+      /import\s+\{\s*getAccessTokenOrCreateSession\s*\}\s+from\s+"@src\/lib\/supabase";\n/,
       ""
     )
     .replace(
-      /import \{ normalizeEdgeFunctionError \} from "@src\/lib\/edgeFunctionErrors";\n/,
+      /import\s+\{\s*normalizeEdgeFunctionError\s*\}\s+from\s+"@src\/lib\/edgeFunctionErrors";\n/,
       ""
     )
     .replace(
-      /import \{\n(?:.|\n)*?\} from "@src\/lib\/scannerFailure";\n/,
+      /import\s+\{[\s\S]*?\}\s+from\s+"@src\/lib\/scannerFailure";\n/,
       ""
     )
     .replace(
-      /import \{ SUPABASE_URL \} from "@src\/lib\/runtimeConfig";\n/,
+      /import\s+\{[\s\S]*?\}\s+from\s+"@src\/lib\/runtimeConfig";\n/,
       ""
     )
     .replace(/export async function /g, "async function ")
@@ -33,6 +33,7 @@ function loadScanSupplementPhotosModule() {
     "normalizeEdgeFunctionError",
     "createScannerFailure",
     "SCANNER_FAILURE_CATEGORIES",
+    "logBuildAwareDiagnostic",
     "SUPABASE_URL",
     `${transformed}
 return {
@@ -45,6 +46,7 @@ return {
     () => ({}),
     () => null,
     {},
+    () => {},
     "https://example.supabase.co"
   );
 }

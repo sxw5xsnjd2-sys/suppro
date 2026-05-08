@@ -4,7 +4,7 @@ import {
   createScannerFailure,
   SCANNER_FAILURE_CATEGORIES,
 } from "@src/lib/scannerFailure";
-import { SUPABASE_URL } from "@src/lib/runtimeConfig";
+import { logBuildAwareDiagnostic, SUPABASE_URL } from "@src/lib/runtimeConfig";
 
 const FUNCTION_NAME = "scan-supplement-photos";
 const TRAILING_DOSE_PATTERN =
@@ -202,10 +202,18 @@ export async function scanSupplementPhotos(payload) {
       unauthorizedMessage: "Please sign in to use photo rescue.",
     });
 
-    console.log("scan-supplement-photos request failed", {
-      status: response.status,
-      code: normalizedError.code,
-      isQuotaLimited: normalizedError.isQuotaLimited,
+    logBuildAwareDiagnostic("warn", "[scanner-photo-rescue] request failed", {
+      developmentDetails: {
+        status: response.status,
+        code: normalizedError.code,
+        isQuotaLimited: normalizedError.isQuotaLimited,
+        retryAfterSeconds: normalizedError.retryAfterSeconds,
+      },
+      productionDetails: {
+        status: response.status,
+        code: normalizedError.code,
+        isQuotaLimited: normalizedError.isQuotaLimited,
+      },
     });
 
     throw createScannerFailure({

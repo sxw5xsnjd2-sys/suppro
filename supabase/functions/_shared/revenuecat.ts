@@ -22,6 +22,25 @@ function getRevenueCatEntitlementId() {
   );
 }
 
+function logRevenueCatEntitlementError(message: string, details?: unknown) {
+  const edgeFunctionDebugFlag = trimString(
+    Deno.env.get("EDGE_FUNCTION_DEBUG_LOGS")
+  ).toLowerCase();
+  const verboseLoggingEnabled =
+    edgeFunctionDebugFlag === "1" ||
+    edgeFunctionDebugFlag === "true" ||
+    edgeFunctionDebugFlag === "yes" ||
+    edgeFunctionDebugFlag === "on" ||
+    !trimString(Deno.env.get("DENO_DEPLOYMENT_ID"));
+
+  if (!verboseLoggingEnabled || typeof details === "undefined") {
+    console.error(message);
+    return;
+  }
+
+  console.error(message, details);
+}
+
 function parseTimestamp(value: unknown) {
   const text = trimString(value);
   if (!text) return null;
@@ -118,13 +137,20 @@ export async function assertActiveRevenueCatEntitlement({
   );
 
   if (!response.ok) {
-    const errorText = await response.text();
+    const errorText = await response.text().catch(() => "");
+    logRevenueCatEntitlementError(
+      "[revenuecat] entitlement check failed",
+      {
+        status: response.status,
+        upstreamErrorPresent: Boolean(trimString(errorText)),
+      }
+    );
     return {
       ok: false as const,
       status: 502,
       body: {
         error: "RevenueCat entitlement check failed.",
-        details: errorText.slice(0, 300),
+        code: "revenuecat_entitlement_unavailable",
       },
     };
   }

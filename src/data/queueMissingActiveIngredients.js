@@ -3,8 +3,11 @@ import {
   normalizeEdgeFunctionError,
 } from "@src/lib/edgeFunctionErrors";
 import { getNonAnonymousAccessToken } from "@src/lib/authState";
+import {
+  logBuildAwareDiagnostic,
+  SUPABASE_URL,
+} from "@src/lib/runtimeConfig";
 import { supabase } from "@src/lib/supabase";
-import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 
 const FUNCTION_NAME = "queue-missing-active-ingredients";
 
@@ -45,9 +48,13 @@ export async function queueMissingActiveIngredients({ productId, ingredients }) 
     const { data: sessionData, error: sessionError } =
       await supabase.auth.getSession();
     if (sessionError) {
-      console.warn("[queue-missing-active-ingredients] skipped", {
-        reason: "session_error",
-      });
+      logBuildAwareDiagnostic(
+        "warn",
+        "[queue-missing-active-ingredients] skipped",
+        {
+          developmentDetails: { reason: "session_error" },
+        }
+      );
       return emptyResult;
     }
 
@@ -86,18 +93,33 @@ export async function queueMissingActiveIngredients({ productId, ingredients }) 
         return emptyResult;
       }
 
-      console.warn("[queue-missing-active-ingredients] request failed", {
-        status: normalizedError.status,
-        code: normalizedError.code,
-      });
+      logBuildAwareDiagnostic(
+        "warn",
+        "[queue-missing-active-ingredients] request failed",
+        {
+          developmentDetails: {
+            status: normalizedError.status,
+            code: normalizedError.code,
+            retryAfterSeconds: normalizedError.retryAfterSeconds,
+          },
+          productionDetails: {
+            status: normalizedError.status,
+            code: normalizedError.code,
+          },
+        }
+      );
       return emptyResult;
     }
 
     return (await response.json().catch(() => emptyResult)) ?? emptyResult;
   } catch (_error) {
-    console.warn("[queue-missing-active-ingredients] request failed", {
-      reason: "unexpected_error",
-    });
+    logBuildAwareDiagnostic(
+      "warn",
+      "[queue-missing-active-ingredients] request failed",
+      {
+        developmentDetails: { reason: "unexpected_error" },
+      }
+    );
     return emptyResult;
   }
 }

@@ -23,7 +23,11 @@ import {
   normalizePhotoRescueFailure,
   SCANNER_FAILURE_CATEGORIES,
 } from "@src/lib/scannerFailure";
-import { ENABLE_DSLD_LOOKUP } from "@src/lib/runtimeConfig";
+import {
+  ENABLE_DSLD_LOOKUP,
+  logBuildAwareDiagnostic,
+  logDevelopmentDiagnostic,
+} from "@src/lib/runtimeConfig";
 import {
   extractIngredientCandidatesFromList,
   extractBestIngredientCandidates,
@@ -289,9 +293,17 @@ export const useScannerStore = create((set, get) => ({
         product = await fetchLocalBarcodeScanProduct(nextBarcode, nextBarcodeType);
         extractionSource = trimString(product?.scanDataSource) || null;
       } catch (localLookupError) {
-        console.error(
-          "Local barcode lookup failed; falling back to OpenFoodFacts",
-          localLookupError
+        logBuildAwareDiagnostic(
+          "warn",
+          "[scanner] local barcode lookup failed; falling back to OpenFoodFacts",
+          {
+            developmentDetails: {
+              message:
+                typeof localLookupError?.message === "string"
+                  ? localLookupError.message
+                  : "Unknown error",
+            },
+          }
         );
       }
 
@@ -330,7 +342,11 @@ export const useScannerStore = create((set, get) => ({
               sourceDecision,
             });
             extractionSource = "open_food_facts";
-            console.log("[scanner-source-decision]", sourceDecision);
+            logDevelopmentDiagnostic(
+              "log",
+              "[scanner-source-decision]",
+              sourceDecision
+            );
           } else {
             throw openFoodFactsError;
           }
@@ -389,7 +405,7 @@ export const useScannerStore = create((set, get) => ({
           sourceDecision,
         };
       }
-      console.log("[scanner-source-decision]", sourceDecision);
+      logDevelopmentDiagnostic("log", "[scanner-source-decision]", sourceDecision);
 
       if (!product.ingredientsText || ingredients.length === 0) {
         set(() => ({
@@ -442,9 +458,12 @@ export const useScannerStore = create((set, get) => ({
           productId: product.productId,
           ingredients: unmatchedIngredients,
         }).catch(() => {
-          console.warn(
+          logBuildAwareDiagnostic(
+            "warn",
             "[scanner] failed to queue missing active ingredients",
-            { reason: "unexpected_queue_error" }
+            {
+              developmentDetails: { reason: "unexpected_queue_error" },
+            }
           );
         });
       }
@@ -525,9 +544,7 @@ export const useScannerStore = create((set, get) => ({
     }));
 
     try {
-      console.info("[scanner-photo-rescue] submitting", {
-        scanSessionId: requestedScanSessionId,
-        barcode: currentState.barcode,
+      logDevelopmentDiagnostic("info", "[scanner-photo-rescue] submitting", {
         hasExistingProductId: Boolean(trimString(currentState.product?.productId)),
       });
 
@@ -575,9 +592,17 @@ export const useScannerStore = create((set, get) => ({
           matches = nextMatches.matches;
           unmatchedIngredients = nextMatches.unmatchedIngredients;
         } catch (matchError) {
-          console.error(
+          logBuildAwareDiagnostic(
+            "warn",
             "[scanner-photo-rescue] ingredient catalog matching failed",
-            matchError
+            {
+              developmentDetails: {
+                message:
+                  typeof matchError?.message === "string"
+                    ? matchError.message
+                    : "Unknown error",
+              },
+            }
           );
 
           if (!extraction.wroteCanonicalData) {
@@ -622,8 +647,7 @@ export const useScannerStore = create((set, get) => ({
           : null,
       }));
 
-      console.info("[scanner-photo-rescue] completed", {
-        productId: extraction.productId || null,
+      logDevelopmentDiagnostic("info", "[scanner-photo-rescue] completed", {
         createdProduct: extraction.createdProduct,
         wroteCanonicalData: extraction.wroteCanonicalData,
         unmatchedIngredientCount: unmatchedIngredients.length,

@@ -33,17 +33,23 @@ function loadRevenueCatSdkModule() {
   );
 
   const transformed = source
+    .replace(
+      /import\s+\{[\s\S]*?\}\s+from\s+"@src\/lib\/runtimeConfig";\n/,
+      ""
+    )
     .replace(/export function /g, "function ")
     .replace(/export const /g, "const ");
 
   const factory = new Function(
+    "IS_DEVELOPMENT_BUILD",
+    "logDevelopmentDiagnostic",
     `${transformed}
 return {
   isExpectedRevenueCatCancellationLog,
 };`
   );
 
-  return factory();
+  return factory(false, () => {});
 }
 
 test("active entitlement allows premium access", () => {

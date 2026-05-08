@@ -1,5 +1,6 @@
 import { CATALOG_TYPES } from "@/features/supplements/catalog";
 import { normalizeEdgeFunctionInvokeError } from "@src/lib/edgeFunctionErrors";
+import { logBuildAwareDiagnostic } from "@src/lib/runtimeConfig";
 import { getAccessTokenOrCreateSession, supabase } from "@src/lib/supabase";
 
 function trimString(value) {
@@ -49,18 +50,28 @@ export async function enrichProductImageIfNeeded(product) {
       const normalizedError = await normalizeEdgeFunctionInvokeError(error, {
         fallbackMessage: "Image enrichment failed.",
       });
-      console.warn("[product-images] enrichment failed", {
-        status: normalizedError.status,
-        code: normalizedError.code,
-        isQuotaLimited: normalizedError.isQuotaLimited,
+      logBuildAwareDiagnostic("warn", "[product-images] enrichment failed", {
+        developmentDetails: {
+          status: normalizedError.status,
+          code: normalizedError.code,
+          isQuotaLimited: normalizedError.isQuotaLimited,
+          retryAfterSeconds: normalizedError.retryAfterSeconds,
+        },
+        productionDetails: {
+          status: normalizedError.status,
+          code: normalizedError.code,
+          isQuotaLimited: normalizedError.isQuotaLimited,
+        },
       });
       return null;
     }
 
     return data ?? null;
   } catch (error) {
-    console.warn("[product-images] enrichment failed", {
-      message: error instanceof Error ? error.message : "Unknown error",
+    logBuildAwareDiagnostic("warn", "[product-images] enrichment failed", {
+      developmentDetails: {
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
     });
     return null;
   }

@@ -10,6 +10,11 @@ import { supabase } from "@src/lib/supabase";
 import { hasNonAnonymousUser } from "@src/lib/authState";
 import { getUserAuthProvider, getUserDisplayName } from "@src/lib/account";
 import {
+  IS_DEVELOPMENT_BUILD,
+  logBuildAwareDiagnostic,
+  logDevelopmentDiagnostic,
+} from "@src/lib/runtimeConfig";
+import {
   getRevenueCatApiKeySelection,
   REVENUECAT_ENTITLEMENT_ID,
   REVENUECAT_YEARLY_IDENTIFIER,
@@ -25,7 +30,7 @@ import {
 } from "./revenueCatSdk";
 
 const RevenueCatContext = createContext(null);
-const REVENUECAT_DEBUG_LOGS_ENABLED = false;
+const REVENUECAT_DEBUG_LOGS_ENABLED = IS_DEVELOPMENT_BUILD;
 
 function getRevenueCatAppUserId(user) {
   return hasNonAnonymousUser(user) ? user.id : null;
@@ -169,7 +174,16 @@ export function RevenueCatProvider({ children }) {
 
       return await revenueCatSdk.Purchases.syncAttributesAndOfferingsIfNeeded();
     } catch (error) {
-      console.warn("[revenuecat] Failed to sync subscriber attributes", error);
+      logBuildAwareDiagnostic(
+        "warn",
+        "[revenuecat] Failed to sync subscriber attributes",
+        {
+          developmentDetails: {
+            message:
+              typeof error?.message === "string" ? error.message : "Unknown error",
+          },
+        }
+      );
       return null;
     }
   };
@@ -184,27 +198,34 @@ export function RevenueCatProvider({ children }) {
     }
 
     try {
-      if (REVENUECAT_DEBUG_LOGS_ENABLED) {
-        console.log("[revenuecat] Getting offerings...");
-      }
+      logDevelopmentDiagnostic("log", "[revenuecat] Getting offerings...");
 
       const [nextCustomerInfo, nextOfferings, nextAppUserId] =
         await Promise.all([
           revenueCatSdk.Purchases.getCustomerInfo(),
           revenueCatSdk.Purchases.getOfferings().catch((error) => {
-            if (REVENUECAT_DEBUG_LOGS_ENABLED) {
-              console.log("[revenuecat] Error fetching offerings:", error);
-            }
+            logBuildAwareDiagnostic(
+              "warn",
+              "[revenuecat] Failed to fetch offerings",
+              {
+                developmentDetails: {
+                  message:
+                    typeof error?.message === "string"
+                      ? error.message
+                      : "Unknown error",
+                },
+              }
+            );
             return null;
           }),
           revenueCatSdk.Purchases.getAppUserID(),
         ]);
 
-      if (REVENUECAT_DEBUG_LOGS_ENABLED && nextOfferings) {
-        console.log(
-          "[revenuecat] Offerings:",
-          JSON.stringify(nextOfferings, null, 2)
-        );
+      if (nextOfferings) {
+        logDevelopmentDiagnostic("log", "[revenuecat] Offerings loaded", {
+          currentOfferingId: nextOfferings.current?.identifier ?? null,
+          offeringIds: Object.keys(nextOfferings.all ?? {}),
+        });
       }
 
       if (isMountedRef.current) {
