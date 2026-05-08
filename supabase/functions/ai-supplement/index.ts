@@ -4,6 +4,7 @@ import {
   assertActiveRevenueCatEntitlement,
   authenticateSupabaseUser,
 } from "../_shared/revenuecat.ts";
+import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -68,12 +69,17 @@ const adminSupabase =
     ? createClient(supabaseUrl, supabaseServiceRoleKey)
     : null;
 
-function jsonResponse(data: unknown, status = 200) {
+function jsonResponse(
+  data: unknown,
+  status = 200,
+  extraHeaders: Record<string, string> = {}
+) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       ...corsHeaders,
       "Content-Type": "application/json",
+      ...extraHeaders,
     },
   });
 }
@@ -431,41 +437,16 @@ Deno.serve(async (req) => {
       if (!question) {
         return jsonResponse({ error: "Missing question for chat mode." }, 400);
       }
-      const userId = authenticatedUserId;
-
-      // Rate limit: max 5 chat messages per minute.
-      const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
-      const { count, error: countError } = await adminSupabase
-        .from("chat_usage")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .gte("created_at", oneMinuteAgo);
-
-      if (countError) {
+      const quotaAccess = await enforceEdgeFunctionQuota({
+        adminSupabase,
+        policyKey: "ai-supplement-chat",
+        userId: authenticatedUserId,
+      });
+      if (!quotaAccess.ok) {
         return jsonResponse(
-          {
-            error: "Rate limit check failed.",
-            details: countError.message,
-          },
-          500
-        );
-      }
-
-      if ((count ?? 0) >= 5) {
-        return jsonResponse({ error: "Too many requests" }, 429);
-      }
-
-      const { error: usageInsertError } = await adminSupabase
-        .from("chat_usage")
-        .insert({ user_id: userId });
-
-      if (usageInsertError) {
-        return jsonResponse(
-          {
-            error: "Could not record chat usage.",
-            details: usageInsertError.message,
-          },
-          500
+          quotaAccess.body,
+          quotaAccess.status,
+          quotaAccess.headers
         );
       }
 
@@ -579,6 +560,18 @@ Hard safety rules:
       typeof body?.generatedForDate === "string"
         ? body.generatedForDate
         : "today";
+    const summaryQuotaAccess = await enforceEdgeFunctionQuota({
+      adminSupabase,
+      policyKey: "ai-supplement-summary",
+      userId: authenticatedUserId,
+    });
+    if (!summaryQuotaAccess.ok) {
+      return jsonResponse(
+        summaryQuotaAccess.body,
+        summaryQuotaAccess.status,
+        summaryQuotaAccess.headers
+      );
+    }
 
     const summarySystemPrompt = `
 You are generating an AI summary for a supplements stats dashboard.

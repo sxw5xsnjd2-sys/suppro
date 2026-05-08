@@ -1,4 +1,5 @@
 import { CATALOG_TYPES } from "@/features/supplements/catalog";
+import { normalizeEdgeFunctionInvokeError } from "@src/lib/edgeFunctionErrors";
 import { getAccessTokenOrCreateSession, supabase } from "@src/lib/supabase";
 
 function trimString(value) {
@@ -45,13 +46,22 @@ export async function enrichProductImageIfNeeded(product) {
     );
 
     if (error) {
-      console.warn("[product-images] enrichment failed", error);
+      const normalizedError = await normalizeEdgeFunctionInvokeError(error, {
+        fallbackMessage: "Image enrichment failed.",
+      });
+      console.warn("[product-images] enrichment failed", {
+        status: normalizedError.status,
+        code: normalizedError.code,
+        isQuotaLimited: normalizedError.isQuotaLimited,
+      });
       return null;
     }
 
     return data ?? null;
   } catch (error) {
-    console.warn("[product-images] enrichment failed", error);
+    console.warn("[product-images] enrichment failed", {
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
     return null;
   }
 }

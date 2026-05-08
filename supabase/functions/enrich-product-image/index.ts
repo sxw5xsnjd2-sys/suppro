@@ -4,6 +4,7 @@ import {
   assertActiveRevenueCatEntitlement,
   authenticateSupabaseUser,
 } from "../_shared/revenuecat.ts";
+import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -169,10 +170,18 @@ const adminSupabase =
     ? createClient(supabaseUrl, supabaseServiceRoleKey)
     : null;
 
-function jsonResponse(data: unknown, status = 200) {
+function jsonResponse(
+  data: unknown,
+  status = 200,
+  extraHeaders: Record<string, string> = {}
+) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      ...extraHeaders,
+    },
   });
 }
 
@@ -1180,6 +1189,18 @@ Deno.serve(async (req) => {
           reason: "Missing SERPAPI_API_KEY secret",
         }),
         500
+      );
+    }
+    const quotaAccess = await enforceEdgeFunctionQuota({
+      adminSupabase,
+      policyKey: "enrich-product-image",
+      userId: authenticatedUser.user.id,
+    });
+    if (!quotaAccess.ok) {
+      return jsonResponse(
+        quotaAccess.body,
+        quotaAccess.status,
+        quotaAccess.headers
       );
     }
 

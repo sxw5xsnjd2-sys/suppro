@@ -37,6 +37,7 @@ import {
   getAccessTokenOrCreateSession,
   supabase as publicSupabase,
 } from "@src/lib/supabase";
+import { normalizeEdgeFunctionError } from "@src/lib/edgeFunctionErrors";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 
 const CHAT_WINDOW_DAYS = 30;
@@ -534,16 +535,17 @@ export function AiChatScreen({ presentation = "screen" }) {
       );
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error("Please sign in to use AI chat.");
-        }
-        if (response.status === 429) {
-          throw new Error(
-            "Too many chat requests. Please wait a minute and try again."
-          );
-        }
         const errorText = await response.text();
-        throw new Error(errorText || "AI chat request failed.");
+        const normalizedError = normalizeEdgeFunctionError({
+          status: response.status,
+          responseText: errorText,
+          retryAfterHeader: response.headers.get("Retry-After"),
+          fallbackMessage: "AI chat is unavailable right now. Please try again.",
+          unauthorizedMessage: "Please sign in to use AI chat.",
+          serviceUnavailableMessage:
+            "AI chat is unavailable right now. Please try again.",
+        });
+        throw new Error(normalizedError.message);
       }
 
       const data = await response.json();

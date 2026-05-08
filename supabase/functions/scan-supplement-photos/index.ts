@@ -4,6 +4,7 @@ import {
   assertActiveRevenueCatEntitlement,
   authenticateSupabaseUser,
 } from "../_shared/revenuecat.ts";
+import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
 
 declare const EdgeRuntime:
   | {
@@ -240,12 +241,17 @@ type NormalizedPhotoRescueResult = {
   };
 };
 
-function jsonResponse(data: unknown, status = 200) {
+function jsonResponse(
+  data: unknown,
+  status = 200,
+  extraHeaders: Record<string, string> = {}
+) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       ...corsHeaders,
       "Content-Type": "application/json",
+      ...extraHeaders,
     },
   });
 }
@@ -2108,6 +2114,18 @@ Deno.serve(async (req) => {
       return jsonResponse(
         { error: "Both ingredientsImage and productImage are required." },
         400
+      );
+    }
+    const quotaAccess = await enforceEdgeFunctionQuota({
+      adminSupabase,
+      policyKey: "scan-supplement-photos",
+      userId: authenticatedUser.user.id,
+    });
+    if (!quotaAccess.ok) {
+      return jsonResponse(
+        quotaAccess.body,
+        quotaAccess.status,
+        quotaAccess.headers
       );
     }
 

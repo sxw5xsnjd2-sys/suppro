@@ -1,4 +1,5 @@
 import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
+import { normalizeEdgeFunctionError } from "@src/lib/edgeFunctionErrors";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 
 const FUNCTION_NAME = "scan-supplement-photos";
@@ -91,22 +92,21 @@ export async function scanSupplementPhotos(payload) {
 
   if (!response.ok) {
     const errorText = await response.text();
-
-    console.log("scan-supplement-photos error response", {
+    const normalizedError = normalizeEdgeFunctionError({
       status: response.status,
-      statusText: response.statusText,
-      errorText,
+      responseText: errorText,
+      retryAfterHeader: response.headers.get("Retry-After"),
+      fallbackMessage: "Photo scan request failed.",
+      unauthorizedMessage: "Please sign in to use photo rescue.",
     });
 
-    let errorMessage = "";
+    console.log("scan-supplement-photos request failed", {
+      status: response.status,
+      code: normalizedError.code,
+      isQuotaLimited: normalizedError.isQuotaLimited,
+    });
 
-    try {
-      const parsed = JSON.parse(errorText);
-      errorMessage =
-        normalizeString(parsed?.error) || normalizeString(parsed?.details);
-    } catch {}
-
-    throw new Error(errorMessage || errorText || "Photo scan request failed.");
+    throw new Error(normalizedError.message);
   }
 
   const data = await response.json();

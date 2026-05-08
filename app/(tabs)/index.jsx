@@ -22,6 +22,7 @@ import { getEffectiveEntries } from "@/features/health/selectors";
 import { getTrackedSupplementEvidenceScores } from "@/features/supplements/getTrackedSupplementEvidenceScores";
 import { openTrackedSupplementInfo } from "@/features/supplements/openTrackedSupplementInfo";
 import { isSupplementScheduledOnDate } from "@/features/supplements/schedule";
+import { normalizeEdgeFunctionError } from "@src/lib/edgeFunctionErrors";
 import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 import { computeMetricImprovement } from "@/features/health/metricTrends";
@@ -260,26 +261,6 @@ function normalizeAiSummaryPayload(payload) {
     summary,
     recommendations: sanitizeRecommendations(payload?.recommendations),
   };
-}
-
-function getAiSummaryFailureMessage(status, responseText) {
-  if (status === 401) {
-    return "Please sign in to generate a live AI summary.";
-  }
-
-  try {
-    const parsed = JSON.parse(responseText);
-    if (typeof parsed?.error === "string" && parsed.error.trim()) {
-      if (parsed.error === "AI service unavailable") {
-        return "Live AI summary is currently unavailable.";
-      }
-      return parsed.error.trim();
-    }
-  } catch {
-    // Fall back to a generic message when the response is not JSON.
-  }
-
-  return "Failed to generate live AI summary.";
 }
 
 function parseAiSummaryCache(raw) {
@@ -976,9 +957,16 @@ export default function HomeScreen() {
         );
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(
-            getAiSummaryFailureMessage(response.status, errorText)
-          );
+          const normalizedError = normalizeEdgeFunctionError({
+            status: response.status,
+            responseText: errorText,
+            retryAfterHeader: response.headers.get("Retry-After"),
+            fallbackMessage: "Failed to generate live AI summary.",
+            unauthorizedMessage: "Please sign in to generate a live AI summary.",
+            serviceUnavailableMessage:
+              "Live AI summary is currently unavailable.",
+          });
+          throw new Error(normalizedError.message);
         }
 
         const data = await response.json();
