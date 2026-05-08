@@ -500,10 +500,10 @@ export const useScannerStore = create((set, get) => ({
         queueMissingActiveIngredients({
           productId: product.productId,
           ingredients: unmatchedIngredients,
-        }).catch((queueError) => {
+        }).catch(() => {
           console.warn(
             "[scanner] failed to queue missing active ingredients",
-            queueError
+            { reason: "unexpected_queue_error" }
           );
         });
       }

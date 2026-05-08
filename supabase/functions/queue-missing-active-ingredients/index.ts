@@ -1,5 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
+import {
+  authenticateSupabaseUser,
+  assertActiveRevenueCatEntitlement,
+} from "../_shared/revenuecat.ts";
+import { validateQueueMissingActiveIngredientsRequest } from "../_shared/queue-missing-active-ingredients-policy.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,10 +36,18 @@ const adminSupabase =
     ? createClient(supabaseUrl, supabaseServiceRoleKey)
     : null;
 
-function jsonResponse(data: unknown, status = 200) {
+function jsonResponse(
+  data: unknown,
+  status = 200,
+  headers: Record<string, string> = {}
+) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      ...headers,
+    },
   });
 }
 
@@ -48,78 +62,15 @@ function normalizeSecretToken(value: unknown) {
     .trim();
 }
 
-function normalizePlainText(value: unknown) {
-  return trimString(value)
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/[–—]/g, "-")
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9µμ%.,/+-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function stripDosageFragments(value: string) {
-  return value
-    .replace(/\b\d+([.,]\d+)?\s*(mcg|mg|g|ml|iu|cfu|ug|µg|μg)\b/gi, " ")
-    .replace(/\bproviding\b.*$/gi, " ")
-    .replace(/\(\s*providing[^)]*\)/gi, " ")
-    .replace(/\(\s*\d+[^)]*\)/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function stripLabelWrappers(value: string) {
-  return value
-    .replace(/\bingredients?\b:?/gi, " ")
-    .replace(/\bcontains\b:?/gi, " ")
-    .replace(/\bfood supplement\b/gi, " ")
-    .replace(/\bsupplement facts\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function normalizeBroadIngredientName(value: unknown) {
-  let normalized = normalizePlainText(value);
-  normalized = stripDosageFragments(normalized);
-  normalized = stripLabelWrappers(normalized);
-  normalized = normalized.replace(/\bvit[.]?\b/g, "vitamin");
-  return normalized.replace(/\s+/g, " ").trim();
-}
-
-function ingredientDisplayName(value: unknown) {
-  if (typeof value === "string") return trimString(value);
-  if (!value || typeof value !== "object") return "";
-  const row = value as Record<string, unknown>;
-  return (
-    trimString(row.name) ||
-    trimString(row.canonicalName) ||
-    trimString(row.canonical_name) ||
-    trimString(row.rawName) ||
-    trimString(row.raw_name)
-  );
-}
-
-function normalizeIngredientRows(input: unknown) {
-  if (!Array.isArray(input)) return [];
-  const byName = new Map<string, { normalized_name: string; display_name: string }>();
-
-  for (const item of input) {
-    const displayName = ingredientDisplayName(item);
-    const normalizedName = normalizeBroadIngredientName(displayName);
-    if (!displayName || !normalizedName) continue;
-    byName.set(normalizedName, {
-      normalized_name: normalizedName,
-      display_name: displayName,
-    });
-  }
-
-  return Array.from(byName.values()).slice(0, 25);
-}
-
 function occurrenceKey(normalizedName: string, productId: string) {
   return `${normalizedName}|${productId}`;
+}
+
+function logQueueOperationFailure(stage: string, error: unknown) {
+  console.error("[queue-missing-active-ingredients] failed", {
+    stage,
+    message: error instanceof Error ? error.message : String(error),
+  });
 }
 
 async function refreshReviewCandidates(normalizedNames: string[]) {
@@ -152,9 +103,7 @@ async function refreshReviewCandidates(normalizedNames: string[]) {
   }
 
   if (!response.ok) {
-    throw new Error(
-      `Review refresh failed: ${response.status} ${JSON.stringify(responseBody)}`
-    );
+    throw new Error(`Review refresh failed with status ${response.status}`);
   }
 
   return responseBody;
@@ -169,16 +118,46 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Missing Supabase service configuration." }, 500);
     }
 
-    const body = await req.json().catch(() => ({}));
-    const productId = trimString(body?.productId);
-    const ingredients = normalizeIngredientRows(body?.ingredients);
+    const authHeader = req.headers.get("Authorization");
+    const authenticatedUser = await authenticateSupabaseUser({
+      adminSupabase,
+      authHeader,
+    });
+    if (!authenticatedUser.ok) {
+      return jsonResponse(authenticatedUser.body, authenticatedUser.status);
+    }
 
-    if (!productId) {
-      return jsonResponse({ error: "Missing productId." }, 400);
+    const authenticatedUserId = authenticatedUser.user.id;
+    const entitlementAccess = await assertActiveRevenueCatEntitlement({
+      userId: authenticatedUserId,
+    });
+    if (!entitlementAccess.ok) {
+      return jsonResponse(entitlementAccess.body, entitlementAccess.status);
     }
-    if (!ingredients.length) {
-      return jsonResponse({ queued: 0, normalizedNames: [] });
+
+    const quotaAccess = await enforceEdgeFunctionQuota({
+      adminSupabase,
+      policyKey: "queue-missing-active-ingredients",
+      userId: authenticatedUserId,
+    });
+    if (!quotaAccess.ok) {
+      return jsonResponse(
+        quotaAccess.body,
+        quotaAccess.status,
+        quotaAccess.headers
+      );
     }
+
+    const rawBodyText = await req.text();
+    const payloadValidation =
+      validateQueueMissingActiveIngredientsRequest(rawBodyText);
+    if (!payloadValidation.ok) {
+      return jsonResponse(
+        payloadValidation.body,
+        payloadValidation.status
+      );
+    }
+    const { productId, ingredients } = payloadValidation.value;
 
     const { data: masterRow, error: masterError } = await adminSupabase
       .from(TABLES.supplementMaster)
@@ -187,11 +166,12 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (masterError) {
-      throw new Error(`[supabase:${TABLES.supplementMaster}] ${masterError.message}`);
+      logQueueOperationFailure("lookup_product", masterError);
+      return jsonResponse({ error: "Queue request failed." }, 500);
     }
     if (!masterRow?.product_id) {
       return jsonResponse(
-        { error: "Product is not present in supplement_products_master." },
+        { error: "Product was not found.", code: "product_not_found" },
         404
       );
     }
@@ -206,9 +186,8 @@ Deno.serve(async (req) => {
         .in("normalized_name", normalizedNames);
 
     if (existingOccurrencesError) {
-      throw new Error(
-        `[supabase:${TABLES.missingOccurrences}] ${existingOccurrencesError.message}`
-      );
+      logQueueOperationFailure("load_occurrences", existingOccurrencesError);
+      return jsonResponse({ error: "Queue request failed." }, 500);
     }
 
     const existingByKey = new Map(
@@ -242,7 +221,8 @@ Deno.serve(async (req) => {
       );
 
     if (occurrenceError) {
-      throw new Error(`[supabase:${TABLES.missingOccurrences}] ${occurrenceError.message}`);
+      logQueueOperationFailure("write_occurrences", occurrenceError);
+      return jsonResponse({ error: "Queue request failed." }, 500);
     }
 
     const { error: queueDeleteError } = await adminSupabase
@@ -253,7 +233,8 @@ Deno.serve(async (req) => {
       .eq("status", "pending");
 
     if (queueDeleteError) {
-      throw new Error(`[supabase:${TABLES.reviewQueue}] ${queueDeleteError.message}`);
+      logQueueOperationFailure("delete_existing_queue_rows", queueDeleteError);
+      return jsonResponse({ error: "Queue request failed." }, 500);
     }
 
     const { error: queueInsertError } = await adminSupabase
@@ -270,10 +251,23 @@ Deno.serve(async (req) => {
       });
 
     if (queueInsertError) {
-      throw new Error(`[supabase:${TABLES.reviewQueue}] ${queueInsertError.message}`);
+      logQueueOperationFailure("insert_queue_row", queueInsertError);
+      return jsonResponse({ error: "Queue request failed." }, 500);
     }
 
-    const refreshResult = await refreshReviewCandidates(normalizedNames);
+    let refreshResult: unknown = {
+      processed: false,
+      reason: "not_attempted",
+    };
+    try {
+      refreshResult = await refreshReviewCandidates(normalizedNames);
+    } catch (refreshError) {
+      logQueueOperationFailure("refresh_review_candidates", refreshError);
+      refreshResult = {
+        processed: false,
+        reason: "refresh_failed",
+      };
+    }
 
     return jsonResponse({
       queued: ingredients.length,
@@ -281,10 +275,11 @@ Deno.serve(async (req) => {
       refreshResult,
     });
   } catch (error) {
+    logQueueOperationFailure("unexpected", error);
     return jsonResponse(
       {
-        error: "Unexpected queue-missing-active-ingredients failure",
-        details: error instanceof Error ? error.message : String(error),
+        error: "Queue request failed.",
+        code: "queue_request_failed",
       },
       500
     );

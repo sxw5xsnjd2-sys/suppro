@@ -43,6 +43,17 @@ export const EDGE_FUNCTION_QUOTAS = {
     dailyLimitMessage:
       "Daily image enrichment limit reached. Please try again tomorrow.",
   },
+  "queue-missing-active-ingredients": {
+    quotaKey: "queue_missing_active_ingredients",
+    functionName: "queue-missing-active-ingredients",
+    shortWindowSeconds: 600,
+    shortWindowLimit: 10,
+    dailyLimit: 50,
+    shortWindowMessage:
+      "Too many catalog review queue requests. Please wait a few minutes and try again.",
+    dailyLimitMessage:
+      "Daily catalog review queue limit reached. Please try again tomorrow.",
+  },
 }
 
 export function getEdgeFunctionQuotaPolicy(policyKey) {

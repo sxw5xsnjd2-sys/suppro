@@ -1,4 +1,9 @@
-import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
+import {
+  isExpectedProtectedFunctionAccessError,
+  normalizeEdgeFunctionError,
+} from "@src/lib/edgeFunctionErrors";
+import { getNonAnonymousAccessToken } from "@src/lib/authState";
+import { supabase } from "@src/lib/supabase";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 
 const FUNCTION_NAME = "queue-missing-active-ingredients";
@@ -30,28 +35,69 @@ export async function queueMissingActiveIngredients({ productId, ingredients }) 
   const cleanIngredients = Array.from(
     new Set((ingredients ?? []).map(normalizeIngredient).filter(Boolean))
   );
+  const emptyResult = { queued: 0, normalizedNames: [] };
 
   if (!SUPABASE_URL || !cleanProductId || !cleanIngredients.length) {
-    return { queued: 0, normalizedNames: [] };
+    return emptyResult;
   }
 
-  const accessToken = await getAccessTokenOrCreateSession();
-  const response = await fetch(`${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
-      productId: cleanProductId,
-      ingredients: cleanIngredients,
-    }),
-  });
+  try {
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.getSession();
+    if (sessionError) {
+      console.warn("[queue-missing-active-ingredients] skipped", {
+        reason: "session_error",
+      });
+      return emptyResult;
+    }
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || "Missing ingredient queue request failed.");
+    const accessToken = getNonAnonymousAccessToken(sessionData?.session ?? null);
+    if (!accessToken) {
+      return emptyResult;
+    }
+
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        productId: cleanProductId,
+        ingredients: cleanIngredients,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      const normalizedError = normalizeEdgeFunctionError({
+        status: response.status,
+        responseText: errorText,
+        retryAfterHeader: response.headers.get("Retry-After"),
+        fallbackMessage: "Missing ingredient queue request failed.",
+        unauthorizedMessage: "Please sign in to continue.",
+      });
+
+      if (
+        normalizedError.isQuotaLimited ||
+        normalizedError.status === 404 ||
+        isExpectedProtectedFunctionAccessError(normalizedError)
+      ) {
+        return emptyResult;
+      }
+
+      console.warn("[queue-missing-active-ingredients] request failed", {
+        status: normalizedError.status,
+        code: normalizedError.code,
+      });
+      return emptyResult;
+    }
+
+    return (await response.json().catch(() => emptyResult)) ?? emptyResult;
+  } catch (_error) {
+    console.warn("[queue-missing-active-ingredients] request failed", {
+      reason: "unexpected_error",
+    });
+    return emptyResult;
   }
-
-  return response.json();
 }
