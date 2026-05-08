@@ -12,12 +12,8 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { AppButton, AppHeader } from "@/components/common/ui";
-import { REVENUECAT_ENTITLEMENT_ID } from "@/features/subscriptions/revenueCatConfig";
-import {
-  getRevenueCatSdk,
-  getRevenueCatUnavailableMessage,
-} from "@/features/subscriptions/revenueCatSdk";
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
+import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import ConnectionsIcon from "@/assets/icons/profile/connections.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
@@ -90,63 +86,6 @@ async function contactSupport() {
   await Linking.openURL("mailto:hello@suppro.co.uk");
 }
 
-const SETTINGS_ITEMS = [
-  {
-    key: "account",
-    label: "Account",
-    route: "/account",
-    Icon: AccountIcon,
-  },
-  {
-    key: "manage-subscription",
-    label: "Manage subscription",
-    onPress: manageSubscription,
-    Icon: SubscriptionIcon,
-  },
-  {
-    key: "restore-purchases",
-    label: "Restore purchases",
-    onPress: restorePurchases,
-    Icon: RestoreIcon,
-  },
-  {
-    key: "my-supplements",
-    label: "My supplements",
-    route: "/my-supplements",
-    Icon: SupplementsIcon,
-  },
-  {
-    key: "connections",
-    label: "Connections",
-    route: "/connections",
-    Icon: ConnectionsIcon,
-  },
-  {
-    key: "favourites",
-    label: "Favourites",
-    route: "/favourites",
-    Icon: FavouriteIcon,
-  },
-  {
-    key: "questionnaire",
-    label: "Retake questionnaire",
-    route: "/onboarding?mode=retake",
-    Icon: QuestionnaireIcon,
-  },
-  {
-    key: "invite",
-    label: "Invite friends and family",
-    onPress: inviteFriendsAndFamily,
-    Icon: ShareIcon,
-  },
-  {
-    key: "contact-us",
-    label: "Need help? Contact us",
-    onPress: contactSupport,
-    Icon: ContactIcon,
-  },
-];
-
 function SettingsItemRow({ item, showBorder = false }) {
   const IconComponent = item.Icon;
 
@@ -191,48 +130,6 @@ function SettingsItemRow({ item, showBorder = false }) {
   );
 }
 
-async function manageSubscription() {
-  const sdk = getRevenueCatSdk();
-
-  if (!sdk.purchasesAvailable || !sdk.Purchases) {
-    Alert.alert(
-      "Manage subscription error",
-      getRevenueCatUnavailableMessage(sdk.error)
-    );
-    return;
-  }
-
-  try {
-    await sdk.Purchases.showManageSubscriptions();
-  } catch (_error) {
-    console.log("Manage subscription error:", _error);
-
-    Alert.alert("Manage subscription error", _error?.message || String(_error));
-  }
-}
-
-async function restorePurchases() {
-  const sdk = getRevenueCatSdk();
-
-  if (!sdk.purchasesAvailable || !sdk.Purchases) {
-    Alert.alert("Restore failed", getRevenueCatUnavailableMessage(sdk.error));
-    return;
-  }
-
-  try {
-    const customerInfo = await sdk.Purchases.restorePurchases();
-    const isPremium = !!customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
-
-    if (isPremium) {
-      Alert.alert("Purchases restored", "Your premium access is active.");
-    } else {
-      Alert.alert("No active subscription found");
-    }
-  } catch (_error) {
-    Alert.alert("Restore failed", "Please try again.");
-  }
-}
-
 function goBackOrFallback() {
   const action = resolveBackNavigationAction({
     canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
@@ -248,6 +145,88 @@ function goBackOrFallback() {
 }
 
 export default function SettingsScreen() {
+  const { openManageSubscription, restorePurchases } = useRevenueCat();
+
+  const settingsItems = [
+    {
+      key: "account",
+      label: "Account",
+      route: "/account",
+      Icon: AccountIcon,
+    },
+    {
+      key: "manage-subscription",
+      label: "Manage subscription",
+      onPress: async () => {
+        const result = await openManageSubscription();
+
+        if (!result?.opened) {
+          Alert.alert(
+            "Manage subscription error",
+            result?.error || "Please try again."
+          );
+        }
+      },
+      Icon: SubscriptionIcon,
+    },
+    {
+      key: "restore-purchases",
+      label: "Restore purchases",
+      onPress: async () => {
+        const result = await restorePurchases();
+
+        if (result?.error) {
+          Alert.alert("Restore failed", result.error);
+          return;
+        }
+
+        if (result?.hasPremiumAccess) {
+          Alert.alert("Purchases restored", "Your premium access is active.");
+          return;
+        }
+
+        Alert.alert("No active subscription found");
+      },
+      Icon: RestoreIcon,
+    },
+    {
+      key: "my-supplements",
+      label: "My supplements",
+      route: "/my-supplements",
+      Icon: SupplementsIcon,
+    },
+    {
+      key: "connections",
+      label: "Connections",
+      route: "/connections",
+      Icon: ConnectionsIcon,
+    },
+    {
+      key: "favourites",
+      label: "Favourites",
+      route: "/favourites",
+      Icon: FavouriteIcon,
+    },
+    {
+      key: "questionnaire",
+      label: "Retake questionnaire",
+      route: "/onboarding?mode=retake",
+      Icon: QuestionnaireIcon,
+    },
+    {
+      key: "invite",
+      label: "Invite friends and family",
+      onPress: inviteFriendsAndFamily,
+      Icon: ShareIcon,
+    },
+    {
+      key: "contact-us",
+      label: "Need help? Contact us",
+      onPress: contactSupport,
+      Icon: ContactIcon,
+    },
+  ];
+
   return (
     <BackdropScreen
       header={
@@ -281,19 +260,19 @@ export default function SettingsScreen() {
     >
       <View style={styles.shortcutsList}>
         <View style={styles.divider} />
-        {SETTINGS_ITEMS.slice(0, 3).map((item) => (
+        {settingsItems.slice(0, 3).map((item) => (
           <SettingsItemRow key={item.key} item={item} />
         ))}
 
         <View style={styles.divider} />
 
-        {SETTINGS_ITEMS.slice(3, 7).map((item) => (
+        {settingsItems.slice(3, 7).map((item) => (
           <SettingsItemRow key={item.key} item={item} />
         ))}
 
         <View style={styles.divider} />
 
-        {SETTINGS_ITEMS.slice(7).map((item) => (
+        {settingsItems.slice(7).map((item) => (
           <SettingsItemRow key={item.key} item={item} />
         ))}
       </View>

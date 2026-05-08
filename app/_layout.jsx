@@ -80,6 +80,7 @@ function RootNavigator() {
   const [gateState, setGateState] = useState(null);
   const [gateResolved, setGateResolved] = useState(false);
   const gateRequestRef = useRef(0);
+  const lastRedirectHrefRef = useRef(null);
   const isOnboardingRoute = segments[0] === "onboarding";
   const isLoginRoute = segments[0] === "login";
   const isVerifyEmailRoute = segments[0] === "verify-email";
@@ -259,19 +260,31 @@ function RootNavigator() {
   useEffect(() => {
     if (!gateResolved || !gateState) return;
 
+    let nextRedirectHref = null;
+
     if (gateState === "complete") {
       if ((isOnboardingRoute && !isRetakeOnboarding) || isLoginRoute) {
         if (isAppSubscriptionGateRoute) {
+          lastRedirectHrefRef.current = null;
           return;
         }
-        router.replace("/");
+        nextRedirectHref = "/";
       }
+    } else if (!isOnRequiredGateRoute && gatedHref) {
+      nextRedirectHref = gatedHref;
+    }
+
+    if (!nextRedirectHref) {
+      lastRedirectHrefRef.current = null;
       return;
     }
 
-    if (!isOnRequiredGateRoute && gatedHref) {
-      router.replace(gatedHref);
+    if (lastRedirectHrefRef.current === nextRedirectHref) {
+      return;
     }
+
+    lastRedirectHrefRef.current = nextRedirectHref;
+    router.replace(nextRedirectHref);
   }, [
     gateState,
     gatedHref,

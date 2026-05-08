@@ -9,6 +9,10 @@ const QUOTA_ERROR_CODES = new Set([
   "edge_function_quota_exceeded",
 ]);
 
+const PROTECTED_FUNCTION_ACCESS_ERROR_CODES = new Set([
+  "premium_entitlement_required",
+]);
+
 function parseJsonObject(raw) {
   const text = trimString(raw);
   if (!text) return null;
@@ -44,6 +48,11 @@ export function getFriendlyQuotaMessage(retryAfterSeconds) {
     "You're doing that a bit too quickly. Please try again in a few minutes." +
     formatRetryDelayText(retryAfterSeconds)
   );
+}
+
+export function isExpectedProtectedFunctionAccessError({ status, code }) {
+  const normalizedCode = trimString(code).toLowerCase();
+  return status === 401 || PROTECTED_FUNCTION_ACCESS_ERROR_CODES.has(normalizedCode);
 }
 
 export function normalizeEdgeFunctionError({

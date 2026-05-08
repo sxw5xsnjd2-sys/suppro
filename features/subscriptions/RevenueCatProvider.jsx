@@ -432,8 +432,19 @@ export function RevenueCatProvider({ children }) {
   }, [revenueCatSdk]);
 
   const restorePurchases = async () => {
-    if (!hasConfiguredRef.current) return false;
-    if (!revenueCatSdk.Purchases) return false;
+    const unavailableMessage = getRevenueCatUnavailableMessage(revenueCatSdk.error);
+
+    if (!hasConfiguredRef.current || !revenueCatSdk.Purchases) {
+      if (isMountedRef.current) {
+        setActionError(unavailableMessage);
+      }
+      return {
+        didRestore: false,
+        hasPremiumAccess: false,
+        message: "",
+        error: unavailableMessage,
+      };
+    }
 
     setIsRestoring(true);
     setActionError("");
@@ -441,27 +452,77 @@ export function RevenueCatProvider({ children }) {
 
     try {
       const nextCustomerInfo = await revenueCatSdk.Purchases.restorePurchases();
+      const hasPremiumAccess = isPremiumActive(nextCustomerInfo);
+      const message = hasPremiumAccess
+        ? "Purchases restored and Suppro Premium is active."
+        : "Restore completed, but no active Suppro Premium entitlement was found.";
+
       if (isMountedRef.current) {
         setCustomerInfo(nextCustomerInfo);
-        setActionMessage(
-          isPremiumActive(nextCustomerInfo)
-            ? "Purchases restored and Suppro Premium is active."
-            : "Restore completed, but no active Suppro Premium entitlement was found."
-        );
+        setActionMessage(message);
       }
       await refreshState({ silent: true });
-      return isPremiumActive(nextCustomerInfo);
+      return {
+        didRestore: true,
+        hasPremiumAccess,
+        message,
+        error: "",
+      };
     } catch (error) {
+      const message = toRevenueCatErrorMessage(error, "Could not restore purchases.");
       if (isMountedRef.current) {
-        setActionError(
-          toRevenueCatErrorMessage(error, "Could not restore purchases.")
-        );
+        setActionError(message);
       }
-      return false;
+      return {
+        didRestore: false,
+        hasPremiumAccess: false,
+        message: "",
+        error: message,
+      };
     } finally {
       if (isMountedRef.current) {
         setIsRestoring(false);
       }
+    }
+  };
+
+  const openManageSubscription = async () => {
+    const unavailableMessage = getRevenueCatUnavailableMessage(revenueCatSdk.error);
+
+    if (
+      !hasConfiguredRef.current ||
+      !revenueCatSdk.Purchases?.showManageSubscriptions
+    ) {
+      if (isMountedRef.current) {
+        setActionError(unavailableMessage);
+      }
+      return {
+        opened: false,
+        error: unavailableMessage,
+      };
+    }
+
+    setActionError("");
+    setActionMessage("");
+
+    try {
+      await revenueCatSdk.Purchases.showManageSubscriptions();
+      return {
+        opened: true,
+        error: "",
+      };
+    } catch (error) {
+      const message = toRevenueCatErrorMessage(
+        error,
+        "Could not open subscription management."
+      );
+      if (isMountedRef.current) {
+        setActionError(message);
+      }
+      return {
+        opened: false,
+        error: message,
+      };
     }
   };
 
@@ -677,6 +738,7 @@ export function RevenueCatProvider({ children }) {
       purchaseYearly,
       presentPremiumPaywall,
       restorePurchases,
+      openManageSubscription,
       openCustomerCenter,
     }),
     [
@@ -696,6 +758,7 @@ export function RevenueCatProvider({ children }) {
       isRefreshing,
       isRestoring,
       offerings,
+      openManageSubscription,
       premiumActive,
       premiumEntitlement,
       accessState,

@@ -22,8 +22,12 @@ import { getEffectiveEntries } from "@/features/health/selectors";
 import { getTrackedSupplementEvidenceScores } from "@/features/supplements/getTrackedSupplementEvidenceScores";
 import { openTrackedSupplementInfo } from "@/features/supplements/openTrackedSupplementInfo";
 import { isSupplementScheduledOnDate } from "@/features/supplements/schedule";
-import { normalizeEdgeFunctionError } from "@src/lib/edgeFunctionErrors";
-import { getAccessTokenOrCreateSession } from "@src/lib/supabase";
+import {
+  isExpectedProtectedFunctionAccessError,
+  normalizeEdgeFunctionError,
+} from "@src/lib/edgeFunctionErrors";
+import { getNonAnonymousAccessToken } from "@src/lib/authState";
+import { supabase } from "@src/lib/supabase";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
 import { computeMetricImprovement } from "@/features/health/metricTrends";
 
@@ -939,7 +943,21 @@ export default function HomeScreen() {
           throw new Error("Missing EXPO_PUBLIC_SUPABASE_URL");
         }
 
-        const accessToken = await getAccessTokenOrCreateSession();
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession();
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        const accessToken = getNonAnonymousAccessToken(
+          sessionData?.session ?? null
+        );
+        if (!accessToken) {
+          if (!cancelled) {
+            setAiSummaryLoading(false);
+          }
+          return;
+        }
 
         const response = await fetch(
           `${SUPABASE_URL}/functions/v1/ai-supplement`,
@@ -966,6 +984,12 @@ export default function HomeScreen() {
             serviceUnavailableMessage:
               "Live AI summary is currently unavailable.",
           });
+          if (isExpectedProtectedFunctionAccessError(normalizedError)) {
+            if (!cancelled) {
+              setAiSummaryLoading(false);
+            }
+            return;
+          }
           throw new Error(normalizedError.message);
         }
 
@@ -993,6 +1017,9 @@ export default function HomeScreen() {
           JSON.stringify(record)
         );
       } catch (error) {
+        if (cancelled) {
+          return;
+        }
         console.error("Failed to generate AI home summary", error);
         const fallbackRecord = {
           generatedForDate: today,

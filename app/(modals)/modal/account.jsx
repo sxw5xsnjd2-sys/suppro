@@ -222,7 +222,6 @@ export default function AccountScreen() {
 
     try {
       await signOutAndClearLocalState();
-      router.replace("/login?mode=login");
     } catch (error) {
       setAccountError(
         error instanceof Error

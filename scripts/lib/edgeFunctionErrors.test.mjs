@@ -17,6 +17,7 @@ function loadEdgeFunctionErrorsModule() {
 return {
   formatRetryDelayText,
   getFriendlyQuotaMessage,
+  isExpectedProtectedFunctionAccessError,
   normalizeEdgeFunctionError,
 };`
   );
@@ -77,5 +78,34 @@ test("short retry windows are rounded to about a minute", () => {
   assert.equal(
     getFriendlyQuotaMessage(45),
     "You're doing that a bit too quickly. Please try again in a few minutes. Try again in about a minute."
+  );
+});
+
+test("protected function auth and entitlement errors can be silenced by callers", () => {
+  const { isExpectedProtectedFunctionAccessError } =
+    loadEdgeFunctionErrorsModule();
+
+  assert.equal(
+    isExpectedProtectedFunctionAccessError({
+      status: 401,
+      code: null,
+    }),
+    true
+  );
+
+  assert.equal(
+    isExpectedProtectedFunctionAccessError({
+      status: 403,
+      code: "premium_entitlement_required",
+    }),
+    true
+  );
+
+  assert.equal(
+    isExpectedProtectedFunctionAccessError({
+      status: 500,
+      code: null,
+    }),
+    false
   );
 });

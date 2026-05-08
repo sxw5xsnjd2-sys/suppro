@@ -15,6 +15,7 @@ function loadAuthStateModule() {
     `${transformed}
 return {
   canEnterAuthenticatedApp,
+  getNonAnonymousAccessToken,
   hasNonAnonymousSession,
   hasNonAnonymousUser,
   isAnonymousUser,
@@ -26,6 +27,7 @@ return {
 
 const {
   canEnterAuthenticatedApp,
+  getNonAnonymousAccessToken,
   hasNonAnonymousSession,
   hasNonAnonymousUser,
   isAnonymousUser,
@@ -108,5 +110,40 @@ test("authenticated app access requires both a real session and completed accoun
       hasCompletedAccountSetup: true,
     }),
     true
+  );
+});
+
+test("non-anonymous access token is returned only for real signed-in sessions", () => {
+  assert.equal(
+    getNonAnonymousAccessToken({
+      access_token: "real-token",
+      user: {
+        id: "real-user",
+        is_anonymous: false,
+      },
+    }),
+    "real-token"
+  );
+
+  assert.equal(
+    getNonAnonymousAccessToken({
+      access_token: "anon-token",
+      user: {
+        id: "anon-user",
+        is_anonymous: true,
+      },
+    }),
+    null
+  );
+
+  assert.equal(
+    getNonAnonymousAccessToken({
+      access_token: "",
+      user: {
+        id: "real-user",
+        is_anonymous: false,
+      },
+    }),
+    null
   );
 });
