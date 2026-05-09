@@ -168,6 +168,78 @@ function normalizeNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined);
+}
+
+function unwrapResponsePayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return {};
+  }
+
+  if (payload.data && typeof payload.data === "object") {
+    return payload.data;
+  }
+
+  if (payload.result && typeof payload.result === "object") {
+    return payload.result;
+  }
+
+  return payload;
+}
+
+export function normalizePhotoRescueResponseShape(payload) {
+  const data = unwrapResponsePayload(payload);
+  const unresolvedIngredientCount = normalizeNumber(
+    firstDefined(
+      data?.unresolvedIngredientCount,
+      data?.unresolved_ingredient_count
+    )
+  );
+
+  return {
+    productId: normalizeString(firstDefined(data?.productId, data?.product_id)),
+    displayName: normalizeString(
+      firstDefined(data?.displayName, data?.display_name)
+    ),
+    productName: normalizeString(
+      firstDefined(data?.productName, data?.product_name, data?.name)
+    ),
+    ingredients: normalizeIngredients(
+      firstDefined(data?.ingredients, data?.ingredients_found)
+    ),
+    servingSizeText: normalizeString(
+      firstDefined(data?.servingSizeText, data?.serving_size_text)
+    ),
+    source:
+      normalizeString(firstDefined(data?.source, data?.scanDataSource)) ||
+      "photo_rescue",
+    confidence: normalizeNumber(data?.confidence),
+    classificationConfidence: normalizeNumber(
+      firstDefined(
+        data?.classificationConfidence,
+        data?.classification_confidence
+      )
+    ),
+    createdProduct: Boolean(
+      firstDefined(data?.createdProduct, data?.created_product)
+    ),
+    wroteCanonicalData: Boolean(
+      firstDefined(data?.wroteCanonicalData, data?.wrote_canonical_data)
+    ),
+    isSupplement:
+      typeof firstDefined(data?.isSupplement, data?.is_supplement) === "boolean"
+        ? firstDefined(data?.isSupplement, data?.is_supplement)
+        : null,
+    category: normalizeString(data?.category),
+    message: normalizeString(firstDefined(data?.message, data?.error)),
+    unresolvedIngredientCount: Number.isFinite(unresolvedIngredientCount)
+      ? Math.max(0, Math.trunc(unresolvedIngredientCount))
+      : 0,
+    rawText: normalizeString(firstDefined(data?.rawText, data?.raw_text)),
+  };
+}
+
 export async function scanSupplementPhotos(payload) {
   if (!SUPABASE_URL) {
     throw new Error("Missing EXPO_PUBLIC_SUPABASE_URL");
@@ -236,25 +308,5 @@ export async function scanSupplementPhotos(payload) {
   }
 
   const data = await response.json();
-
-  return {
-    productId: normalizeString(data?.productId),
-    displayName: normalizeString(data?.displayName),
-    productName: normalizeString(data?.productName),
-    ingredients: normalizeIngredients(data?.ingredients),
-    servingSizeText: normalizeString(data?.servingSizeText),
-    source: normalizeString(data?.source) || "photo_rescue",
-    confidence: normalizeNumber(data?.confidence),
-    classificationConfidence: normalizeNumber(data?.classificationConfidence),
-    createdProduct: Boolean(data?.createdProduct),
-    wroteCanonicalData: Boolean(data?.wroteCanonicalData),
-    isSupplement:
-      typeof data?.isSupplement === "boolean" ? data.isSupplement : null,
-    category: normalizeString(data?.category),
-    message: normalizeString(data?.message),
-    unresolvedIngredientCount: Number.isFinite(data?.unresolvedIngredientCount)
-      ? data.unresolvedIngredientCount
-      : 0,
-    rawText: normalizeString(data?.rawText),
-  };
+  return normalizePhotoRescueResponseShape(data);
 }

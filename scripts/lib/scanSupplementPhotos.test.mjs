@@ -2,7 +2,44 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-function loadScanSupplementPhotosModule() {
+function loadEdgeFunctionErrorsModule() {
+  const source = readFileSync(
+    new URL("../../src/lib/edgeFunctionErrors.js", import.meta.url),
+    "utf8"
+  );
+
+  const transformed = source
+    .replace(/export async function /g, "async function ")
+    .replace(/export function /g, "function ");
+
+  const factory = new Function(
+    `${transformed}
+return {
+  normalizeEdgeFunctionError,
+};`
+  );
+
+  return factory();
+}
+
+function createFailure({
+  category,
+  code = null,
+  message = "",
+  status = null,
+  retryAfterSeconds = null,
+  isQuotaLimited = false,
+}) {
+  const error = new Error(message || code || category || "scanner failure");
+  error.category = category;
+  error.code = code;
+  error.status = status;
+  error.retryAfterSeconds = retryAfterSeconds;
+  error.isQuotaLimited = isQuotaLimited;
+  return error;
+}
+
+function loadScanSupplementPhotosModule(overrides = {}) {
   const source = readFileSync(
     new URL("../../src/data/scanSupplementPhotos.js", import.meta.url),
     "utf8"
@@ -35,19 +72,32 @@ function loadScanSupplementPhotosModule() {
     "SCANNER_FAILURE_CATEGORIES",
     "logBuildAwareDiagnostic",
     "SUPABASE_URL",
+    "fetch",
     `${transformed}
 return {
+  normalizePhotoRescueResponseShape,
   normalizePhotoRescueIngredient,
+  scanSupplementPhotos,
 };`
   );
 
   return factory(
-    async () => "",
-    () => ({}),
-    () => null,
-    {},
-    () => {},
-    "https://example.supabase.co"
+    overrides.getAccessTokenOrCreateSession ?? (async () => ""),
+    overrides.normalizeEdgeFunctionError ??
+      loadEdgeFunctionErrorsModule().normalizeEdgeFunctionError,
+    overrides.createScannerFailure ?? createFailure,
+    overrides.SCANNER_FAILURE_CATEGORIES ?? {
+      networkError: "network_error",
+      authSessionRequired: "auth_session_required",
+      backendValidationFailure: "backend_validation_failure",
+    },
+    overrides.logBuildAwareDiagnostic ?? (() => {}),
+    overrides.SUPABASE_URL ?? "https://example.supabase.co",
+    overrides.fetch ??
+      (async () => ({
+        ok: true,
+        json: async () => ({}),
+      }))
   );
 }
 
@@ -153,4 +203,126 @@ test("photo-rescue normalized doses are not treated as missing_actual_dose downs
   assert.equal(scored.doseComparisonStatus, "within_target_range");
   assert.equal(scored.doseStatusLabel, "Meets target dose");
   assert.notEqual(scored.doseComparisonStatus, "missing_actual_dose");
+});
+
+test("scanSupplementPhotos normalizes nested response envelopes and snake_case fields", async () => {
+  const { scanSupplementPhotos } = loadScanSupplementPhotosModule({
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        data: {
+          product_id: " prod_123 ",
+          display_name: " Magnesium Glycinate ",
+          product_name: " Magnesium Glycinate ",
+          ingredients_found: [
+            "Magnesium 200 mg",
+            {
+              raw_name: "Vitamin D3 25 mcg",
+              dosage_original_text: "25 mcg",
+              amount_basis: "per_capsule",
+            },
+          ],
+          serving_size_text: " 2 capsules ",
+          source: " photo_rescue_canonical ",
+          confidence: "0.91",
+          classification_confidence: "0.72",
+          created_product: 1,
+          wrote_canonical_data: "yes",
+          is_supplement: true,
+          category: " vitamin_mineral ",
+          error: " Parsed successfully ",
+          unresolved_ingredient_count: "3",
+          raw_text: " OCR text ",
+        },
+      }),
+    }),
+  });
+
+  const result = await scanSupplementPhotos({ barcode: "0123456789012" });
+
+  assert.deepEqual(result, {
+    productId: "prod_123",
+    displayName: "Magnesium Glycinate",
+    productName: "Magnesium Glycinate",
+    ingredients: [
+      {
+        name: "Magnesium",
+        raw_name: "Magnesium",
+        dosageValue: 200,
+        dosageUnit: "mg",
+        dosageDisplay: "200 mg",
+        chemicalForm: null,
+        amountBasis: null,
+        doseConfidence: null,
+        doseReviewReason: null,
+      },
+      {
+        name: "Vitamin D3",
+        raw_name: "Vitamin D3",
+        dosageValue: 25,
+        dosageUnit: "mcg",
+        dosageDisplay: "25 mcg",
+        chemicalForm: null,
+        amountBasis: "per_capsule",
+        doseConfidence: null,
+        doseReviewReason: null,
+      },
+    ],
+    servingSizeText: "2 capsules",
+    source: "photo_rescue_canonical",
+    confidence: 0.91,
+    classificationConfidence: 0.72,
+    createdProduct: true,
+    wroteCanonicalData: true,
+    isSupplement: true,
+    category: "vitamin_mineral",
+    message: "Parsed successfully",
+    unresolvedIngredientCount: 3,
+    rawText: "OCR text",
+  });
+});
+
+test("scanSupplementPhotos normalizes backend validation failures with safe messages", async () => {
+  const { scanSupplementPhotos } = loadScanSupplementPhotosModule({
+    fetch: async () => ({
+      ok: false,
+      status: 422,
+      text: async () =>
+        JSON.stringify({
+          error:
+            "We couldn't read any usable active supplement ingredients from those photos.",
+        }),
+      headers: { get: () => null },
+    }),
+  });
+
+  await assert.rejects(
+    () => scanSupplementPhotos({ barcode: "0123456789012" }),
+    (error) => {
+      assert.equal(error.category, "backend_validation_failure");
+      assert.equal(error.status, 422);
+      assert.equal(
+        error.message,
+        "We couldn't read any usable active supplement ingredients from those photos."
+      );
+      return true;
+    }
+  );
+});
+
+test("scanSupplementPhotos normalizes network transport failures", async () => {
+  const { scanSupplementPhotos } = loadScanSupplementPhotosModule({
+    fetch: async () => {
+      throw new TypeError("Failed to fetch");
+    },
+  });
+
+  await assert.rejects(
+    () => scanSupplementPhotos({ barcode: "0123456789012" }),
+    (error) => {
+      assert.equal(error.category, "network_error");
+      assert.equal(error.code, "network_error");
+      return true;
+    }
+  );
 });

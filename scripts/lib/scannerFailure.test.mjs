@@ -107,6 +107,21 @@ test("expired photo rescue sessions present a rescan action", () => {
   assert.equal(presentation.primaryLabel, "Rescan barcode");
 });
 
+test("expired session-like photo rescue messages normalize to the rescan copy", () => {
+  const normalized = normalizePhotoRescueFailure({
+    message: "scanSessionId is no longer active for this upload",
+  });
+
+  assert.equal(
+    normalized.category,
+    SCANNER_FAILURE_CATEGORIES.expiredScanSession
+  );
+  assert.equal(
+    normalized.message,
+    "That scan expired. Rescan the barcode and try photo rescue again."
+  );
+});
+
 test("network-style fetch errors classify as network errors", () => {
   const category = getScannerFailureCategory({
     message: "Failed to fetch",
