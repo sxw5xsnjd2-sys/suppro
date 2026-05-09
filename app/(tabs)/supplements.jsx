@@ -464,6 +464,7 @@ export default function SupplementsScreen() {
                 key={item.label}
                 item={item}
                 showBorder={index < benefits.length - 1}
+                requireSubscriptionAccess={requireSubscriptionAccess}
               />
             ))}
           </View>
