@@ -52,6 +52,38 @@ return {
   return factory(false, () => {});
 }
 
+function loadRevenueCatProviderHelpers({
+  entitlementId = "Suppro Premium",
+  yearlyIdentifier = "yearly",
+  sdk = { Purchases: { PURCHASES_ERROR_CODE: {} } },
+} = {}) {
+  const source = readFileSync(
+    new URL("../../features/subscriptions/RevenueCatProvider.jsx", import.meta.url),
+    "utf8"
+  );
+
+  const start = source.indexOf("function getRevenueCatAppUserId");
+  const end = source.indexOf("export function RevenueCatProvider");
+  const helperSource = source.slice(start, end);
+
+  const factory = new Function(
+    "REVENUECAT_ENTITLEMENT_ID",
+    "REVENUECAT_YEARLY_IDENTIFIER",
+    "getRevenueCatSdk",
+    `${helperSource}
+return {
+  getPremiumEntitlement,
+  isPremiumActive,
+  findYearlyPackage,
+  getPreferredOffering,
+  isPurchaseCancelled,
+  resolveRestorePurchasesResult,
+};`
+  );
+
+  return factory(entitlementId, yearlyIdentifier, () => sdk);
+}
+
 test("active entitlement allows premium access", () => {
   const { resolveRevenueCatAccessState } = loadSubscriptionAccessModule();
 
@@ -96,6 +128,43 @@ test("expired or non-active entitlement blocks premium access", () => {
   assert.equal(state.isResolved, true);
   assert.equal(state.hasActiveAccess, false);
   assert.equal(state.shouldBlockPremiumAction, true);
+});
+
+test("customerInfo entitlement derivation returns the premium entitlement and active state", () => {
+  const { getPremiumEntitlement, isPremiumActive } = loadRevenueCatProviderHelpers();
+  const premiumEntitlement = { expiresDate: null, productIdentifier: "yearly" };
+  const customerInfo = {
+    entitlements: {
+      all: {
+        "Suppro Premium": premiumEntitlement,
+      },
+      active: {
+        "Suppro Premium": premiumEntitlement,
+      },
+    },
+  };
+
+  assert.equal(getPremiumEntitlement(customerInfo), premiumEntitlement);
+  assert.equal(isPremiumActive(customerInfo), true);
+});
+
+test("customerInfo without an active premium entitlement fails closed", () => {
+  const { getPremiumEntitlement, isPremiumActive } = loadRevenueCatProviderHelpers();
+  const expiredEntitlement = {
+    expiresDate: "2026-05-01T00:00:00Z",
+    productIdentifier: "yearly",
+  };
+  const customerInfo = {
+    entitlements: {
+      all: {
+        "Suppro Premium": expiredEntitlement,
+      },
+      active: {},
+    },
+  };
+
+  assert.equal(getPremiumEntitlement(customerInfo), expiredEntitlement);
+  assert.equal(isPremiumActive(customerInfo), false);
 });
 
 test("unknown RevenueCat state fails closed for premium actions", () => {
@@ -279,6 +348,49 @@ test("origin=app paywall presents paywall when offering is available", () => {
   );
 });
 
+test("preferred offering chooses one with a yearly package over a current fallback", () => {
+  const { findYearlyPackage, getPreferredOffering } =
+    loadRevenueCatProviderHelpers();
+  const currentOffering = {
+    identifier: "default",
+    availablePackages: [{ identifier: "monthly" }],
+  };
+  const premiumOffering = {
+    identifier: "premium",
+    availablePackages: [{ identifier: "yearly" }],
+  };
+  const offerings = {
+    current: currentOffering,
+    all: {
+      default: currentOffering,
+      premium: premiumOffering,
+    },
+  };
+
+  assert.equal(getPreferredOffering(offerings), premiumOffering);
+  assert.equal(findYearlyPackage(premiumOffering), premiumOffering.availablePackages[0]);
+});
+
+test("yearly package falls back to annual package when no exact yearly identifier exists", () => {
+  const { findYearlyPackage, getPreferredOffering } =
+    loadRevenueCatProviderHelpers();
+  const annualPackage = { identifier: "annual_fallback" };
+  const offering = {
+    identifier: "fallback",
+    availablePackages: [{ identifier: "monthly" }],
+    annual: annualPackage,
+  };
+  const offerings = {
+    current: offering,
+    all: {
+      fallback: offering,
+    },
+  };
+
+  assert.equal(findYearlyPackage(offering), annualPackage);
+  assert.equal(getPreferredOffering(offerings), offering);
+});
+
 test("RevenueCat identity logs in when a real Supabase user appears", () => {
   const { resolveRevenueCatIdentityAction } = loadSubscriptionAccessModule();
 
@@ -329,6 +441,51 @@ test("RevenueCat identity stays anonymous when there is no real session", () => 
     }),
     "refresh_anonymous"
   );
+});
+
+test("restore result marks premium access active when the entitlement is restored", () => {
+  const { resolveRestorePurchasesResult } = loadRevenueCatProviderHelpers();
+  const customerInfo = {
+    entitlements: {
+      active: {
+        "Suppro Premium": { productIdentifier: "yearly" },
+      },
+    },
+  };
+
+  assert.deepEqual(resolveRestorePurchasesResult(customerInfo), {
+    didRestore: true,
+    hasPremiumAccess: true,
+    message: "Purchases restored and Suppro Premium is active.",
+    error: "",
+  });
+});
+
+test("restore result stays successful but reports no active entitlement when none is restored", () => {
+  const { resolveRestorePurchasesResult } = loadRevenueCatProviderHelpers();
+
+  assert.deepEqual(resolveRestorePurchasesResult({ entitlements: { active: {} } }), {
+    didRestore: true,
+    hasPremiumAccess: false,
+    message: "Restore completed, but no active Suppro Premium entitlement was found.",
+    error: "",
+  });
+});
+
+test("cancelled purchase detection matches RevenueCat cancellation signals", () => {
+  const { isPurchaseCancelled } = loadRevenueCatProviderHelpers({
+    sdk: {
+      Purchases: {
+        PURCHASES_ERROR_CODE: {
+          PURCHASE_CANCELLED_ERROR: "cancelled",
+        },
+      },
+    },
+  });
+
+  assert.equal(isPurchaseCancelled({ code: "cancelled" }), true);
+  assert.equal(isPurchaseCancelled({ userCancelled: true }), true);
+  assert.equal(isPurchaseCancelled({ code: "network_error" }), false);
 });
 
 test("unsafe back navigation falls back to a safe route", () => {

@@ -101,6 +101,20 @@ function toRevenueCatErrorMessage(error, fallbackMessage) {
   return fallbackMessage;
 }
 
+function resolveRestorePurchasesResult(customerInfo) {
+  const hasPremiumAccess = isPremiumActive(customerInfo);
+  const message = hasPremiumAccess
+    ? "Purchases restored and Suppro Premium is active."
+    : "Restore completed, but no active Suppro Premium entitlement was found.";
+
+  return {
+    didRestore: true,
+    hasPremiumAccess,
+    message,
+    error: "",
+  };
+}
+
 export function RevenueCatProvider({ children }) {
   const revenueCatSdk = useMemo(() => getRevenueCatSdk(), []);
   const [isReady, setIsReady] = useState(false);
@@ -473,22 +487,14 @@ export function RevenueCatProvider({ children }) {
 
     try {
       const nextCustomerInfo = await revenueCatSdk.Purchases.restorePurchases();
-      const hasPremiumAccess = isPremiumActive(nextCustomerInfo);
-      const message = hasPremiumAccess
-        ? "Purchases restored and Suppro Premium is active."
-        : "Restore completed, but no active Suppro Premium entitlement was found.";
+      const restoreResult = resolveRestorePurchasesResult(nextCustomerInfo);
 
       if (isMountedRef.current) {
         setCustomerInfo(nextCustomerInfo);
-        setActionMessage(message);
+        setActionMessage(restoreResult.message);
       }
       await refreshState({ silent: true });
-      return {
-        didRestore: true,
-        hasPremiumAccess,
-        message,
-        error: "",
-      };
+      return restoreResult;
     } catch (error) {
       const message = toRevenueCatErrorMessage(error, "Could not restore purchases.");
       if (isMountedRef.current) {
