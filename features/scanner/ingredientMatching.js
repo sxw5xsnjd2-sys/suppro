@@ -222,6 +222,33 @@ function getFirstValue(source, keys) {
   return null;
 }
 
+function parseDoseDisplayValue(value) {
+  const text = trimString(value);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(
+    new RegExp(
+      `^(\\d+(?:[.,]\\d+)?)\\s*(${DOSAGE_UNIT_PATTERN.replace("|%", "")})\\b(?:\\s*(?:[A-Z]{1,4}|% ?NRV|NRV))?$`,
+      "i"
+    )
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const amount = parseOptionalNumber(match[1]);
+  const unit = normalizeDosageUnit(match[2]);
+
+  if (!Number.isFinite(amount) || !unit) {
+    return null;
+  }
+
+  return { amount, unit };
+}
+
 function normalizeStructuredIngredientSource(ingredient) {
   if (!ingredient || typeof ingredient !== "object") {
     return null;
@@ -267,13 +294,18 @@ function normalizeStructuredIngredientSource(ingredient) {
         "dosage_original_text",
       ])
     ) || null;
-  const hasDose = Number.isFinite(amount) && Boolean(unit);
+  const parsedDisplayDose = parseDoseDisplayValue(dosageDisplay);
+  const resolvedAmount = Number.isFinite(amount)
+    ? amount
+    : parsedDisplayDose?.amount ?? null;
+  const resolvedUnit = unit || parsedDisplayDose?.unit || null;
+  const hasDose = Number.isFinite(resolvedAmount) && Boolean(resolvedUnit);
 
   return {
     raw,
     name,
-    amount: hasDose ? amount : null,
-    unit: hasDose ? unit : null,
+    amount: hasDose ? resolvedAmount : null,
+    unit: hasDose ? resolvedUnit : null,
     dosageDisplay,
     chemicalForm,
     amountBasis: normalizeAmountBasis(

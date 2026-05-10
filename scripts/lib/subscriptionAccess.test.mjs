@@ -42,14 +42,16 @@ function loadRevenueCatSdkModule() {
 
   const factory = new Function(
     "IS_DEVELOPMENT_BUILD",
+    "logBuildAwareDiagnostic",
     "logDevelopmentDiagnostic",
     `${transformed}
 return {
   isExpectedRevenueCatCancellationLog,
+  safelyConfigureRevenueCatLogging,
 };`
   );
 
-  return factory(false, () => {});
+  return factory(false, () => {}, () => {});
 }
 
 function loadRevenueCatProviderHelpers({
@@ -548,4 +550,62 @@ test("real RevenueCat failures are not misclassified as cancellations", () => {
     }),
     false
   );
+});
+
+test("RevenueCat logging setup survives log handler crashes", async () => {
+  const { safelyConfigureRevenueCatLogging } = loadRevenueCatSdkModule();
+  let requestedLevel = null;
+  const Purchases = {
+    LOG_LEVEL: {
+      DEBUG: "DEBUG",
+      WARN: "WARN",
+    },
+    setLogHandler() {
+      throw new TypeError(
+        "NativeJSLogger.default.addListener is not a function"
+      );
+    },
+    setLogLevel(level) {
+      requestedLevel = level;
+    },
+  };
+
+  const result = await safelyConfigureRevenueCatLogging(Purchases, {
+    debugLogsEnabled: false,
+  });
+
+  assert.equal(requestedLevel, "WARN");
+  assert.deepEqual(result, {
+    installedLogHandler: false,
+    configuredLogLevel: true,
+  });
+});
+
+test("RevenueCat logging setup survives log level crashes", async () => {
+  const { safelyConfigureRevenueCatLogging } = loadRevenueCatSdkModule();
+  let installed = false;
+  const Purchases = {
+    LOG_LEVEL: {
+      DEBUG: "DEBUG",
+      WARN: "WARN",
+    },
+    setLogHandler() {
+      installed = true;
+    },
+    setLogLevel() {
+      throw new TypeError(
+        "NativeJSLogger.default.addListener is not a function"
+      );
+    },
+  };
+
+  const result = await safelyConfigureRevenueCatLogging(Purchases, {
+    debugLogsEnabled: false,
+  });
+
+  assert.equal(installed, true);
+  assert.deepEqual(result, {
+    installedLogHandler: true,
+    configuredLogLevel: false,
+  });
 });

@@ -1,5 +1,6 @@
 import {
   IS_DEVELOPMENT_BUILD,
+  logBuildAwareDiagnostic,
   logDevelopmentDiagnostic,
 } from "@src/lib/runtimeConfig";
 
@@ -156,4 +157,87 @@ export function installRevenueCatLogHandler(Purchases) {
   });
 
   return true;
+}
+
+export function safelyConfigureRevenueCatLogging(
+  Purchases,
+  { debugLogsEnabled = IS_DEVELOPMENT_BUILD } = {}
+) {
+  if (!Purchases) {
+    return Promise.resolve({
+      installedLogHandler: false,
+      configuredLogLevel: false,
+    });
+  }
+
+  let installedLogHandler = false;
+
+  try {
+    installedLogHandler = installRevenueCatLogHandler(Purchases);
+  } catch (error) {
+    logBuildAwareDiagnostic("warn", "[revenuecat] Skipping log handler setup", {
+      developmentDetails: {
+        message: error instanceof Error ? error.message : String(error),
+      },
+      productionDetails: {
+        message: "RevenueCat log handler unavailable",
+      },
+    });
+  }
+
+  try {
+    const nextLogLevel = debugLogsEnabled
+      ? Purchases.LOG_LEVEL?.DEBUG
+      : Purchases.LOG_LEVEL?.WARN;
+
+    if (
+      typeof Purchases.setLogLevel !== "function" ||
+      typeof nextLogLevel === "undefined"
+    ) {
+      return Promise.resolve({
+        installedLogHandler,
+        configuredLogLevel: false,
+      });
+    }
+
+    return Promise.resolve(Purchases.setLogLevel(nextLogLevel))
+      .then(() => ({
+        installedLogHandler,
+        configuredLogLevel: true,
+      }))
+      .catch((error) => {
+        logBuildAwareDiagnostic(
+          "warn",
+          "[revenuecat] Skipping log level setup",
+          {
+            developmentDetails: {
+              message:
+                error instanceof Error ? error.message : String(error),
+            },
+            productionDetails: {
+              message: "RevenueCat log level unavailable",
+            },
+          }
+        );
+
+        return {
+          installedLogHandler,
+          configuredLogLevel: false,
+        };
+      });
+  } catch (error) {
+    logBuildAwareDiagnostic("warn", "[revenuecat] Skipping log level setup", {
+      developmentDetails: {
+        message: error instanceof Error ? error.message : String(error),
+      },
+      productionDetails: {
+        message: "RevenueCat log level unavailable",
+      },
+    });
+
+    return Promise.resolve({
+      installedLogHandler,
+      configuredLogLevel: false,
+    });
+  }
 }

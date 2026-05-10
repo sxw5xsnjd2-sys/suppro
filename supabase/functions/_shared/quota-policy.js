@@ -4,7 +4,7 @@ export const EDGE_FUNCTION_QUOTAS = {
     functionName: "ai-supplement",
     shortWindowSeconds: 60,
     shortWindowLimit: 6,
-    dailyLimit: 100,
+    dailyLimit: 200,
     shortWindowMessage:
       "Too many AI chat requests. Please wait a minute and try again.",
     dailyLimitMessage:

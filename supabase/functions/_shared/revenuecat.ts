@@ -1,3 +1,8 @@
+import {
+  parseBearerToken,
+  resolveSupabaseAuthResult,
+} from "./auth-policy.js"
+
 const REVENUECAT_API_BASE = "https://api.revenuecat.com/v1";
 
 function trimString(value: unknown): string {
@@ -71,40 +76,21 @@ export async function authenticateSupabaseUser({
   adminSupabase: any;
   authHeader: string | null;
 }) {
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return {
-      ok: false as const,
-      status: 401,
-      body: { error: "Unauthorized" },
-    };
-  }
-
-  const token = authHeader.replace("Bearer ", "").trim();
+  const token = parseBearerToken(authHeader ?? "")
   if (!token) {
-    return {
-      ok: false as const,
-      status: 401,
-      body: { error: "Unauthorized" },
-    };
+    return resolveSupabaseAuthResult({ authHeader })
   }
 
   const {
     data: { user },
     error: authError,
-  } = await adminSupabase.auth.getUser(token);
+  } = await adminSupabase.auth.getUser(token)
 
-  if (authError || !user || user.is_anonymous === true) {
-    return {
-      ok: false as const,
-      status: 401,
-      body: { error: "Unauthorized" },
-    };
-  }
-
-  return {
-    ok: true as const,
+  return resolveSupabaseAuthResult({
+    authHeader,
     user,
-  };
+    authError,
+  })
 }
 
 export async function assertActiveRevenueCatEntitlement({

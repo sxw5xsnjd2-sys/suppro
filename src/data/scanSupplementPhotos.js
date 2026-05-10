@@ -9,6 +9,8 @@ import { logBuildAwareDiagnostic, SUPABASE_URL } from "@src/lib/runtimeConfig";
 const FUNCTION_NAME = "scan-supplement-photos";
 const TRAILING_DOSE_PATTERN =
   /^(.*?)\s+(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|μg|ug|pg|g|kg|ml|l|iu|cfu)\b(?:\s*(?:[A-Z]{1,4}|% ?NRV|NRV))?$/i;
+const DOSE_ONLY_PATTERN =
+  /^(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|μg|ug|pg|g|kg|ml|l|iu|cfu)\b(?:\s*(?:[A-Z]{1,4}|% ?NRV|NRV))?$/i;
 
 function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -36,6 +38,96 @@ function formatDoseDisplay(value, unit) {
 
   const displayValue = Number.isInteger(value) ? String(value) : String(value);
   return `${displayValue} ${unit}`;
+}
+
+function findFirstFiniteNumber(...values) {
+  for (const value of values) {
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function findFirstNonEmptyString(...values) {
+  for (const value of values) {
+    const normalized = normalizeString(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function readDoseCandidate(source) {
+  if (!source || typeof source !== "object") {
+    return {
+      dosageValue: null,
+      dosageUnit: null,
+      dosageDisplay: null,
+      amountBasis: null,
+    };
+  }
+
+  return {
+    dosageValue: normalizeNumber(
+      source.dosageValue ??
+        source.dosage_value ??
+        source.amountValue ??
+        source.amount_value ??
+        source.value ??
+        source.amount
+    ),
+    dosageUnit: normalizeDoseUnit(
+      source.dosageUnit ??
+        source.dosage_unit ??
+        source.amountUnit ??
+        source.amount_unit ??
+        source.unit
+    ),
+    dosageDisplay: findFirstNonEmptyString(
+      source.dosageDisplay,
+      source.dosage_display,
+      source.dosageOriginalText,
+      source.dosage_original_text,
+      source.display,
+      source.originalText,
+      source.original_text,
+      source.text,
+      source.label
+    ),
+    amountBasis: findFirstNonEmptyString(
+      source.amountBasis,
+      source.amount_basis
+    ),
+  };
+}
+
+function parseDoseDisplayText(value) {
+  const text = normalizeString(value);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(DOSE_ONLY_PATTERN);
+  if (!match) {
+    return null;
+  }
+
+  const dosageValue = normalizeNumber(match[1]);
+  const dosageUnit = normalizeDoseUnit(match[2]);
+
+  if (!Number.isFinite(dosageValue) || !dosageUnit) {
+    return null;
+  }
+
+  return {
+    dosageValue,
+    dosageUnit,
+    dosageDisplay: formatDoseDisplay(dosageValue, dosageUnit),
+  };
 }
 
 function parseTrailingDoseFromText(value) {
@@ -96,30 +188,42 @@ export function normalizePhotoRescueIngredient(item) {
     normalizeString(item.canonicalName) ||
     normalizeString(item.canonical_name);
   const parsedFromName = parseTrailingDoseFromText(rawName);
-  const explicitValue = normalizeNumber(item.dosageValue ?? item.dosage_value);
-  const explicitUnit = normalizeDoseUnit(item.dosageUnit ?? item.dosage_unit);
-  const explicitDisplay =
-    normalizeString(
-      item.dosageDisplay ??
-        item.dosage_display ??
-        item.dosageOriginalText ??
-        item.dosage_original_text
-    ) || null;
+  const rootDose = readDoseCandidate(item);
+  const nestedDoseCandidates = [
+    readDoseCandidate(item.dosage),
+    readDoseCandidate(item.dose),
+    readDoseCandidate(item.amount),
+    readDoseCandidate(item.quantity),
+  ];
+  const explicitValue = findFirstFiniteNumber(
+    rootDose.dosageValue,
+    ...nestedDoseCandidates.map((candidate) => candidate.dosageValue)
+  );
+  const explicitUnit = findFirstNonEmptyString(
+    rootDose.dosageUnit,
+    ...nestedDoseCandidates.map((candidate) => candidate.dosageUnit)
+  );
+  const explicitDisplay = findFirstNonEmptyString(
+    rootDose.dosageDisplay,
+    ...nestedDoseCandidates.map((candidate) => candidate.dosageDisplay)
+  );
   const hasExplicitDose =
     Number.isFinite(explicitValue) && Boolean(explicitUnit);
+  const parsedFromDisplay = parseDoseDisplayText(explicitDisplay);
   const name = parsedFromName?.name || rawName;
   const dosageValue = hasExplicitDose
     ? explicitValue
-    : parsedFromName?.dosageValue ?? null;
+    : parsedFromName?.dosageValue ?? parsedFromDisplay?.dosageValue ?? null;
   const dosageUnit = hasExplicitDose
     ? explicitUnit
-    : parsedFromName?.dosageUnit ?? null;
+    : parsedFromName?.dosageUnit ?? parsedFromDisplay?.dosageUnit ?? null;
   const dosageDisplay =
     explicitDisplay &&
     normalizeString(explicitDisplay).toLowerCase() !== rawName.toLowerCase()
       ? explicitDisplay
       : formatDoseDisplay(dosageValue, dosageUnit) ||
         parsedFromName?.dosageDisplay ||
+        parsedFromDisplay?.dosageDisplay ||
         null;
   const rawDoseConfidence = item.doseConfidence ?? item.dose_confidence ?? null;
   const doseConfidence = ["verified", "unverified", "missing"].includes(
@@ -140,7 +244,13 @@ export function normalizePhotoRescueIngredient(item) {
     dosageDisplay,
     chemicalForm:
       normalizeString(item.chemicalForm ?? item.chemical_form) || null,
-    amountBasis: normalizeString(item.amountBasis ?? item.amount_basis) || null,
+    amountBasis:
+      findFirstNonEmptyString(
+        item.amountBasis,
+        item.amount_basis,
+        rootDose.amountBasis,
+        ...nestedDoseCandidates.map((candidate) => candidate.amountBasis)
+      ) || null,
     doseConfidence,
     doseReviewReason:
       normalizeString(item.doseReviewReason ?? item.dose_review_reason) || null,

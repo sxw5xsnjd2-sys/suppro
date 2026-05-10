@@ -5,6 +5,11 @@ import {
   authenticateSupabaseUser,
 } from "../_shared/revenuecat.ts";
 import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
+import {
+  buildAiChatResponse,
+  buildAiSummaryResponse,
+  validateAiSupplementRequest,
+} from "../_shared/ai-supplement-policy.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -398,13 +403,13 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
-    const mode = body?.mode === "chat" ? "chat" : "summary";
-    const stats = body?.stats;
-
-    if (!stats || typeof stats !== "object") {
-      return jsonResponse({ error: "Missing stats payload." }, 400);
+    const validatedRequest = validateAiSupplementRequest(await req.text());
+    if (!validatedRequest.ok) {
+      return jsonResponse(validatedRequest.body, validatedRequest.status);
     }
+
+    const { body, mode } = validatedRequest.value;
+    const stats = body.stats;
 
     if (!adminSupabase) {
       return jsonResponse(
@@ -550,10 +555,10 @@ Hard safety rules:
         reply = CHAT_REFUSAL_MESSAGE;
       }
 
-      return jsonResponse({
+      return jsonResponse(buildAiChatResponse({
         decision,
         reply,
-      });
+      }));
     }
 
     const generatedForDate =
@@ -643,10 +648,10 @@ ${JSON.stringify(stats)}
 
     const recommendations = sanitizeRecommendations(parsed?.recommendations);
 
-    return jsonResponse({
+    return jsonResponse(buildAiSummaryResponse({
       summary,
       recommendations,
-    });
+    }));
   } catch (error) {
     return jsonResponse(
       {

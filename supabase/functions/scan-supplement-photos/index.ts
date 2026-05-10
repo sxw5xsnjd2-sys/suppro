@@ -5,6 +5,7 @@ import {
   authenticateSupabaseUser,
 } from "../_shared/revenuecat.ts";
 import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
+import { validateScanSupplementPhotosRequest } from "../_shared/scan-supplement-photos-policy.js";
 
 declare const EdgeRuntime:
   | {
@@ -2093,29 +2094,19 @@ Deno.serve(async (req) => {
       return jsonResponse(entitlementAccess.body, entitlementAccess.status);
     }
 
-    const body = await req.json();
-    const scanSessionId = parseIntegerLike(body?.scanSessionId);
-    const barcode = normalizeBarcode(body?.barcode);
-    const ingredientsImage = sanitizeImageDataUrl(body?.ingredientsImage);
-    const productImage = sanitizeImageDataUrl(body?.productImage);
-    const currentProduct = sanitizeCurrentProduct(body?.currentProduct);
-    const requestedProductId =
-      trimString(body?.productId) || trimString(currentProduct?.productId);
-
-    if (!Number.isFinite(scanSessionId) || (scanSessionId ?? 0) <= 0) {
-      return jsonResponse({ error: "Missing scanSessionId." }, 400);
+    const validatedRequest = validateScanSupplementPhotosRequest(await req.text());
+    if (!validatedRequest.ok) {
+      return jsonResponse(validatedRequest.body, validatedRequest.status);
     }
 
-    if (!barcode) {
-      return jsonResponse({ error: "Missing barcode." }, 400);
-    }
-
-    if (!ingredientsImage || !productImage) {
-      return jsonResponse(
-        { error: "Both ingredientsImage and productImage are required." },
-        400
-      );
-    }
+    const {
+      scanSessionId,
+      barcode,
+      ingredientsImage,
+      productImage,
+      currentProduct,
+      requestedProductId,
+    } = validatedRequest.value;
     const quotaAccess = await enforceEdgeFunctionQuota({
       adminSupabase,
       policyKey: "scan-supplement-photos",

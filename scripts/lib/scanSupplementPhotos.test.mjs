@@ -166,6 +166,27 @@ test("photo-rescue ingredient names with trailing doses are normalized into stru
   });
 });
 
+test("photo-rescue display-only doses are normalized into structured dose fields", () => {
+  const ingredient = normalizePhotoRescueIngredient({
+    raw_name: "Magnesium Glycinate",
+    dosage_display: "200 mg",
+    amount_basis: "per_capsule",
+    dose_confidence: "verified",
+  });
+
+  assert.deepEqual(ingredient, {
+    name: "Magnesium Glycinate",
+    raw_name: "Magnesium Glycinate",
+    dosageValue: 200,
+    dosageUnit: "mg",
+    dosageDisplay: "200 mg",
+    chemicalForm: null,
+    amountBasis: "per_capsule",
+    doseConfidence: "verified",
+    doseReviewReason: null,
+  });
+});
+
 test("photo-rescue normalized doses are not treated as missing_actual_dose downstream", () => {
   const ingredient = normalizePhotoRescueIngredient({
     name: "Creatine Monohydrate 3 g",
@@ -200,6 +221,50 @@ test("photo-rescue normalized doses are not treated as missing_actual_dose downs
     supplementsByCatalogId,
   });
 
+  assert.equal(scored.doseComparisonStatus, "within_target_range");
+  assert.equal(scored.doseStatusLabel, "Meets target dose");
+  assert.notEqual(scored.doseComparisonStatus, "missing_actual_dose");
+});
+
+test("photo-rescue display-only doses are not treated as missing_actual_dose downstream", () => {
+  const ingredient = normalizePhotoRescueIngredient({
+    raw_name: "Magnesium Glycinate",
+    dosage_display: "200 mg",
+    amount_basis: "per_capsule",
+    dose_confidence: "verified",
+  });
+
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "magnesium",
+      name: "Magnesium",
+      evidenceScore: 90,
+      minValue: 300,
+      maxValue: 600,
+      unit: "mg",
+    }),
+  ]);
+
+  const [scored] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "magnesium",
+        catalogName: "Magnesium",
+        ingredientName: ingredient.name,
+        ingredientRaw: ingredient.raw_name,
+        dosageValue: ingredient.dosageValue,
+        dosageUnit: ingredient.dosageUnit,
+        dosageDisplay: ingredient.dosageDisplay,
+        amountBasis: ingredient.amountBasis,
+        doseConfidence: ingredient.doseConfidence,
+      },
+    ],
+    supplementsByCatalogId,
+    servingSizeText: "Serving size: 2 capsules",
+  });
+
+  assert.equal(scored.normalizedServingDose?.value, 400);
+  assert.equal(scored.normalizedServingDose?.unit, "mg");
   assert.equal(scored.doseComparisonStatus, "within_target_range");
   assert.equal(scored.doseStatusLabel, "Meets target dose");
   assert.notEqual(scored.doseComparisonStatus, "missing_actual_dose");

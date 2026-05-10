@@ -25,8 +25,8 @@ import {
 } from "./accessPolicy";
 import {
   getRevenueCatSdk,
-  installRevenueCatLogHandler,
   getRevenueCatUnavailableMessage,
+  safelyConfigureRevenueCatLogging,
 } from "./revenueCatSdk";
 
 const RevenueCatContext = createContext(null);
@@ -393,12 +393,9 @@ export function RevenueCatProvider({ children }) {
         } = await supabase.auth.getSession();
         const initialUser = session?.user ?? null;
         const initialAppUserId = getRevenueCatAppUserId(initialUser);
-        installRevenueCatLogHandler(revenueCatSdk.Purchases);
-        await revenueCatSdk.Purchases.setLogLevel(
-          REVENUECAT_DEBUG_LOGS_ENABLED
-            ? revenueCatSdk.Purchases.LOG_LEVEL.DEBUG
-            : revenueCatSdk.Purchases.LOG_LEVEL.WARN
-        );
+        await safelyConfigureRevenueCatLogging(revenueCatSdk.Purchases, {
+          debugLogsEnabled: REVENUECAT_DEBUG_LOGS_ENABLED,
+        });
 
         const configuration = {
           apiKey: selection.apiKey,

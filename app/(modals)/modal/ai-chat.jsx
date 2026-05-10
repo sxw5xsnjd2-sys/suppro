@@ -6,13 +6,14 @@ import React, {
   useState,
 } from "react";
 import {
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -39,6 +40,10 @@ import {
 } from "@src/lib/supabase";
 import { normalizeEdgeFunctionError } from "@src/lib/edgeFunctionErrors";
 import { SUPABASE_URL } from "@src/lib/runtimeConfig";
+import {
+  sanitizeAiChatReply,
+  stripBasicMarkdown,
+} from "@src/lib/aiChatResponse";
 
 const CHAT_WINDOW_DAYS = 30;
 const MAX_CONTEXT_ENTRIES = 200;
@@ -50,17 +55,6 @@ const BENEFIT_TONE_RANK = {
   silver: 1,
   bronze: 2,
 };
-
-function stripBasicMarkdown(value) {
-  if (typeof value !== "string" || !value) {
-    return "";
-  }
-
-  return value
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/`([^`]+)`/g, "$1");
-}
 
 function buildEvidenceCatalog(rows) {
   const byBenefit = {};
@@ -352,7 +346,9 @@ function IntroCard() {
 
 function MessageBubble({ message }) {
   const isUser = message.role === "user";
-  const displayContent = stripBasicMarkdown(message.content);
+  const displayContent = isUser
+    ? stripBasicMarkdown(message.content)
+    : sanitizeAiChatReply(message.content);
 
   return (
     <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
@@ -382,7 +378,9 @@ export function AiChatScreen({ presentation = "screen" }) {
   const insets = useSafeAreaInsets();
   const isModal = presentation === "modal";
   const isTab = presentation === "tab";
-  const [headerHeight, setHeaderHeight] = useState(0);
+  const { height: windowHeight } = useWindowDimensions();
+  const [composerHeight, setComposerHeight] = useState(0);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const supplements = useSupplementsStore((s) => s.supplements);
   const takenTimesByDate = useSupplementsStore((s) => s.takenTimesByDate);
   const healthEntries = useHealthStore((s) => getEffectiveEntries(s));
@@ -488,7 +486,45 @@ export function AiChatScreen({ presentation = "screen" }) {
     requestAnimationFrame(() => {
       scrollRef.current?.scrollToEnd({ animated: true });
     });
-  }, [messages, status]);
+  }, [composerHeight, keyboardInset, messages, status]);
+
+  useEffect(() => {
+    const getRelativeKeyboardInset = (event) => {
+      const keyboardTop = event?.endCoordinates?.screenY;
+      if (!Number.isFinite(keyboardTop)) {
+        return 0;
+      }
+
+      return Math.max(0, windowHeight - keyboardTop - insets.bottom);
+    };
+
+    const handleKeyboardChange = (event) => {
+      setKeyboardInset(getRelativeKeyboardInset(event));
+    };
+
+    const handleKeyboardHide = () => {
+      setKeyboardInset(0);
+    };
+
+    const frameEvent =
+      Platform.OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const frameSubscription = Keyboard.addListener(
+      frameEvent,
+      handleKeyboardChange
+    );
+    const hideSubscription = Keyboard.addListener(
+      hideEvent,
+      handleKeyboardHide
+    );
+
+    return () => {
+      frameSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [insets.bottom, windowHeight]);
 
   const sendMessage = useCallback(async () => {
     if (!requireSubscriptionAccess("ai_chat")) {
@@ -550,7 +586,10 @@ export function AiChatScreen({ presentation = "screen" }) {
 
       const data = await response.json();
 
-      const reply = typeof data?.reply === "string" ? data.reply.trim() : "";
+      const reply =
+        typeof data?.reply === "string"
+          ? sanitizeAiChatReply(data.reply)
+          : "";
       if (!reply) throw new Error("AI response was empty.");
 
       addMessage({ role: "assistant", content: reply });
@@ -578,6 +617,9 @@ export function AiChatScreen({ presentation = "screen" }) {
   const composerBottomSpacing = isModal
     ? Math.max(insets.bottom, spacing.sm)
     : 0;
+  const composerBottomOffset = Math.max(keyboardInset, composerBottomSpacing);
+  const composerReservedSpace =
+    composerHeight + composerBottomOffset + spacing.sm;
 
   if (!hasActiveAccess) {
     return <BackdropScreen scrollable={false} />;
@@ -589,7 +631,6 @@ export function AiChatScreen({ presentation = "screen" }) {
       bottomInsetOffset={0}
       minBottomPadding={0}
       contentStyle={styles.screenContent}
-      onHeaderHeightChange={setHeaderHeight}
       header={
         <AppHeader
           insetPreset={isModal ? "modal" : "screen"}
@@ -627,11 +668,7 @@ export function AiChatScreen({ presentation = "screen" }) {
         />
       }
     >
-      <KeyboardAvoidingView
-        style={styles.chatShell}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? headerHeight : 0}
-      >
+      <View style={styles.chatShell}>
         <View style={styles.messagesArea}>
           <View style={styles.actionBar}>
             <Pressable
@@ -651,7 +688,12 @@ export function AiChatScreen({ presentation = "screen" }) {
           <ScrollView
             ref={scrollRef}
             style={styles.messagesScroll}
-            contentContainerStyle={styles.messagesContent}
+            contentContainerStyle={[
+              styles.messagesContent,
+              {
+                paddingBottom: composerReservedSpace,
+              },
+            ]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={
               Platform.OS === "ios" ? "interactive" : "on-drag"
@@ -677,10 +719,19 @@ export function AiChatScreen({ presentation = "screen" }) {
         </View>
 
         <View
+          onLayout={(event) => {
+            const nextHeight = event.nativeEvent.layout.height;
+            if (nextHeight !== composerHeight) {
+              setComposerHeight(nextHeight);
+            }
+          }}
           style={[
             styles.composerCard,
+            styles.composerCardFloating,
             isTab && styles.composerCardTab,
-            { marginBottom: composerBottomSpacing },
+            {
+              bottom: composerBottomOffset,
+            },
           ]}
         >
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -696,6 +747,11 @@ export function AiChatScreen({ presentation = "screen" }) {
                 maxLength={700}
                 style={styles.input}
                 textAlignVertical="center"
+                onFocus={() => {
+                  requestAnimationFrame(() => {
+                    scrollRef.current?.scrollToEnd({ animated: true });
+                  });
+                }}
               />
               <Pressable
                 onPress={sendMessage}
@@ -721,7 +777,7 @@ export function AiChatScreen({ presentation = "screen" }) {
             </View>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </BackdropScreen>
   );
 }
@@ -856,13 +912,16 @@ const styles = StyleSheet.create({
     color: appTheme.colors.textStrong,
   },
   composerCard: {
-    marginTop: spacing.sm,
+    left: 0,
+    right: 0,
     paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xs,
     backgroundColor: "#E7E1DD",
   },
+  composerCardFloating: {
+    position: "absolute",
+  },
   composerCardTab: {
-    marginTop: spacing.xs,
     marginHorizontal: -appTheme.screen.sidePadding,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,

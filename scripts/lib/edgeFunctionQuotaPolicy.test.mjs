@@ -34,7 +34,7 @@ test("scan and image enrichment quotas stay stricter than AI chat", () => {
 
   assert.equal(chat.shortWindowSeconds, 60)
   assert.equal(chat.shortWindowLimit, 6)
-  assert.equal(chat.dailyLimit, 100)
+  assert.equal(chat.dailyLimit, 200)
 
   assert.equal(scan.shortWindowSeconds, 600)
   assert.equal(scan.shortWindowLimit, 4)
@@ -47,6 +47,8 @@ test("scan and image enrichment quotas stay stricter than AI chat", () => {
   assert.equal(queue.shortWindowSeconds, 600)
   assert.equal(queue.shortWindowLimit, 10)
   assert.equal(queue.dailyLimit, 50)
+
+  assert.equal(getEdgeFunctionQuotaPolicy("ai-supplement-summary").dailyLimit, 200)
 
   assert.ok(enrich.shortWindowLimit < scan.shortWindowLimit)
   assert.ok(scan.shortWindowLimit < chat.shortWindowLimit)
@@ -77,4 +79,21 @@ test("quota exceeded body distinguishes short-window throttles from daily caps",
     code: "daily_quota_exceeded",
     retryAfterSeconds: 3600,
   })
+})
+
+test("quota cooldown falls back to the policy short window when retry-after is absent", () => {
+  const { buildQuotaExceededBody, getEdgeFunctionQuotaPolicy } =
+    loadEdgeFunctionQuotaPolicyModule()
+
+  assert.deepEqual(
+    buildQuotaExceededBody(getEdgeFunctionQuotaPolicy("ai-supplement-chat"), {
+      code: "rate_limit_exceeded",
+      retry_after_seconds: null,
+    }),
+    {
+      error: "Too many AI chat requests. Please wait a minute and try again.",
+      code: "rate_limit_exceeded",
+      retryAfterSeconds: 60,
+    }
+  )
 })

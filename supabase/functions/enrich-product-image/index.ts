@@ -5,6 +5,11 @@ import {
   authenticateSupabaseUser,
 } from "../_shared/revenuecat.ts";
 import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
+import {
+  buildEnrichProductImageResponse,
+  validateEnrichProductImageRequest,
+} from "../_shared/enrich-product-image-policy.js";
+import { isTrustedEdgeFunctionRequest } from "../_shared/auth-policy.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -249,38 +254,6 @@ function logEdgeDiagnostic(
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function responsePayload({
-  status,
-  productId,
-  imageUrl = null,
-  thumbnailUrl = null,
-  sourceUrl = null,
-  confidence = null,
-  query = null,
-  reason = null,
-}: {
-  status: "found" | "cached" | "failed" | "skipped";
-  productId: string | null;
-  imageUrl?: string | null;
-  thumbnailUrl?: string | null;
-  sourceUrl?: string | null;
-  confidence?: number | null;
-  query?: string | null;
-  reason?: string | null;
-}) {
-  return {
-    ok: true,
-    status,
-    productId,
-    imageUrl,
-    thumbnailUrl,
-    sourceUrl,
-    confidence,
-    query,
-    reason,
-  };
 }
 
 function getProductName(product: Record<string, unknown> | null): string {
@@ -1113,18 +1086,21 @@ Deno.serve(async (req) => {
       return jsonResponse(entitlementAccess.body, entitlementAccess.status);
     }
 
-    const body = await req.json().catch(() => ({}));
-    const force = body?.force === true;
-    const deepSearch = body?.deepSearch === true;
-    const productId = normalizeProductId(body?.productId ?? body?.product?.id);
-    const requestProduct =
-      body?.product && typeof body.product === "object"
-        ? {
-            ...body.product,
-            id: normalizeProductId(body.product.id),
-            product_id: normalizeProductId(body.product.product_id ?? body.product.id),
-          }
-        : null;
+    const isTrustedRequest = isTrustedEdgeFunctionRequest({
+      authorizationHeader: authHeader ?? "",
+      apiKeyHeader: req.headers.get("apikey") ?? "",
+      serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      internalServiceRoleKey: Deno.env.get("INTERNAL_SERVICE_ROLE_KEY") ?? "",
+    });
+    const validatedRequest = validateEnrichProductImageRequest(await req.text(), {
+      isTrusted: isTrustedRequest,
+    });
+    if (!validatedRequest.ok) {
+      return jsonResponse(validatedRequest.body, validatedRequest.status);
+    }
+
+    const { force, deepSearch, productId, requestProduct } =
+      validatedRequest.value;
     const product = productId ? await fetchProduct(productId) : requestProduct;
     const effectiveProductId = normalizeProductId(
       product?.product_id ?? product?.id ?? productId
@@ -1132,7 +1108,7 @@ Deno.serve(async (req) => {
 
     if (!product || !effectiveProductId) {
       return jsonResponse(
-        responsePayload({
+        buildEnrichProductImageResponse({
           status: "skipped",
           productId: effectiveProductId || null,
           reason: "Product missing",
@@ -1145,7 +1121,7 @@ Deno.serve(async (req) => {
         productId: effectiveProductId,
       });
       return jsonResponse(
-        responsePayload({
+        buildEnrichProductImageResponse({
           status: "cached",
           productId: effectiveProductId,
           imageUrl: trimString(product.image_url) || null,
@@ -1163,7 +1139,7 @@ Deno.serve(async (req) => {
         productId: effectiveProductId,
       });
       return jsonResponse(
-        responsePayload({
+        buildEnrichProductImageResponse({
           status: "cached",
           productId: effectiveProductId,
           imageUrl: trimString(product.image_url),
@@ -1185,7 +1161,7 @@ Deno.serve(async (req) => {
     if (!isRealSupplementProduct(product)) {
       await markSkipped(effectiveProductId, "Not a supplement product");
       return jsonResponse(
-        responsePayload({
+        buildEnrichProductImageResponse({
           status: "skipped",
           productId: effectiveProductId,
           reason: "Not a supplement product",
@@ -1196,7 +1172,7 @@ Deno.serve(async (req) => {
     if (!getProductName(product)) {
       await markSkipped(effectiveProductId, "Product name missing");
       return jsonResponse(
-        responsePayload({
+        buildEnrichProductImageResponse({
           status: "skipped",
           productId: effectiveProductId,
           reason: "Product name missing",
@@ -1211,7 +1187,7 @@ Deno.serve(async (req) => {
       });
       await markSkipped(effectiveProductId, "Generic active ingredient");
       return jsonResponse(
-        responsePayload({
+        buildEnrichProductImageResponse({
           status: "skipped",
           productId: effectiveProductId,
           reason: "Generic active ingredient",
@@ -1227,7 +1203,7 @@ Deno.serve(async (req) => {
         image_last_checked_at: new Date().toISOString(),
       });
       return jsonResponse(
-        responsePayload({
+        buildEnrichProductImageResponse({
           status: "failed",
           productId: effectiveProductId,
           reason: "Missing SERPAPI_API_KEY secret",
@@ -1351,7 +1327,7 @@ Deno.serve(async (req) => {
         image_last_checked_at: new Date().toISOString(),
       });
       return jsonResponse(
-        responsePayload({
+        buildEnrichProductImageResponse({
           status: "failed",
           productId: effectiveProductId,
           confidence: best?.score ?? null,
@@ -1403,7 +1379,7 @@ Deno.serve(async (req) => {
     });
 
     return jsonResponse(
-      responsePayload({
+      buildEnrichProductImageResponse({
         status: "found",
         productId: effectiveProductId,
         imageUrl: best.imageUrl,
