@@ -9,6 +9,10 @@ export const SIGNUP_COMPLETED_STORAGE_KEY =
   "suppro.onboarding.signupCompleted.v1";
 export const ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY =
   "suppro.onboarding.premiumCompleted.v1";
+export const ONBOARDING_RATING_COMPLETED_STORAGE_KEY =
+  "suppro.onboarding.ratingCompleted.v1";
+export const ONBOARDING_RATING_REVIEW_ATTEMPTED_STORAGE_KEY =
+  "suppro.onboarding.ratingReviewAttempted.v1";
 const ACCOUNT_SETUP_COMPLETIONS_TABLE = "account_setup_completions";
 
 const onboardingGateListeners = new Set();
@@ -105,6 +109,38 @@ export async function hasCompletedOnboardingPremium() {
   );
 }
 
+export async function hasCompletedOnboardingRating() {
+  return (
+    (await AsyncStorage.getItem(ONBOARDING_RATING_COMPLETED_STORAGE_KEY)) ===
+    "true"
+  );
+}
+
+export async function markOnboardingRatingComplete() {
+  await AsyncStorage.setItem(ONBOARDING_RATING_COMPLETED_STORAGE_KEY, "true");
+  notifyOnboardingGateChange();
+}
+
+export async function clearOnboardingRatingComplete() {
+  await AsyncStorage.removeItem(ONBOARDING_RATING_COMPLETED_STORAGE_KEY);
+  notifyOnboardingGateChange();
+}
+
+export async function hasAttemptedOnboardingRatingReview() {
+  return (
+    (await AsyncStorage.getItem(
+      ONBOARDING_RATING_REVIEW_ATTEMPTED_STORAGE_KEY
+    )) === "true"
+  );
+}
+
+export async function markOnboardingRatingReviewAttempted() {
+  await AsyncStorage.setItem(
+    ONBOARDING_RATING_REVIEW_ATTEMPTED_STORAGE_KEY,
+    "true"
+  );
+}
+
 export async function markOnboardingPremiumComplete() {
   await AsyncStorage.setItem(ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY, "true");
   notifyOnboardingGateChange();
@@ -118,6 +154,7 @@ export async function clearOnboardingPremiumComplete() {
 export function resolveLoggedOutOnboardingGateState({
   hasCompletedQuestionnaire,
   signupCompleted,
+  hasCompletedOnboardingRating,
   hasCompletedOnboardingPremium,
 }) {
   if (signupCompleted) {
@@ -128,11 +165,35 @@ export function resolveLoggedOutOnboardingGateState({
     return "needs_questions";
   }
 
+  if (!hasCompletedOnboardingRating) {
+    return "needs_rating";
+  }
+
   if (!hasCompletedOnboardingPremium) {
     return "needs_paywall";
   }
 
   return "needs_signup";
+}
+
+export function shouldRouteThroughOnboardingRatingStep({
+  mode,
+  origin,
+  signupCompleted,
+  hasCompletedOnboardingRating,
+}) {
+  if (mode !== "first_run") {
+    return false;
+  }
+
+  if (signupCompleted || hasCompletedOnboardingRating) {
+    return false;
+  }
+
+  return !(
+    typeof origin === "string" &&
+    origin.trim()
+  );
 }
 
 async function hasCompletedAccountSetup(userId) {
@@ -184,6 +245,7 @@ export async function getOnboardingGateState() {
   return resolveLoggedOutOnboardingGateState({
     hasCompletedQuestionnaire: Boolean(answers?.completedAt),
     signupCompleted: signupCompleted === "true",
+    hasCompletedOnboardingRating: await hasCompletedOnboardingRating(),
     hasCompletedOnboardingPremium: await hasCompletedOnboardingPremium(),
   });
 }

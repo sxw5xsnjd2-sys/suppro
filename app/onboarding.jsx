@@ -10,6 +10,13 @@ function OnboardingPaywallStep() {
   return <OnboardingPaywallScreen />;
 }
 
+function OnboardingRatingStep() {
+  const OnboardingRatingScreen =
+    require("@src/features/onboarding/OnboardingRatingScreen").default;
+
+  return <OnboardingRatingScreen />;
+}
+
 export default function OnboardingScreen() {
   const params = useLocalSearchParams();
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
@@ -39,6 +46,17 @@ export default function OnboardingScreen() {
           options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
         />
         <OnboardingPaywallStep />
+      </>
+    );
+  }
+
+  if (stepParam === "rating") {
+    return (
+      <>
+        <Stack.Screen
+          options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
+        />
+        <OnboardingRatingStep />
       </>
     );
   }

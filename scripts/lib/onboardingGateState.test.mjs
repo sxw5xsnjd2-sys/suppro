@@ -49,9 +49,11 @@ function loadOnboardingModule({
     "hasNonAnonymousSession",
     `${transformed}
 return {
+  ONBOARDING_RATING_COMPLETED_STORAGE_KEY,
   SIGNUP_COMPLETED_STORAGE_KEY,
   getOnboardingGateState,
   resolveLoggedOutOnboardingGateState,
+  shouldRouteThroughOnboardingRatingStep,
 };`
   );
 
@@ -104,6 +106,7 @@ test("returning signed-out users resolve to login even without questionnaire dat
     resolveLoggedOutOnboardingGateState({
       hasCompletedQuestionnaire: false,
       signupCompleted: true,
+      hasCompletedOnboardingRating: false,
       hasCompletedOnboardingPremium: false,
     }),
     "needs_login"
@@ -134,6 +137,44 @@ test("questionnaire-complete first-run without premium stays on paywall", async 
     "suppro.onboarding.questionnaire.v1": JSON.stringify({
       completedAt: "2026-05-06T10:00:00.000Z",
     }),
+    "suppro.onboarding.ratingCompleted.v1": "true",
+  });
+
+  const { getOnboardingGateState } = loadOnboardingModule({
+    asyncStorage,
+    session: null,
+  });
+
+  await assert.doesNotReject(async () => {
+    const gateState = await getOnboardingGateState();
+    assert.equal(gateState, "needs_paywall");
+  });
+});
+
+test("questionnaire-complete first-run routes to rating before paywall", async () => {
+  const asyncStorage = createAsyncStorage({
+    "suppro.onboarding.questionnaire.v1": JSON.stringify({
+      completedAt: "2026-05-06T10:00:00.000Z",
+    }),
+  });
+
+  const { getOnboardingGateState } = loadOnboardingModule({
+    asyncStorage,
+    session: null,
+  });
+
+  await assert.doesNotReject(async () => {
+    const gateState = await getOnboardingGateState();
+    assert.equal(gateState, "needs_rating");
+  });
+});
+
+test("rating completion routes first-run onboarding to paywall", async () => {
+  const asyncStorage = createAsyncStorage({
+    "suppro.onboarding.questionnaire.v1": JSON.stringify({
+      completedAt: "2026-05-06T10:00:00.000Z",
+    }),
+    "suppro.onboarding.ratingCompleted.v1": "true",
   });
 
   const { getOnboardingGateState } = loadOnboardingModule({
@@ -152,6 +193,7 @@ test("paywall-complete first-run without account stays on create-account", async
     "suppro.onboarding.questionnaire.v1": JSON.stringify({
       completedAt: "2026-05-06T10:00:00.000Z",
     }),
+    "suppro.onboarding.ratingCompleted.v1": "true",
     "suppro.onboarding.premiumCompleted.v1": "true",
   });
 
@@ -190,6 +232,7 @@ test("real non-anonymous sessions without account completion cannot enter authen
     "suppro.onboarding.questionnaire.v1": JSON.stringify({
       completedAt: "2026-05-06T10:00:00.000Z",
     }),
+    "suppro.onboarding.ratingCompleted.v1": "true",
     "suppro.onboarding.premiumCompleted.v1": "true",
   });
 
@@ -207,6 +250,25 @@ test("real non-anonymous sessions without account completion cannot enter authen
   await assert.doesNotReject(async () => {
     const gateState = await getOnboardingGateState();
     assert.equal(gateState, "needs_signup");
+  });
+});
+
+test("returning users do not see the onboarding rating step", async () => {
+  const asyncStorage = createAsyncStorage({
+    "suppro.onboarding.questionnaire.v1": JSON.stringify({
+      completedAt: "2026-05-06T10:00:00.000Z",
+    }),
+    "suppro.onboarding.signupCompleted.v1": "true",
+  });
+
+  const { getOnboardingGateState } = loadOnboardingModule({
+    asyncStorage,
+    session: null,
+  });
+
+  await assert.doesNotReject(async () => {
+    const gateState = await getOnboardingGateState();
+    assert.equal(gateState, "needs_login");
   });
 });
 
@@ -228,6 +290,40 @@ test("rejected OAuth login-mode sessions remain outside authenticated tabs", asy
     const gateState = await getOnboardingGateState();
     assert.equal(gateState, "needs_questions");
   });
+});
+
+test("retake questionnaire does not trigger the rating step", () => {
+  const { shouldRouteThroughOnboardingRatingStep } = loadOnboardingModule({
+    asyncStorage: createAsyncStorage(),
+    session: null,
+  });
+
+  assert.equal(
+    shouldRouteThroughOnboardingRatingStep({
+      mode: "retake",
+      origin: null,
+      signupCompleted: false,
+      hasCompletedOnboardingRating: false,
+    }),
+    false
+  );
+});
+
+test("app-origin paywall does not go through the rating step", () => {
+  const { shouldRouteThroughOnboardingRatingStep } = loadOnboardingModule({
+    asyncStorage: createAsyncStorage(),
+    session: null,
+  });
+
+  assert.equal(
+    shouldRouteThroughOnboardingRatingStep({
+      mode: "first_run",
+      origin: "app",
+      signupCompleted: false,
+      hasCompletedOnboardingRating: false,
+    }),
+    false
+  );
 });
 
 test("real non-anonymous sessions with account completion can enter authenticated tabs", async () => {

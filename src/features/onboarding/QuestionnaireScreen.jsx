@@ -48,12 +48,14 @@ import { appTheme, typography } from "@/theme";
 import SupproLogo from "@/assets/icons/Supprologo.png";
 import {
   clearOnboardingDraft,
+  hasCompletedOnboardingRating,
   getQuestionnaireAnswers,
   loadOnboardingDraft,
   notifyOnboardingGateChange,
   QUESTIONNAIRE_STORAGE_KEY,
   saveOnboardingDraft,
   SIGNUP_COMPLETED_STORAGE_KEY,
+  shouldRouteThroughOnboardingRatingStep,
 } from "@src/lib/onboarding";
 import {
   CheckRow,
@@ -1997,19 +1999,33 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     }
   }, [answers, draftMode, submitting]);
 
-  const routeAfterHelpers = useCallback(() => {
-    const signupCompleted = signupCompletedRef.current;
-    if (!signupCompleted) {
+  const routeAfterHelpers = useCallback(async () => {
+    try {
+      const signupCompleted = signupCompletedRef.current;
+      if (!signupCompleted) {
+        const ratingCompleted = await hasCompletedOnboardingRating();
+        const nextStep = shouldRouteThroughOnboardingRatingStep({
+          mode: draftMode,
+          origin: null,
+          signupCompleted,
+          hasCompletedOnboardingRating: ratingCompleted,
+        })
+          ? "rating"
+          : "paywall";
+        router.replace(`/onboarding?mode=${draftMode}&step=${nextStep}`);
+        return;
+      }
+      if (standalone) {
+        router.replace("/");
+        return;
+      }
+      Alert.alert("Onboarding saved", "Your answers were saved.", [
+        { text: "Done", onPress: () => router.back() },
+      ]);
+    } catch (error) {
+      console.error("Failed to route after onboarding helpers", error);
       router.replace(`/onboarding?mode=${draftMode}&step=paywall`);
-      return;
     }
-    if (standalone) {
-      router.replace("/");
-      return;
-    }
-    Alert.alert("Onboarding saved", "Your answers were saved.", [
-      { text: "Done", onPress: () => router.back() },
-    ]);
   }, [draftMode, standalone]);
 
   const routeAfterBuilding = useCallback(async () => {
@@ -2733,7 +2749,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     const handleHelperCta = () => {
       triggerImpact();
       if (isLastHelper) {
-        routeAfterHelpers();
+        void routeAfterHelpers();
       } else {
         dispatch({
           type: "setStep",

@@ -170,6 +170,7 @@ function RootNavigator() {
   const gatedHref = useMemo(() => {
     const gatedRoutes = {
       needs_questions: "/onboarding?mode=first_run",
+      needs_rating: "/onboarding?mode=first_run&step=rating",
       needs_paywall: "/onboarding?mode=first_run&step=paywall",
       needs_signup: "/login?mode=create",
       needs_login: "/login?mode=login",
@@ -204,6 +205,15 @@ function RootNavigator() {
 
     if (gateState === "needs_signup") {
       return isLoginRoute;
+    }
+
+    if (gateState === "needs_rating") {
+      return (
+        (isOnboardingRoute &&
+          !isRetakeOnboarding &&
+          (stepParam === "rating" || isBuildingOnboardingRoute)) ||
+        isOnboardingScannerFlow
+      );
     }
 
     if (gateState === "needs_paywall") {
