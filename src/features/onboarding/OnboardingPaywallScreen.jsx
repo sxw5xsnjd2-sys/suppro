@@ -22,17 +22,19 @@ export default function OnboardingPaywallScreen() {
     configurationError,
     presentPremiumPaywall,
     currentOffering,
+    lapsedOffering,
     premiumActive,
   } = useRevenueCat();
   const isCompletingRef = useRef(false);
   const canUseRevenueCat = isReady && !configurationError;
+  const paywallOffering = returnsToApp ? lapsedOffering : currentOffering;
   const originAppAction = resolveOriginAppPaywallAction({
     origin: originParam,
     hasActiveAccess: premiumActive,
     isReady,
     isLoading,
     configurationError,
-    hasCurrentOffering: Boolean(currentOffering),
+    hasCurrentOffering: Boolean(paywallOffering),
   });
 
   const continueToAccount = useCallback(async () => {
@@ -80,14 +82,17 @@ export default function OnboardingPaywallScreen() {
       return;
     }
 
-    if (!isReady || !canUseRevenueCat || hasOpenedRef.current || !currentOffering)
+    if (!isReady || !canUseRevenueCat || hasOpenedRef.current || !paywallOffering)
       return;
 
     hasOpenedRef.current = true;
 
     const run = async () => {
       try {
-        const unlocked = await presentPremiumPaywall({ ifNeeded: false });
+        const unlocked = await presentPremiumPaywall({
+          ifNeeded: false,
+          offering: paywallOffering,
+        });
         if (unlocked) {
           await continueToAccount();
         } else {
@@ -103,7 +108,7 @@ export default function OnboardingPaywallScreen() {
     originAppAction,
     isReady,
     canUseRevenueCat,
-    currentOffering,
+    paywallOffering,
     continueToAccount,
     presentPremiumPaywall,
     routeToLogin,

@@ -56,6 +56,7 @@ return {
 
 function loadRevenueCatProviderHelpers({
   entitlementId = "Suppro Premium",
+  lapsedOfferingId = "premium_lapsed",
   yearlyIdentifier = "yearly",
   sdk = { Purchases: { PURCHASES_ERROR_CODE: {} } },
 } = {}) {
@@ -70,6 +71,7 @@ function loadRevenueCatProviderHelpers({
 
   const factory = new Function(
     "REVENUECAT_ENTITLEMENT_ID",
+    "REVENUECAT_LAPSED_OFFERING_ID",
     "REVENUECAT_YEARLY_IDENTIFIER",
     "getRevenueCatSdk",
     `${helperSource}
@@ -78,12 +80,14 @@ return {
   isPremiumActive,
   findYearlyPackage,
   getPreferredOffering,
+  getOfferingByIdentifier,
+  resolvePaywallOffering,
   isPurchaseCancelled,
   resolveRestorePurchasesResult,
 };`
   );
 
-  return factory(entitlementId, yearlyIdentifier, () => sdk);
+  return factory(entitlementId, lapsedOfferingId, yearlyIdentifier, () => sdk);
 }
 
 test("active entitlement allows premium access", () => {
@@ -391,6 +395,91 @@ test("yearly package falls back to annual package when no exact yearly identifie
 
   assert.equal(findYearlyPackage(offering), annualPackage);
   assert.equal(getPreferredOffering(offerings), offering);
+});
+
+test("first-run paywall keeps using the default/current offering", () => {
+  const { getPreferredOffering, resolvePaywallOffering } =
+    loadRevenueCatProviderHelpers();
+  const currentOffering = {
+    identifier: "default",
+    availablePackages: [{ identifier: "yearly" }],
+  };
+  const lapsedOffering = {
+    identifier: "premium_lapsed",
+    availablePackages: [{ identifier: "monthly" }],
+  };
+  const offerings = {
+    current: currentOffering,
+    all: {
+      default: currentOffering,
+      premium_lapsed: lapsedOffering,
+    },
+  };
+
+  const defaultOffering = getPreferredOffering(offerings);
+
+  assert.equal(defaultOffering, currentOffering);
+  assert.equal(
+    resolvePaywallOffering({
+      offerings,
+      preferredOfferingIdentifier: "",
+      fallbackOffering: defaultOffering,
+    }),
+    currentOffering
+  );
+});
+
+test("app-origin paywall uses the premium_lapsed offering when available", () => {
+  const { getPreferredOffering, resolvePaywallOffering } =
+    loadRevenueCatProviderHelpers();
+  const currentOffering = {
+    identifier: "default",
+    availablePackages: [{ identifier: "yearly" }],
+  };
+  const lapsedOffering = {
+    identifier: "premium_lapsed",
+    availablePackages: [{ identifier: "monthly" }],
+  };
+  const offerings = {
+    current: currentOffering,
+    all: {
+      default: currentOffering,
+      premium_lapsed: lapsedOffering,
+    },
+  };
+
+  assert.equal(
+    resolvePaywallOffering({
+      offerings,
+      preferredOfferingIdentifier: "premium_lapsed",
+      fallbackOffering: getPreferredOffering(offerings),
+    }),
+    lapsedOffering
+  );
+});
+
+test("app-origin paywall falls back to the default offering when premium_lapsed is unavailable", () => {
+  const { getPreferredOffering, resolvePaywallOffering } =
+    loadRevenueCatProviderHelpers();
+  const currentOffering = {
+    identifier: "default",
+    availablePackages: [{ identifier: "yearly" }],
+  };
+  const offerings = {
+    current: currentOffering,
+    all: {
+      default: currentOffering,
+    },
+  };
+
+  assert.equal(
+    resolvePaywallOffering({
+      offerings,
+      preferredOfferingIdentifier: "premium_lapsed",
+      fallbackOffering: getPreferredOffering(offerings),
+    }),
+    currentOffering
+  );
 });
 
 test("RevenueCat identity logs in when a real Supabase user appears", () => {

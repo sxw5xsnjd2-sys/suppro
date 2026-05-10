@@ -41,6 +41,12 @@ export const REVENUECAT_YEARLY_IDENTIFIER =
     revenueCatExtra?.yearlyIdentifier,
   ]) || "yearly";
 
+export const REVENUECAT_LAPSED_OFFERING_ID =
+  firstNonEmptyString([
+    process.env.EXPO_PUBLIC_REVENUECAT_LAPSED_OFFERING_ID,
+    revenueCatExtra?.lapsedOfferingId,
+  ]) || "premium_lapsed";
+
 const appleApiKey = firstNonEmptyString([
   process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY,
   revenueCatExtra?.appleApiKey,

@@ -17,7 +17,7 @@ import { logBuildAwareDiagnostic } from "@src/lib/runtimeConfig";
 
 const REVIEW_REQUEST_TIMEOUT_MS = 1200;
 const REVIEW_PROMPT_SETTLE_DELAY_MS = 700;
-const AUTO_REVIEW_DELAY_MS = 1000;
+const AUTO_REVIEW_DELAY_MS = 500;
 const CONTINUE_ENABLE_DELAY_MS = 4000;
 
 function delay(ms) {
@@ -111,36 +111,33 @@ export default function OnboardingRatingScreen() {
     };
   }, [attemptStoreReviewWhileVisible]);
 
-  const completeRatingStep = useCallback(
-    async () => {
-      if (!isContinueEnabled || isRoutingRef.current) {
-        return;
-      }
+  const completeRatingStep = useCallback(async () => {
+    if (!isContinueEnabled || isRoutingRef.current) {
+      return;
+    }
 
-      isRoutingRef.current = true;
-      setIsSubmitting(true);
+    isRoutingRef.current = true;
+    setIsSubmitting(true);
 
-      try {
-        await markOnboardingRatingComplete();
-      } catch (error) {
-        logBuildAwareDiagnostic(
-          "warn",
-          "[onboarding-rating] Failed to complete rating step",
-          {
-            developmentDetails: {
-              message: error instanceof Error ? error.message : String(error),
-            },
-            productionDetails: {
-              message: "rating step completion failed",
-            },
-          }
-        );
-        setIsSubmitting(false);
-        isRoutingRef.current = false;
-      }
-    },
-    [isContinueEnabled]
-  );
+    try {
+      await markOnboardingRatingComplete();
+    } catch (error) {
+      logBuildAwareDiagnostic(
+        "warn",
+        "[onboarding-rating] Failed to complete rating step",
+        {
+          developmentDetails: {
+            message: error instanceof Error ? error.message : String(error),
+          },
+          productionDetails: {
+            message: "rating step completion failed",
+          },
+        }
+      );
+      setIsSubmitting(false);
+      isRoutingRef.current = false;
+    }
+  }, [isContinueEnabled]);
 
   return (
     <OnboardingShell

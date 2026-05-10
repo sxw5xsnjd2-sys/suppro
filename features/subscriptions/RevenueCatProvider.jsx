@@ -17,6 +17,7 @@ import {
 import {
   getRevenueCatApiKeySelection,
   REVENUECAT_ENTITLEMENT_ID,
+  REVENUECAT_LAPSED_OFFERING_ID,
   REVENUECAT_YEARLY_IDENTIFIER,
 } from "./revenueCatConfig";
 import {
@@ -82,6 +83,31 @@ function getPreferredOffering(offerings) {
   );
 }
 
+function getOfferingByIdentifier(offerings, identifier) {
+  if (!offerings || typeof identifier !== "string") {
+    return null;
+  }
+
+  const normalizedIdentifier = identifier.trim();
+  if (!normalizedIdentifier) {
+    return null;
+  }
+
+  return offerings.all?.[normalizedIdentifier] ?? null;
+}
+
+function resolvePaywallOffering({
+  offerings,
+  preferredOfferingIdentifier = "",
+  fallbackOffering = null,
+}) {
+  return (
+    getOfferingByIdentifier(offerings, preferredOfferingIdentifier) ??
+    fallbackOffering ??
+    null
+  );
+}
+
 function isPurchaseCancelled(error) {
   const sdk = getRevenueCatSdk();
   const cancelledCode =
@@ -142,6 +168,15 @@ export function RevenueCatProvider({ children }) {
   const currentOffering = useMemo(
     () => getPreferredOffering(offerings),
     [offerings]
+  );
+  const lapsedOffering = useMemo(
+    () =>
+      resolvePaywallOffering({
+        offerings,
+        preferredOfferingIdentifier: REVENUECAT_LAPSED_OFFERING_ID,
+        fallbackOffering: currentOffering,
+      }),
+    [currentOffering, offerings]
   );
   const yearlyPackage = useMemo(
     () => findYearlyPackage(currentOffering),
@@ -592,7 +627,10 @@ export function RevenueCatProvider({ children }) {
     }
   };
 
-  const presentPremiumPaywall = async ({ ifNeeded = true } = {}) => {
+  const presentPremiumPaywall = async ({
+    ifNeeded = true,
+    offering = currentOffering,
+  } = {}) => {
     if (!hasConfiguredRef.current) return false;
     if (!revenueCatSdk.uiAvailable || !revenueCatSdk.RevenueCatUI) {
       if (isMountedRef.current) {
@@ -606,7 +644,7 @@ export function RevenueCatProvider({ children }) {
     setActionMessage("");
 
     try {
-      const options = currentOffering ? { offering: currentOffering } : {};
+      const options = offering ? { offering } : {};
       const paywallResult = ifNeeded
         ? await revenueCatSdk.RevenueCatUI.presentPaywallIfNeeded({
             requiredEntitlementIdentifier: REVENUECAT_ENTITLEMENT_ID,
@@ -740,6 +778,7 @@ export function RevenueCatProvider({ children }) {
       customerInfo,
       offerings,
       currentOffering,
+      lapsedOffering,
       yearlyPackage,
       premiumEntitlement,
       premiumActive,
@@ -773,6 +812,7 @@ export function RevenueCatProvider({ children }) {
       configurationMode,
       currentOffering,
       customerInfo,
+      lapsedOffering,
       isIdentitySyncing,
       isLoading,
       isOpeningCustomerCenter,
