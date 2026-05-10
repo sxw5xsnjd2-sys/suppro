@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as StoreReview from "expo-store-review";
@@ -17,6 +17,8 @@ import { logBuildAwareDiagnostic } from "@src/lib/runtimeConfig";
 
 const REVIEW_REQUEST_TIMEOUT_MS = 1200;
 const REVIEW_PROMPT_SETTLE_DELAY_MS = 700;
+const AUTO_REVIEW_DELAY_MS = 1000;
+const CONTINUE_ENABLE_DELAY_MS = 4000;
 
 function delay(ms) {
   return new Promise((resolve) => {
@@ -43,7 +45,9 @@ async function canRequestStoreReview() {
 
 export default function OnboardingRatingScreen() {
   const isRoutingRef = useRef(false);
+  const hasStartedReviewAttemptRef = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isContinueEnabled, setIsContinueEnabled] = useState(false);
 
   const attemptStoreReviewWhileVisible = useCallback(async () => {
     const hasAttemptedReview = await hasAttemptedOnboardingRatingReview();
@@ -80,9 +84,36 @@ export default function OnboardingRatingScreen() {
     }
   }, []);
 
+  useEffect(() => {
+    let isCancelled = false;
+
+    const reviewTimer = setTimeout(() => {
+      if (isCancelled || hasStartedReviewAttemptRef.current) {
+        return;
+      }
+
+      hasStartedReviewAttemptRef.current = true;
+      void attemptStoreReviewWhileVisible();
+    }, AUTO_REVIEW_DELAY_MS);
+
+    const continueTimer = setTimeout(() => {
+      if (isCancelled) {
+        return;
+      }
+
+      setIsContinueEnabled(true);
+    }, CONTINUE_ENABLE_DELAY_MS);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(reviewTimer);
+      clearTimeout(continueTimer);
+    };
+  }, [attemptStoreReviewWhileVisible]);
+
   const completeRatingStep = useCallback(
     async () => {
-      if (isRoutingRef.current) {
+      if (!isContinueEnabled || isRoutingRef.current) {
         return;
       }
 
@@ -90,7 +121,6 @@ export default function OnboardingRatingScreen() {
       setIsSubmitting(true);
 
       try {
-        await attemptStoreReviewWhileVisible();
         await markOnboardingRatingComplete();
       } catch (error) {
         logBuildAwareDiagnostic(
@@ -109,7 +139,7 @@ export default function OnboardingRatingScreen() {
         isRoutingRef.current = false;
       }
     },
-    [attemptStoreReviewWhileVisible]
+    [isContinueEnabled]
   );
 
   return (
@@ -120,7 +150,7 @@ export default function OnboardingRatingScreen() {
       footer={
         <OnboardingCTA
           label="Continue"
-          disabled={isSubmitting}
+          disabled={isSubmitting || !isContinueEnabled}
           onPress={() => {
             void completeRatingStep();
           }}
