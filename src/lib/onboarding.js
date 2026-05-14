@@ -242,12 +242,14 @@ export async function getOnboardingGateState() {
   );
   const answers = await getQuestionnaireAnswers();
 
-  return resolveLoggedOutOnboardingGateState({
+  const resolvedState = resolveLoggedOutOnboardingGateState({
     hasCompletedQuestionnaire: Boolean(answers?.completedAt),
     signupCompleted: signupCompleted === "true",
     hasCompletedOnboardingRating: await hasCompletedOnboardingRating(),
     hasCompletedOnboardingPremium: await hasCompletedOnboardingPremium(),
   });
+
+  return resolvedState;
 }
 
 export async function hasCompletedOnboarding() {

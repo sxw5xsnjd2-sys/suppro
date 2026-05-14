@@ -70,6 +70,16 @@ function ShareIcon({ width, height, color }) {
   );
 }
 
+function LegalIcon({ width, height, color }) {
+  return (
+    <Ionicons
+      name="document-text-outline"
+      size={Math.min(width, height)}
+      color={color}
+    />
+  );
+}
+
 async function inviteFriendsAndFamily() {
   try {
     await Share.share({
@@ -84,6 +94,14 @@ async function inviteFriendsAndFamily() {
 
 async function contactSupport() {
   await Linking.openURL("mailto:hello@suppro.co.uk");
+}
+
+async function openExternalUrl(url) {
+  try {
+    await Linking.openURL(url);
+  } catch (_error) {
+    Alert.alert("Link unavailable", "Unable to open that link right now.");
+  }
 }
 
 function SettingsItemRow({ item, showBorder = false }) {
@@ -147,83 +165,119 @@ function goBackOrFallback() {
 export default function SettingsScreen() {
   const { openManageSubscription, restorePurchases } = useRevenueCat();
 
-  const settingsItems = [
+  const settingsSections = [
     {
       key: "account",
-      label: "Account",
-      route: "/account",
-      Icon: AccountIcon,
-    },
-    {
-      key: "manage-subscription",
-      label: "Manage subscription",
-      onPress: async () => {
-        const result = await openManageSubscription();
+      items: [
+        {
+          key: "account",
+          label: "Account",
+          route: "/account",
+          Icon: AccountIcon,
+        },
+        {
+          key: "manage-subscription",
+          label: "Manage subscription",
+          onPress: async () => {
+            const result = await openManageSubscription();
 
-        if (!result?.opened) {
-          Alert.alert(
-            "Manage subscription error",
-            result?.error || "Please try again."
-          );
-        }
-      },
-      Icon: SubscriptionIcon,
-    },
-    {
-      key: "restore-purchases",
-      label: "Restore purchases",
-      onPress: async () => {
-        const result = await restorePurchases();
+            if (!result?.opened) {
+              Alert.alert(
+                "Manage subscription error",
+                result?.error || "Please try again."
+              );
+            }
+          },
+          Icon: SubscriptionIcon,
+        },
+        {
+          key: "restore-purchases",
+          label: "Restore purchases",
+          onPress: async () => {
+            const result = await restorePurchases();
 
-        if (result?.error) {
-          Alert.alert("Restore failed", result.error);
-          return;
-        }
+            if (result?.error) {
+              Alert.alert("Restore failed", result.error);
+              return;
+            }
 
-        if (result?.hasPremiumAccess) {
-          Alert.alert("Purchases restored", "Your premium access is active.");
-          return;
-        }
+            if (result?.hasPremiumAccess) {
+              Alert.alert(
+                "Purchases restored",
+                "Your premium access is active."
+              );
+              return;
+            }
 
-        Alert.alert("No active subscription found");
-      },
-      Icon: RestoreIcon,
+            Alert.alert("No active subscription found");
+          },
+          Icon: RestoreIcon,
+        },
+      ],
     },
     {
-      key: "my-supplements",
-      label: "My supplements",
-      route: "/my-supplements",
-      Icon: SupplementsIcon,
+      key: "preferences",
+      items: [
+        {
+          key: "my-supplements",
+          label: "My supplements",
+          route: "/my-supplements",
+          Icon: SupplementsIcon,
+        },
+        {
+          key: "connections",
+          label: "Connections",
+          route: "/connections",
+          Icon: ConnectionsIcon,
+        },
+        {
+          key: "favourites",
+          label: "Favourites",
+          route: "/favourites",
+          Icon: FavouriteIcon,
+        },
+        {
+          key: "questionnaire",
+          label: "Retake questionnaire",
+          route: "/onboarding?mode=retake",
+          Icon: QuestionnaireIcon,
+        },
+      ],
     },
     {
-      key: "connections",
-      label: "Connections",
-      route: "/connections",
-      Icon: ConnectionsIcon,
+      key: "support",
+      items: [
+        {
+          key: "invite",
+          label: "Invite friends and family",
+          onPress: inviteFriendsAndFamily,
+          Icon: ShareIcon,
+        },
+        {
+          key: "contact-us",
+          label: "Need help? Contact us",
+          onPress: contactSupport,
+          Icon: ContactIcon,
+        },
+      ],
     },
     {
-      key: "favourites",
-      label: "Favourites",
-      route: "/favourites",
-      Icon: FavouriteIcon,
-    },
-    {
-      key: "questionnaire",
-      label: "Retake questionnaire",
-      route: "/onboarding?mode=retake",
-      Icon: QuestionnaireIcon,
-    },
-    {
-      key: "invite",
-      label: "Invite friends and family",
-      onPress: inviteFriendsAndFamily,
-      Icon: ShareIcon,
-    },
-    {
-      key: "contact-us",
-      label: "Need help? Contact us",
-      onPress: contactSupport,
-      Icon: ContactIcon,
+      key: "legal",
+      title: "Legal",
+      items: [
+        {
+          key: "privacy-policy",
+          label: "Privacy Policy",
+          onPress: () => openExternalUrl("https://suppro.co.uk/privacy"),
+          Icon: LegalIcon,
+        },
+        {
+          key: "terms-of-service",
+          label: "Terms of Service",
+          onPress: () => openExternalUrl("https://suppro.co.uk/terms"),
+          Icon: LegalIcon,
+        },
+      ],
     },
   ];
 
@@ -259,21 +313,16 @@ export default function SettingsScreen() {
       minBottomPadding={120}
     >
       <View style={styles.shortcutsList}>
-        <View style={styles.divider} />
-        {settingsItems.slice(0, 3).map((item) => (
-          <SettingsItemRow key={item.key} item={item} />
-        ))}
-
-        <View style={styles.divider} />
-
-        {settingsItems.slice(3, 7).map((item) => (
-          <SettingsItemRow key={item.key} item={item} />
-        ))}
-
-        <View style={styles.divider} />
-
-        {settingsItems.slice(7).map((item) => (
-          <SettingsItemRow key={item.key} item={item} />
+        {settingsSections.map((section) => (
+          <React.Fragment key={section.key}>
+            <View style={styles.divider} />
+            {section.title ? (
+              <Text style={styles.sectionLabel}>{section.title}</Text>
+            ) : null}
+            {section.items.map((item) => (
+              <SettingsItemRow key={item.key} item={item} />
+            ))}
+          </React.Fragment>
         ))}
       </View>
     </BackdropScreen>
@@ -296,6 +345,16 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: appTheme.colors.borderSubtle,
+  },
+  sectionLabel: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xs,
+    fontSize: 14,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
   },
   itemRow: {
     minHeight: 68,

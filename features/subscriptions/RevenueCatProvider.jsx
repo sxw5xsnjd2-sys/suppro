@@ -43,7 +43,7 @@ function getPremiumEntitlement(customerInfo) {
 
 function isPremiumActive(customerInfo) {
   return Boolean(
-    customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_ID]
+    customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_ID],
   );
 }
 
@@ -53,7 +53,7 @@ function findYearlyPackage(offering) {
   const exactMatch = offering.availablePackages?.find(
     (pkg) =>
       pkg.identifier === REVENUECAT_YEARLY_IDENTIFIER ||
-      pkg.product?.identifier === REVENUECAT_YEARLY_IDENTIFIER
+      pkg.product?.identifier === REVENUECAT_YEARLY_IDENTIFIER,
   );
 
   return exactMatch ?? offering.annual ?? null;
@@ -167,7 +167,7 @@ export function RevenueCatProvider({ children }) {
 
   const currentOffering = useMemo(
     () => getPreferredOffering(offerings),
-    [offerings]
+    [offerings],
   );
   const lapsedOffering = useMemo(
     () =>
@@ -176,19 +176,19 @@ export function RevenueCatProvider({ children }) {
         preferredOfferingIdentifier: REVENUECAT_LAPSED_OFFERING_ID,
         fallbackOffering: currentOffering,
       }),
-    [currentOffering, offerings]
+    [currentOffering, offerings],
   );
   const yearlyPackage = useMemo(
     () => findYearlyPackage(currentOffering),
-    [currentOffering]
+    [currentOffering],
   );
   const premiumEntitlement = useMemo(
     () => getPremiumEntitlement(customerInfo),
-    [customerInfo]
+    [customerInfo],
   );
   const premiumActive = useMemo(
     () => isPremiumActive(customerInfo),
-    [customerInfo]
+    [customerInfo],
   );
   const accessState = useMemo(
     () =>
@@ -199,7 +199,7 @@ export function RevenueCatProvider({ children }) {
         configurationError,
         premiumActive,
       }),
-    [configurationError, isIdentitySyncing, isLoading, isReady, premiumActive]
+    [configurationError, isIdentitySyncing, isLoading, isReady, premiumActive],
   );
 
   const syncSubscriberAttributes = async (user) => {
@@ -229,9 +229,11 @@ export function RevenueCatProvider({ children }) {
         {
           developmentDetails: {
             message:
-              typeof error?.message === "string" ? error.message : "Unknown error",
+              typeof error?.message === "string"
+                ? error.message
+                : "Unknown error",
           },
-        }
+        },
       );
       return null;
     }
@@ -263,7 +265,7 @@ export function RevenueCatProvider({ children }) {
                       ? error.message
                       : "Unknown error",
                 },
-              }
+              },
             );
             return null;
           }),
@@ -295,8 +297,8 @@ export function RevenueCatProvider({ children }) {
         setActionError(
           toRevenueCatErrorMessage(
             error,
-            "Could not refresh Suppro Premium status."
-          )
+            "Could not refresh Suppro Premium status.",
+          ),
         );
       }
       return null;
@@ -339,7 +341,7 @@ export function RevenueCatProvider({ children }) {
       try {
         if (identityAction === "log_in" && nextIdentifiedAppUserId) {
           const result = await revenueCatSdk.Purchases.logIn(
-            nextIdentifiedAppUserId
+            nextIdentifiedAppUserId,
           );
           currentIdentifiedAppUserIdRef.current = nextIdentifiedAppUserId;
 
@@ -362,8 +364,8 @@ export function RevenueCatProvider({ children }) {
           setActionError(
             toRevenueCatErrorMessage(
               error,
-              "Could not sync your account with RevenueCat."
-            )
+              "Could not sync your account with RevenueCat.",
+            ),
           );
         }
         return null;
@@ -407,7 +409,7 @@ export function RevenueCatProvider({ children }) {
       if (!revenueCatSdk.purchasesAvailable) {
         if (isMountedRef.current) {
           setConfigurationError(
-            getRevenueCatUnavailableMessage(revenueCatSdk.error)
+            getRevenueCatUnavailableMessage(revenueCatSdk.error),
           );
           setIsLoading(false);
         }
@@ -456,7 +458,7 @@ export function RevenueCatProvider({ children }) {
         };
 
         revenueCatSdk.Purchases.addCustomerInfoUpdateListener(
-          customerInfoListener
+          customerInfoListener,
         );
 
         await syncSubscriberAttributes(initialUser);
@@ -468,7 +470,7 @@ export function RevenueCatProvider({ children }) {
       } catch (error) {
         if (isMountedRef.current) {
           setConfigurationError(
-            toRevenueCatErrorMessage(error, "RevenueCat failed to initialize.")
+            toRevenueCatErrorMessage(error, "RevenueCat failed to initialize."),
           );
         }
       } finally {
@@ -492,14 +494,16 @@ export function RevenueCatProvider({ children }) {
       subscription.unsubscribe();
       if (customerInfoListener) {
         revenueCatSdk.Purchases.removeCustomerInfoUpdateListener(
-          customerInfoListener
+          customerInfoListener,
         );
       }
     };
   }, [revenueCatSdk]);
 
   const restorePurchases = async () => {
-    const unavailableMessage = getRevenueCatUnavailableMessage(revenueCatSdk.error);
+    const unavailableMessage = getRevenueCatUnavailableMessage(
+      revenueCatSdk.error,
+    );
 
     if (!hasConfiguredRef.current || !revenueCatSdk.Purchases) {
       if (isMountedRef.current) {
@@ -528,7 +532,10 @@ export function RevenueCatProvider({ children }) {
       await refreshState({ silent: true });
       return restoreResult;
     } catch (error) {
-      const message = toRevenueCatErrorMessage(error, "Could not restore purchases.");
+      const message = toRevenueCatErrorMessage(
+        error,
+        "Could not restore purchases.",
+      );
       if (isMountedRef.current) {
         setActionError(message);
       }
@@ -546,7 +553,9 @@ export function RevenueCatProvider({ children }) {
   };
 
   const openManageSubscription = async () => {
-    const unavailableMessage = getRevenueCatUnavailableMessage(revenueCatSdk.error);
+    const unavailableMessage = getRevenueCatUnavailableMessage(
+      revenueCatSdk.error,
+    );
 
     if (
       !hasConfiguredRef.current ||
@@ -573,7 +582,7 @@ export function RevenueCatProvider({ children }) {
     } catch (error) {
       const message = toRevenueCatErrorMessage(
         error,
-        "Could not open subscription management."
+        "Could not open subscription management.",
       );
       if (isMountedRef.current) {
         setActionError(message);
@@ -590,7 +599,7 @@ export function RevenueCatProvider({ children }) {
     if (!revenueCatSdk.Purchases) return false;
     if (!yearlyPackage) {
       setActionError(
-        "No yearly package is available. Confirm your current RevenueCat offering includes the yearly product."
+        "No yearly package is available. Confirm your current RevenueCat offering includes the yearly product.",
       );
       return false;
     }
@@ -600,9 +609,8 @@ export function RevenueCatProvider({ children }) {
     setActionMessage("");
 
     try {
-      const result = await revenueCatSdk.Purchases.purchasePackage(
-        yearlyPackage
-      );
+      const result =
+        await revenueCatSdk.Purchases.purchasePackage(yearlyPackage);
       if (isMountedRef.current) {
         setCustomerInfo(result.customerInfo);
         setActionMessage("Suppro Premium unlocked.");
@@ -615,7 +623,7 @@ export function RevenueCatProvider({ children }) {
           setActionMessage("Purchase cancelled.");
         } else {
           setActionError(
-            toRevenueCatErrorMessage(error, "Could not complete the purchase.")
+            toRevenueCatErrorMessage(error, "Could not complete the purchase."),
           );
         }
       }
@@ -656,13 +664,14 @@ export function RevenueCatProvider({ children }) {
         paywallResult === revenueCatSdk.PAYWALL_RESULT.PURCHASED ||
         paywallResult === revenueCatSdk.PAYWALL_RESULT.RESTORED
       ) {
-        const nextCustomerInfo = await revenueCatSdk.Purchases.getCustomerInfo();
+        const nextCustomerInfo =
+          await revenueCatSdk.Purchases.getCustomerInfo();
         if (isMountedRef.current) {
           setCustomerInfo(nextCustomerInfo);
           setActionMessage(
             paywallResult === revenueCatSdk.PAYWALL_RESULT.PURCHASED
               ? "Suppro Premium unlocked."
-              : "Purchases restored."
+              : "Purchases restored.",
           );
         }
         await refreshState({ silent: true });
@@ -673,7 +682,8 @@ export function RevenueCatProvider({ children }) {
         paywallResult === revenueCatSdk.PAYWALL_RESULT.NOT_PRESENTED &&
         ifNeeded
       ) {
-        const nextCustomerInfo = await revenueCatSdk.Purchases.getCustomerInfo();
+        const nextCustomerInfo =
+          await revenueCatSdk.Purchases.getCustomerInfo();
         const alreadyPremium = isPremiumActive(nextCustomerInfo);
         if (isMountedRef.current) {
           setCustomerInfo(nextCustomerInfo);
@@ -697,7 +707,7 @@ export function RevenueCatProvider({ children }) {
     } catch (error) {
       if (isMountedRef.current) {
         setActionError(
-          toRevenueCatErrorMessage(error, "Could not present the paywall.")
+          toRevenueCatErrorMessage(error, "Could not present the paywall."),
         );
       }
       return false;
@@ -743,8 +753,8 @@ export function RevenueCatProvider({ children }) {
               setActionError(
                 toRevenueCatErrorMessage(
                   error,
-                  "Customer Center restore failed."
-                )
+                  "Customer Center restore failed.",
+                ),
               );
             }
           },
@@ -756,7 +766,7 @@ export function RevenueCatProvider({ children }) {
     } catch (error) {
       if (isMountedRef.current) {
         setActionError(
-          toRevenueCatErrorMessage(error, "Could not open Customer Center.")
+          toRevenueCatErrorMessage(error, "Could not open Customer Center."),
         );
       }
       return false;
@@ -830,7 +840,7 @@ export function RevenueCatProvider({ children }) {
       revenueCatSdk.available,
       revenueCatSdk.uiAvailable,
       yearlyPackage,
-    ]
+    ],
   );
 
   return (

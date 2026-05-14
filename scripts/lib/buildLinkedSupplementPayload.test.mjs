@@ -12,10 +12,7 @@ function loadBuildLinkedSupplementPayload(scoredMatchedIngredients) {
       /import\s+\{[\s\S]*?\}\s+from\s+"@\/features\/supplements\/recommendedDoseScoring";\n\n/,
       ""
     )
-    .replace(
-      "export function buildLinkedSupplementPayload",
-      "function buildLinkedSupplementPayload"
-    );
+    .replace(/export function /g, "function ");
   const factory = new Function(
     "buildProductEvidenceScoreData",
     "scoreMatchedIngredientsForProduct",
@@ -63,6 +60,7 @@ test("selects the scan support driver by benefit score weighted by dose factor",
             label: "Sleep support",
             score: 90,
             evidence: "Magnesium helps with sleep.",
+            evidence_source: "https://pubmed.ncbi.nlm.nih.gov/11111111/",
           },
         ],
       },
@@ -77,6 +75,7 @@ test("selects the scan support driver by benefit score weighted by dose factor",
             label: "Sleep support",
             score: 70,
             evidence: "Theanine promotes calm before bed.",
+            evidence_source: "https://doi.org/10.1000/theanine",
           },
         ],
       },
@@ -94,6 +93,14 @@ test("selects the scan support driver by benefit score weighted by dose factor",
   assert.deepEqual(payload.supplement_benefits[0].evidenceItems, [
     "Magnesium helps with sleep.",
     "Theanine promotes calm before bed.",
+  ]);
+  assert.equal(
+    payload.supplement_benefits[0].evidence_source,
+    "https://pubmed.ncbi.nlm.nih.gov/11111111"
+  );
+  assert.deepEqual(payload.supplement_benefits[0].evidence_source_urls, [
+    "https://pubmed.ncbi.nlm.nih.gov/11111111",
+    "https://doi.org/10.1000/theanine",
   ]);
   assert.deepEqual(payload.supplement_benefits[0].scanSupportDriver, {
     catalogId: "theanine",
@@ -133,6 +140,7 @@ test("keeps missing dose-profile matches neutral when selecting a scan support d
             label: "Skin health",
             score: 82,
             evidence: "Collagen supports skin elasticity.",
+            evidence_source: "https://doi.org/10.1000/collagen",
           },
         ],
       },
@@ -146,6 +154,7 @@ test("keeps missing dose-profile matches neutral when selecting a scan support d
             label: "Skin health",
             score: 90,
             evidence: "Vitamin C supports collagen synthesis.",
+            evidence_source: "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/",
           },
         ],
       },
@@ -160,6 +169,14 @@ test("keeps missing dose-profile matches neutral when selecting a scan support d
 
   assert.equal(payload.supplement_benefits.length, 1);
   assert.equal(payload.supplement_benefits[0].score, 90);
+  assert.equal(
+    payload.supplement_benefits[0].evidence_source,
+    "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567"
+  );
+  assert.deepEqual(payload.supplement_benefits[0].evidence_source_urls, [
+    "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567",
+    "https://doi.org/10.1000/collagen",
+  ]);
   assert.deepEqual(payload.supplement_benefits[0].scanSupportDriver, {
     catalogId: "collagen",
     ingredientName: "Collagen Peptides",
@@ -167,4 +184,73 @@ test("keeps missing dose-profile matches neutral when selecting a scan support d
     doseFactor: 1,
     doseBand: "unknown",
   });
+});
+
+test("builds deduplicated reference items with benefit metadata", () => {
+  const scoredMatchedIngredients = [
+    {
+      catalogId: "theanine",
+      ingredientName: "L-Theanine",
+      ingredientRaw: "L-Theanine",
+      doseFactor: 1,
+      doseBand: "optimal",
+    },
+    {
+      catalogId: "magnesium",
+      ingredientName: "Magnesium Glycinate",
+      ingredientRaw: "Magnesium Glycinate",
+      doseFactor: 1,
+      doseBand: "optimal",
+    },
+  ];
+  const buildLinkedSupplementPayload =
+    loadBuildLinkedSupplementPayload(scoredMatchedIngredients);
+  const supplementsByCatalogId = new Map([
+    [
+      "theanine",
+      {
+        name: "L-Theanine",
+        supplement_benefits: [
+          {
+            label: "Stress relief",
+            score: 78,
+            evidence:
+              'White et al. (2024), Nutrients: "L-theanine and acute stress response." Randomized human data showed modest stress-marker reductions.',
+            evidence_source: "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+          },
+        ],
+      },
+    ],
+    [
+      "magnesium",
+      {
+        name: "Magnesium",
+        supplement_benefits: [
+          {
+            label: "Sleep support",
+            score: 82,
+            evidence:
+              'White et al. (2024), Nutrients: "L-theanine and acute stress response." Sleep outcomes also improved in a subset of participants.',
+            evidence_source: "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+          },
+        ],
+      },
+    ],
+  ]);
+
+  const payload = buildLinkedSupplementPayload({
+    name: "Calm blend",
+    matchedIngredients: scoredMatchedIngredients,
+    supplementsByCatalogId,
+  });
+
+  assert.deepEqual(payload.referenceItems, [
+    {
+      url: "https://pubmed.ncbi.nlm.nih.gov/12345678",
+      benefitLabels: ["Stress relief", "Sleep support"],
+      citationTitle: "L-theanine and acute stress response",
+      sourceLabel: "Nutrients",
+      year: 2024,
+    },
+  ]);
 });

@@ -5,7 +5,10 @@ import {
   getCatalogType,
 } from "@/features/supplements/catalog";
 import { supabase } from "@src/lib/supabase";
-import { buildLinkedSupplementPayload } from "./buildLinkedSupplementPayload";
+import {
+  buildLinkedSupplementPayload,
+  buildSupplementReferenceItems,
+} from "./buildLinkedSupplementPayload";
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -214,6 +217,13 @@ function buildProductIngredientMatch(row, supplementNameById) {
   };
 }
 
+function attachSupplementReferenceItems(row) {
+  return {
+    ...row,
+    referenceItems: buildSupplementReferenceItems(row?.supplement_benefits),
+  };
+}
+
 const SUPPLEMENT_SELECT = `
   id,
   name,
@@ -287,7 +297,7 @@ export async function getSupplementsByIds(ids) {
   }
 
   return (data ?? []).map((row) => ({
-    ...row,
+    ...attachSupplementReferenceItems(row),
     verified: row?.status === "approved",
     catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
   }));
@@ -386,7 +396,7 @@ async function getActiveIngredientById(catalogId) {
   }
 
   return {
-    ...data,
+    ...attachSupplementReferenceItems(data),
     verified: data?.status === "approved",
     catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
   };

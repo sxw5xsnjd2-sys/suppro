@@ -14,17 +14,48 @@ const DEFAULT_OUTPUT_DIR = path.join(
 );
 const MANUAL_REVIEW_TABLE = "supplement_research_manual_reviews";
 
-const DEFAULT_ALLOWED_DOMAINS = [
-  "pubmed.ncbi.nlm.nih.gov",
-  "pmc.ncbi.nlm.nih.gov",
+const OFFICIAL_SOURCE_DOMAINS = [
   "clinicaltrials.gov",
-  "examine.com",
-  "ods.od.nih.gov",
-  "cochranelibrary.com",
   "fda.gov",
+  "ema.europa.eu",
   "efsa.europa.eu",
+  "nccih.nih.gov",
+  "ncbi.nlm.nih.gov",
   "nhs.uk",
+  "nih.gov",
+  "ods.od.nih.gov",
   "who.int",
+];
+
+const JOURNAL_SOURCE_DOMAINS = [
+  "academic.oup.com",
+  "bmc.com",
+  "bmj.com",
+  "cambridge.org",
+  "cochranelibrary.com",
+  "doi.org",
+  "dx.doi.org",
+  "frontiersin.org",
+  "jamanetwork.com",
+  "journals.plos.org",
+  "karger.com",
+  "link.springer.com",
+  "mdpi.com",
+  "nature.com",
+  "nejm.org",
+  "onlinelibrary.wiley.com",
+  "pmc.ncbi.nlm.nih.gov",
+  "pubmed.ncbi.nlm.nih.gov",
+  "sagepub.com",
+  "sciencedirect.com",
+  "springer.com",
+  "tandfonline.com",
+  "thelancet.com",
+  "wiley.com",
+];
+
+const DEFAULT_ALLOWED_DOMAINS = [
+  ...new Set([...OFFICIAL_SOURCE_DOMAINS, ...JOURNAL_SOURCE_DOMAINS]),
 ];
 
 const BENEFIT_LABELS = [
@@ -722,7 +753,7 @@ function researchSchema() {
               score: { type: "integer", minimum: 0, maximum: 100 },
               evidence: { type: "string" },
               ranking_reason: { type: "string" },
-              source_urls: { type: "array", items: { type: "string" } },
+              source_urls: { type: "array", minItems: 1, items: { type: "string" } },
             },
           },
         },
@@ -766,6 +797,9 @@ async function requestResearch({ apiKey, model, candidate, benefitRankings, allo
       "If the candidate is a branded product, multi-ingredient formula, supplement product name, or cannot be reduced to one clear active ingredient, return decision manual_review.",
       "Use only the allowed web search sources. Do not invent studies, journals, authors, citations, outcomes, rankings, or doses.",
       "Every evidence claim must be supported by a returned citation URL.",
+      "For each benefit, source_urls must contain one or more URLs copied verbatim from citations and ordered best-first because the best valid URL will be stored in supplement_benefits.evidence_source.",
+      "Prefer PubMed, PMC, DOI, official guidance (NIH, ODS, NCCIH, EFSA, EMA, FDA, NHS, WHO), then direct journal landing pages. Never use search result pages, retailer links, blog posts, or generic homepages.",
+      "If you cannot provide a reliable source URL for a claimed benefit, omit that benefit instead of guessing or fabricating a citation.",
       "If the candidate is a clear standalone active ingredient but reliable human evidence is weak, indirect, or insufficient for benefit claims, still return decision create_new with a low evidence_score. Use benefits: [] when no benefit claim is supportable.",
       "Return manual_review only for identity ambiguity, product-like candidates, duplicate/alias uncertainty, or cases where the candidate is not a canonical active ingredient.",
       "Benefit labels must use one of the provided enum labels. Do not create new labels.",
@@ -800,12 +834,92 @@ function sourceDomain(url) {
   }
 }
 
+function normalizeEvidenceSourceUrl(value) {
+  const raw = trimString(value);
+  if (!raw) return "";
+
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase();
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (/^(utm_|fbclid$|gclid$|mc_cid$|mc_eid$)/i.test(key)) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.pathname = url.pathname.replace(/\/{2,}/g, "/");
+    if (url.pathname !== "/") {
+      url.pathname = url.pathname.replace(/\/+$/, "");
+    }
+    if (!url.searchParams.toString()) url.search = "";
+    const normalized = url.toString();
+    return normalized.endsWith("/") && url.pathname === "/"
+      ? normalized.slice(0, -1)
+      : normalized;
+  } catch {
+    return "";
+  }
+}
+
 function isAllowedUrl(url, allowedDomains) {
-  const host = sourceDomain(url);
+  const host = sourceDomain(normalizeEvidenceSourceUrl(url) || url);
   return allowedDomains.some((domain) => {
     const normalized = domain.toLowerCase().replace(/^www\./, "");
     return host === normalized || host.endsWith(`.${normalized}`);
   });
+}
+
+function buildCitationUrlSet(citations, allowedDomains) {
+  const normalized = new Set();
+  const items = Array.isArray(citations) ? citations : [];
+
+  for (const citation of items) {
+    const url = normalizeEvidenceSourceUrl(citation?.url);
+    if (!url || !isAllowedUrl(url, allowedDomains)) continue;
+    normalized.add(url);
+  }
+
+  return normalized;
+}
+
+function getBenefitSourceUrls(benefit) {
+  const rawUrls = Array.isArray(benefit?.source_urls) ? benefit.source_urls : [];
+  return Array.from(
+    new Set(rawUrls.map((url) => normalizeEvidenceSourceUrl(url)).filter(Boolean))
+  );
+}
+
+function evidenceSourcePriority(url) {
+  const host = sourceDomain(url);
+  if (host === "pubmed.ncbi.nlm.nih.gov") return 0;
+  if (host === "pmc.ncbi.nlm.nih.gov") return 1;
+  if (host === "doi.org" || host === "dx.doi.org") return 2;
+  if (
+    OFFICIAL_SOURCE_DOMAINS.some(
+      (domain) => host === domain || host.endsWith(`.${domain}`)
+    )
+  ) {
+    return 3;
+  }
+  return 4;
+}
+
+function selectPrimaryBenefitEvidenceSource(benefit, citations, allowedDomains) {
+  const citationUrls = buildCitationUrlSet(citations, allowedDomains);
+  const candidates = getBenefitSourceUrls(benefit).filter((url) =>
+    citationUrls.has(url)
+  );
+
+  return (
+    candidates
+      .map((url, index) => ({ url, index }))
+      .sort(
+        (left, right) =>
+          evidenceSourcePriority(left.url) - evidenceSourcePriority(right.url) ||
+          left.index - right.index
+      )[0]?.url || null
+  );
 }
 
 function parseBenefitEvidenceLayout(value) {
@@ -842,9 +956,11 @@ function validateResearch(result, allowedDomains) {
 
   const citationUrls = new Set();
   for (const citation of citations) {
-    const url = trimString(citation?.url);
+    const url = normalizeEvidenceSourceUrl(citation?.url);
     if (!url || !isAllowedUrl(url, allowedDomains)) {
-      issues.push(`Citation URL is not allowlisted: ${url || "(blank)"}`);
+      issues.push(
+        `Citation URL is not allowlisted: ${trimString(citation?.url) || "(blank)"}`
+      );
     } else {
       citationUrls.add(url);
     }
@@ -888,13 +1004,35 @@ function validateResearch(result, allowedDomains) {
       issues.push(`Benefit evidence must not contain raw URLs: ${benefit?.label}`);
     }
     const sourceUrls = Array.isArray(benefit?.source_urls) ? benefit.source_urls : [];
+    const normalizedSourceUrls = getBenefitSourceUrls(benefit);
     if (!sourceUrls.length) {
       issues.push(`Benefit has no source URLs: ${benefit?.label}`);
     }
+    if (!normalizedSourceUrls.length) {
+      issues.push(`Benefit has no valid source URLs: ${benefit?.label}`);
+    }
     for (const url of sourceUrls) {
-      if (!citationUrls.has(url) && !isAllowedUrl(url, allowedDomains)) {
-        issues.push(`Benefit source URL is not cited or allowlisted: ${url}`);
+      const normalizedUrl = normalizeEvidenceSourceUrl(url);
+      if (!normalizedUrl) {
+        issues.push(
+          `Benefit source URL is invalid: ${trimString(url) || "(blank)"} (${benefit?.label})`
+        );
+        continue;
       }
+      if (!citationUrls.has(normalizedUrl)) {
+        issues.push(
+          `Benefit source URL is not present in citations: ${normalizedUrl} (${benefit?.label})`
+        );
+        continue;
+      }
+      if (!isAllowedUrl(normalizedUrl, allowedDomains)) {
+        issues.push(
+          `Benefit source URL is not allowlisted: ${normalizedUrl} (${benefit?.label})`
+        );
+      }
+    }
+    if (!selectPrimaryBenefitEvidenceSource(benefit, citations, allowedDomains)) {
+      issues.push(`Benefit missing persistable evidence_source: ${benefit?.label}`);
     }
   }
 
@@ -931,6 +1069,12 @@ function shouldCreateLowEvidenceSupplement(result) {
     "weak",
     "sparse",
   ].some((term) => reason.includes(term));
+}
+
+function hasCitationValidationIssue(issues) {
+  return (issues ?? []).some((issue) =>
+    /citation|source url|source urls|evidence_source|persistable/i.test(issue)
+  );
 }
 
 function coerceLowEvidenceSupplement(result) {
@@ -1342,7 +1486,7 @@ async function applyAliasExisting({ supabase, candidate, match, aliases }) {
   return { linked };
 }
 
-function buildBenefitRows(supplement, research) {
+function buildBenefitRows(supplement, research, allowedDomains) {
   return (research.benefits ?? []).map((benefit) => ({
     supplement_id: supplement.id,
     supplement_name: supplement.name,
@@ -1350,11 +1494,22 @@ function buildBenefitRows(supplement, research) {
     icon: normalizeEvidenceRating(benefit.evidence_rating),
     score: clampScore(benefit.score),
     evidence: normalizeText(benefit.evidence),
+    evidence_source: selectPrimaryBenefitEvidenceSource(
+      benefit,
+      research.citations,
+      allowedDomains
+    ),
     ranking_reason: normalizeText(benefit.ranking_reason),
   }));
 }
 
-async function applyResearchRelations({ supabase, candidate, supplement, research }) {
+async function applyResearchRelations({
+  supabase,
+  candidate,
+  supplement,
+  research,
+  allowedDomains,
+}) {
   const aliasNames = dedupeStrings([
     supplement.name,
     canonicalCandidateName(candidate),
@@ -1366,7 +1521,7 @@ async function applyResearchRelations({ supabase, candidate, supplement, researc
     await upsertAlias(supabase, supplement.id, alias);
   }
 
-  const benefitRows = buildBenefitRows(supplement, research);
+  const benefitRows = buildBenefitRows(supplement, research, allowedDomains);
   await supabase.from("supplement_benefits").delete().eq("supplement_id", supplement.id);
   if (benefitRows.length) {
     const { error: benefitError } = await supabase
@@ -1379,7 +1534,7 @@ async function applyResearchRelations({ supabase, candidate, supplement, researc
   return { linked, benefitCount: benefitRows.length };
 }
 
-async function applyNewSupplement({ supabase, candidate, research }) {
+async function applyNewSupplement({ supabase, candidate, research, allowedDomains }) {
   const canonicalName = normalizeText(research.canonical_name);
   const [freshSupplements, freshAliases] = await Promise.all([
     fetchAllRows(supabase, "supplements", "id, name, status"),
@@ -1420,7 +1575,13 @@ async function applyNewSupplement({ supabase, candidate, research }) {
 
   if (error) throw new Error(`[supplements] ${error.message}`);
 
-  const relations = await applyResearchRelations({ supabase, candidate, supplement, research });
+  const relations = await applyResearchRelations({
+    supabase,
+    candidate,
+    supplement,
+    research,
+    allowedDomains,
+  });
   await markCandidateApplied(supabase, candidate, {
     id: supplement.id,
     name: supplement.name,
@@ -1430,7 +1591,13 @@ async function applyNewSupplement({ supabase, candidate, research }) {
   return { supplement, ...relations };
 }
 
-async function applyPendingSupplementRefresh({ supabase, candidate, match, research }) {
+async function applyPendingSupplementRefresh({
+  supabase,
+  candidate,
+  match,
+  research,
+  allowedDomains,
+}) {
   if (match.status !== "pending") {
     throw new Error(`Refusing to refresh non-pending supplement: ${match.name}`);
   }
@@ -1461,7 +1628,13 @@ async function applyPendingSupplementRefresh({ supabase, candidate, match, resea
 
   if (error) throw new Error(`[supplements] ${error.message}`);
 
-  const relations = await applyResearchRelations({ supabase, candidate, supplement, research });
+  const relations = await applyResearchRelations({
+    supabase,
+    candidate,
+    supplement,
+    research,
+    allowedDomains,
+  });
   await markCandidateApplied(supabase, candidate, {
     id: supplement.id,
     name: supplement.name,
@@ -1697,6 +1870,12 @@ async function main() {
       const validation = validateResearch(research, allowedDomains);
       record.validation_issues = validation.issues;
       if (!validation.ok) {
+        if (hasCitationValidationIssue(validation.issues)) {
+          console.warn(
+            `[${candidateName}] citation/source validation failed`,
+            validation.issues
+          );
+        }
         record.decision = "manual_review";
         record.reason = validation.issues.join("; ");
         await recordManualReviewIfNeeded({ supabase, apply, record });
@@ -1780,8 +1959,14 @@ async function main() {
                 candidate,
                 match: record.match,
                 research,
+                allowedDomains,
               })
-            : await applyNewSupplement({ supabase, candidate, research });
+            : await applyNewSupplement({
+                supabase,
+                candidate,
+                research,
+                allowedDomains,
+              });
         record.applied = true;
         record.applied_result = applied;
       }

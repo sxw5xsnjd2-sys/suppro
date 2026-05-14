@@ -28,7 +28,10 @@ import {
   useFonts as useGeistMonoFonts,
 } from "@expo-google-fonts/geist-mono";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { RevenueCatProvider, useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
+import {
+  RevenueCatProvider,
+  useRevenueCat,
+} from "@/features/subscriptions/RevenueCatProvider";
 import { syncSupplementsStoreAccountScope } from "@/features/supplements/store";
 import { GlobalToast } from "@/components/common/ui/GlobalToast";
 import { hasNonAnonymousUser } from "@src/lib/authState";
@@ -249,10 +252,10 @@ function RootNavigator() {
 
     if (gateState === "complete") {
       return (
-        ((isOnboardingRoute &&
+        (isOnboardingRoute &&
           !isRetakeOnboarding &&
           !isAppSubscriptionGateRoute) ||
-          isLoginRoute)
+        isLoginRoute
       );
     }
 
@@ -304,6 +307,11 @@ function RootNavigator() {
     isOnRequiredGateRoute,
     isOnboardingRoute,
     isRetakeOnboarding,
+    modeParam,
+    originParam,
+    segments,
+    sourceParam,
+    stepParam,
   ]);
 
   return (

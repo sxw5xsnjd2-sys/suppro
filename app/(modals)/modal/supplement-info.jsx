@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   Image,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -55,6 +57,7 @@ import {
   setSupplementHearted,
 } from "@/features/supplements/favouritesStorage";
 import { appTheme, gradients, typography } from "@/theme";
+import { buildSupplementReferenceItems } from "@src/data/buildLinkedSupplementPayload";
 import { getSupplementById } from "@src/data/getSupplement";
 import { enrichProductImageIfNeeded } from "@src/lib/productImages";
 import { supabase } from "@src/lib/supabase";
@@ -112,6 +115,8 @@ const BENEFIT_SCORE_TOOLTIP_COPY = {
   ranking:
     "A gold medal means there is strong evidence for this benefit while a silver medal means some evidence but not robust. A bronze medal means poor research studies performed for this benefit or no human studies performed.",
 };
+const REFERENCES_DISCLAIMER =
+  "Suppro provides educational information only and is not medical advice. Always speak to a doctor, pharmacist, or qualified healthcare professional before starting supplements, especially if pregnant, taking medication, or managing a medical condition.";
 
 function getDoseTooltipMessage(item) {
   const summary =
@@ -275,6 +280,59 @@ function buildEvidenceSnippets(text) {
   return blocks.length ? blocks.slice(0, 3) : [body];
 }
 
+function getReferenceBenefitText(reference) {
+  if (!Array.isArray(reference?.benefitLabels)) {
+    return "";
+  }
+
+  return reference.benefitLabels
+    .map((label) => String(label ?? "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function formatReferenceMeta(reference) {
+  return [reference?.sourceLabel, reference?.year].filter(Boolean).join(" • ");
+}
+
+function ReferenceRow({ reference, onPress }) {
+  const benefitText = getReferenceBenefitText(reference);
+  const referenceTitle =
+    typeof reference?.citationTitle === "string" && reference.citationTitle.trim()
+      ? reference.citationTitle.trim()
+      : "Open source";
+  const metaText = formatReferenceMeta(reference);
+
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={`Open source for ${
+        benefitText || referenceTitle
+      }`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.referenceRow,
+        pressed && styles.referenceRowPressed,
+      ]}
+    >
+      {benefitText ? (
+        <Text style={styles.referenceBenefitLabel}>{benefitText}</Text>
+      ) : null}
+      <Text style={styles.referenceTitle}>{referenceTitle}</Text>
+      {metaText ? <Text style={styles.referenceMeta}>{metaText}</Text> : null}
+      <View style={styles.referenceUrlRow}>
+        <Ionicons
+          name="open-outline"
+          size={14}
+          color={appTheme.colors.textSecondary}
+          style={styles.referenceUrlIcon}
+        />
+        <Text style={styles.referenceUrlText}>{reference.url}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function EvidenceRatingGauge({ value, toneScore }) {
   const hasRating = Number.isFinite(toneScore);
   const displayScore = clampEvidenceScore(value);
@@ -363,6 +421,7 @@ function HeaderAction({
   onPress,
   disabled = false,
   accent = false,
+  compact = false,
 }) {
   return (
     <Pressable
@@ -372,7 +431,9 @@ function HeaderAction({
       onPress={onPress}
       style={({ pressed }) => [
         styles.headerAction,
+        compact && styles.headerActionCompact,
         accent && styles.headerActionAccent,
+        accent && compact && styles.headerActionAccentCompact,
         pressed && styles.headerActionPressed,
         disabled && styles.headerActionDisabled,
       ]}
@@ -382,15 +443,36 @@ function HeaderAction({
           colors={gradients.cta}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
-          style={styles.headerActionAccentGradient}
+          style={[
+            styles.headerActionAccentGradient,
+            compact && styles.headerActionAccentGradientCompact,
+          ]}
         >
-          <Ionicons name={icon} size={15} color="#FFFFFF" />
-          <Text style={styles.headerActionAccentText}>{label}</Text>
+          <Ionicons name={icon} size={compact ? 14 : 15} color="#FFFFFF" />
+          <Text
+            style={[
+              styles.headerActionAccentText,
+              compact && styles.headerActionAccentTextCompact,
+            ]}
+          >
+            {label}
+          </Text>
         </LinearGradient>
       ) : (
         <>
-          <Ionicons name={icon} size={15} color={appTheme.colors.textStrong} />
-          <Text style={styles.headerActionText}>{label}</Text>
+          <Ionicons
+            name={icon}
+            size={compact ? 14 : 15}
+            color={appTheme.colors.textStrong}
+          />
+          <Text
+            style={[
+              styles.headerActionText,
+              compact && styles.headerActionTextCompact,
+            ]}
+          >
+            {label}
+          </Text>
         </>
       )}
     </Pressable>
@@ -981,6 +1063,9 @@ export default function SupplementInfoModal() {
   const [openDoseTooltipKey, setOpenDoseTooltipKey] = useState(null);
   const [isBenefitScoreTooltipOpen, setIsBenefitScoreTooltipOpen] =
     useState(false);
+  const [referencesExpanded, setReferencesExpanded] = useState(true);
+  const scrollViewRef = useRef(null);
+  const referencesSectionYRef = useRef(0);
   const imageRequestKeyRef = useRef("");
   const [headerAreaHeight, setHeaderAreaHeight] = useState(0);
   const collapsedHeaderAnimation = useRef(new Animated.Value(0)).current;
@@ -1052,6 +1137,7 @@ export default function SupplementInfoModal() {
     setVerifiedInfoVisible(false);
     setOpenDoseTooltipKey(null);
     setIsBenefitScoreTooltipOpen(false);
+    setReferencesExpanded(true);
 
     if (isLiveScanSource) {
       const isActiveScan = isCurrentScanSession && isActiveScanStatus;
@@ -1327,6 +1413,13 @@ export default function SupplementInfoModal() {
 
     return lookup;
   }, [data?.catalogType, isScanStyledSource, matchedIngredients]);
+  const referenceItems = useMemo(() => {
+    if (Array.isArray(data?.referenceItems) && data.referenceItems.length) {
+      return data.referenceItems;
+    }
+
+    return buildSupplementReferenceItems(data?.supplement_benefits ?? []);
+  }, [data?.referenceItems, data?.supplement_benefits]);
 
   const supplementEvidence =
     typeof data?.evidence === "string" && data.evidence.trim()
@@ -1350,6 +1443,7 @@ export default function SupplementInfoModal() {
   const canImproveScanWithPhotos = Boolean(
     isLiveScanSource && isCurrentScanSession
   );
+  const hasReferenceItems = referenceItems.length > 0;
   const showShareAction = !isScanFailure;
   const showRanking = !useProductSupportBar;
   const benefitHeaderTitle = showRanking ? "Evidence" : "Score";
@@ -1581,6 +1675,39 @@ export default function SupplementInfoModal() {
       });
     } catch (error) {
       console.error("Failed to share supplement", error);
+    }
+  };
+
+  const handleJumpToReferences = () => {
+    if (!hasReferenceItems) {
+      return;
+    }
+
+    setOpenBenefitId(null);
+    setOpenDoseTooltipKey(null);
+    setIsBenefitScoreTooltipOpen(false);
+    setReferencesExpanded(true);
+
+    scrollViewRef.current?.scrollTo({
+      y: Math.max(0, referencesSectionYRef.current - 16),
+      animated: true,
+    });
+  };
+
+  const handleToggleReferences = () => {
+    setReferencesExpanded((current) => !current);
+  };
+
+  const handleOpenReferenceUrl = async (url) => {
+    const cleanUrl = typeof url === "string" ? url.trim() : "";
+    if (!cleanUrl) {
+      return;
+    }
+
+    try {
+      await Linking.openURL(cleanUrl);
+    } catch (_error) {
+      Alert.alert("Link unavailable", "Unable to open that source right now.");
     }
   };
 
@@ -1923,6 +2050,7 @@ export default function SupplementInfoModal() {
       ) : null}
 
       <ScrollView
+        ref={scrollViewRef}
         contentContainerStyle={[
           styles.scrollContent,
           {
@@ -2060,17 +2188,38 @@ export default function SupplementInfoModal() {
               </View>
             ) : null}
 
-            {canAddSupplement ||
+            {hasReferenceItems ||
+            canAddSupplement ||
             showShareAction ||
             (canImproveScanWithPhotos && !isProductNotRecognizedFailure) ? (
               <View style={styles.headerActionsContainer}>
                 {canImproveScanWithPhotos && !isProductNotRecognizedFailure ? (
-                  <HeaderAction
-                    icon="camera-outline"
-                    label="Improve with photos"
-                    onPress={handleImproveScanWithPhotos}
-                    accent
-                  />
+                  <View style={styles.headerActionsRow}>
+                    <HeaderAction
+                      icon="camera-outline"
+                      label="Improve with photos"
+                      onPress={handleImproveScanWithPhotos}
+                      accent
+                      compact
+                    />
+                    {hasReferenceItems ? (
+                      <HeaderAction
+                        icon="document-text-outline"
+                        label="References"
+                        onPress={handleJumpToReferences}
+                        compact
+                      />
+                    ) : null}
+                  </View>
+                ) : hasReferenceItems ? (
+                  <View style={styles.headerActionsRow}>
+                    <HeaderAction
+                      icon="document-text-outline"
+                      label="References"
+                      onPress={handleJumpToReferences}
+                      compact
+                    />
+                  </View>
                 ) : null}
                 {canAddSupplement || showShareAction ? (
                   <View style={styles.headerActionsRow}>
@@ -2612,6 +2761,81 @@ export default function SupplementInfoModal() {
                   />
                 ))
               : null}
+
+            {!isScanFailure && hasReferenceItems ? (
+              <View
+                onLayout={(event) => {
+                  referencesSectionYRef.current = event.nativeEvent.layout.y;
+                }}
+              >
+                <PrimaryCard style={styles.referencesCard}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${
+                      referencesExpanded ? "Collapse" : "Expand"
+                    } references`}
+                    accessibilityState={{ expanded: referencesExpanded }}
+                    onPress={handleToggleReferences}
+                    style={({ pressed }) => [
+                      styles.referencesHeaderButton,
+                      pressed && styles.referencesHeaderButtonPressed,
+                    ]}
+                  >
+                    <View style={styles.referencesHeaderCopy}>
+                      <View style={styles.referencesHeader}>
+                        <Ionicons
+                          name="document-text-outline"
+                          size={18}
+                          color={appTheme.colors.textStrong}
+                        />
+                        <Text style={styles.referencesTitle}>References</Text>
+                      </View>
+                      <Text style={styles.referencesHeaderMeta}>
+                        {`${referenceItems.length} source${
+                          referenceItems.length === 1 ? "" : "s"
+                        }`}
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name={referencesExpanded ? "chevron-up" : "chevron-down"}
+                      size={18}
+                      color={appTheme.colors.textSecondary}
+                    />
+                  </Pressable>
+
+                  {referencesExpanded ? (
+                    <>
+                      <Text style={styles.referencesIntro}>
+                        Open the source links behind the health claims on this
+                        page.
+                      </Text>
+
+                      <View style={styles.referencesList}>
+                        {referenceItems.map((reference) => (
+                          <ReferenceRow
+                            key={reference.url}
+                            reference={reference}
+                            onPress={() => handleOpenReferenceUrl(reference.url)}
+                          />
+                        ))}
+                      </View>
+
+                      <View style={styles.referencesDisclaimer}>
+                        <Ionicons
+                          name="information-circle-outline"
+                          size={16}
+                          color={appTheme.colors.textStrong}
+                          style={styles.referencesDisclaimerIcon}
+                        />
+                        <Text style={styles.referencesDisclaimerText}>
+                          {REFERENCES_DISCLAIMER}
+                        </Text>
+                      </View>
+                    </>
+                  ) : null}
+                </PrimaryCard>
+              </View>
+            ) : null}
           </>
         ) : null}
       </ScrollView>
@@ -2825,6 +3049,7 @@ const styles = StyleSheet.create({
   headerActionsContainer: {
     gap: 8,
     marginTop: 16,
+    marginRight: -46,
   },
   headerActionsRow: {
     flexDirection: "row",
@@ -2842,6 +3067,11 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.08)",
     overflow: "hidden",
   },
+  headerActionCompact: {
+    minHeight: 32,
+    paddingHorizontal: 10,
+    borderRadius: 11,
+  },
   headerActionAccent: {
     alignSelf: "flex-start",
     paddingHorizontal: 0,
@@ -2853,6 +3083,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
   },
+  headerActionAccentCompact: {
+    borderRadius: 11,
+  },
   headerActionAccentGradient: {
     flexDirection: "row",
     alignItems: "center",
@@ -2862,11 +3095,21 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     gap: 7,
   },
+  headerActionAccentGradientCompact: {
+    minHeight: 32,
+    paddingHorizontal: 10,
+    borderRadius: 11,
+    gap: 6,
+  },
   headerActionAccentText: {
     fontSize: 13,
     lineHeight: 16,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: "#FFFFFF",
+  },
+  headerActionAccentTextCompact: {
+    fontSize: 12,
+    lineHeight: 15,
   },
   headerActionPressed: {
     opacity: 0.72,
@@ -2880,6 +3123,11 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textStrong,
+  },
+  headerActionTextCompact: {
+    marginLeft: 5,
+    fontSize: 12,
+    lineHeight: 15,
   },
   loadingCard: {
     paddingVertical: 18,
@@ -3582,6 +3830,122 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.metrics.duration.accent,
     textDecorationLine: "underline",
+  },
+  referencesCard: {
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    marginBottom: 14,
+  },
+  referencesHeaderButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  referencesHeaderButtonPressed: {
+    opacity: 0.72,
+  },
+  referencesHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  referencesHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  referencesTitle: {
+    marginLeft: 8,
+    fontSize: 17,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  referencesHeaderMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  referencesIntro: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  referencesList: {
+    marginTop: 14,
+    gap: 10,
+  },
+  referenceRow: {
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    backgroundColor: "#F8F8FA",
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+  },
+  referenceRowPressed: {
+    opacity: 0.72,
+  },
+  referenceBenefitLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textSecondary,
+  },
+  referenceTitle: {
+    marginTop: 4,
+    fontSize: 14,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  referenceMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  referenceUrlRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginTop: 10,
+  },
+  referenceUrlIcon: {
+    marginTop: 1,
+    marginRight: 8,
+  },
+  referenceUrlText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+    textDecorationLine: "underline",
+  },
+  referencesDisclaimer: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginTop: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: "#F6EFE9",
+  },
+  referencesDisclaimerIcon: {
+    marginTop: 1,
+    marginRight: 8,
+  },
+  referencesDisclaimerText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textStrong,
   },
   verifiedModalRoot: {
     flex: 1,

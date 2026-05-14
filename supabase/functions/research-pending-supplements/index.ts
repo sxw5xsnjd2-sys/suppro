@@ -51,18 +51,47 @@ const BENEFIT_LABELS = [
   "Weight management",
 ];
 
-const ALLOWED_DOMAINS = [
-  "pubmed.ncbi.nlm.nih.gov",
-  "pmc.ncbi.nlm.nih.gov",
+const OFFICIAL_SOURCE_DOMAINS = [
   "clinicaltrials.gov",
-  "examine.com",
-  "ods.od.nih.gov",
-  "cochranelibrary.com",
   "fda.gov",
+  "ema.europa.eu",
   "efsa.europa.eu",
+  "nccih.nih.gov",
+  "ncbi.nlm.nih.gov",
   "nhs.uk",
+  "nih.gov",
+  "ods.od.nih.gov",
   "who.int",
 ];
+
+const JOURNAL_SOURCE_DOMAINS = [
+  "academic.oup.com",
+  "bmc.com",
+  "bmj.com",
+  "cambridge.org",
+  "cochranelibrary.com",
+  "dx.doi.org",
+  "doi.org",
+  "frontiersin.org",
+  "jamanetwork.com",
+  "journals.plos.org",
+  "karger.com",
+  "link.springer.com",
+  "mdpi.com",
+  "nature.com",
+  "nejm.org",
+  "onlinelibrary.wiley.com",
+  "pmc.ncbi.nlm.nih.gov",
+  "pubmed.ncbi.nlm.nih.gov",
+  "sagepub.com",
+  "sciencedirect.com",
+  "springer.com",
+  "tandfonline.com",
+  "thelancet.com",
+  "wiley.com",
+];
+
+const ALLOWED_DOMAINS = [...new Set([...OFFICIAL_SOURCE_DOMAINS, ...JOURNAL_SOURCE_DOMAINS])];
 
 const PRODUCT_LIKE_PATTERNS = [
   /\bby\s+[a-z0-9]/i,
@@ -565,9 +594,85 @@ function sourceDomain(url: unknown) {
   }
 }
 
+function normalizeEvidenceSourceUrl(value: unknown) {
+  const raw = trimString(value);
+  if (!raw) return "";
+
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase();
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (/^(utm_|fbclid$|gclid$|mc_cid$|mc_eid$)/i.test(key)) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.pathname = url.pathname.replace(/\/{2,}/g, "/");
+    if (url.pathname !== "/") {
+      url.pathname = url.pathname.replace(/\/+$/, "");
+    }
+    if (!url.searchParams.toString()) url.search = "";
+    const normalized = url.toString();
+    return normalized.endsWith("/") && url.pathname === "/" ? normalized.slice(0, -1) : normalized;
+  } catch {
+    return "";
+  }
+}
+
 function isAllowedUrl(url: unknown) {
-  const host = sourceDomain(url);
+  const host = sourceDomain(normalizeEvidenceSourceUrl(url) || url);
   return ALLOWED_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+function buildCitationUrlSet(citations: unknown) {
+  const normalized = new Set<string>();
+  const items = Array.isArray(citations) ? citations : [];
+
+  for (const citation of items) {
+    if (!citation || typeof citation !== "object") continue;
+    const url = normalizeEvidenceSourceUrl((citation as Record<string, unknown>).url);
+    if (!url || !isAllowedUrl(url)) continue;
+    normalized.add(url);
+  }
+
+  return normalized;
+}
+
+function getBenefitSourceUrls(benefit: Record<string, unknown>) {
+  const rawUrls = Array.isArray(benefit.source_urls) ? benefit.source_urls : [];
+  return Array.from(
+    new Set(rawUrls.map((url) => normalizeEvidenceSourceUrl(url)).filter(Boolean))
+  );
+}
+
+function evidenceSourcePriority(url: string) {
+  const host = sourceDomain(url);
+  if (host === "pubmed.ncbi.nlm.nih.gov") return 0;
+  if (host === "pmc.ncbi.nlm.nih.gov") return 1;
+  if (host === "doi.org" || host === "dx.doi.org") return 2;
+  if (OFFICIAL_SOURCE_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`))) {
+    return 3;
+  }
+  return 4;
+}
+
+function selectPrimaryBenefitEvidenceSource(
+  benefit: Record<string, unknown>,
+  citations: unknown
+) {
+  const citationUrls = buildCitationUrlSet(citations);
+  const candidates = getBenefitSourceUrls(benefit).filter((url) => citationUrls.has(url));
+
+  return (
+    candidates
+      .map((url, index) => ({ url, index }))
+      .sort(
+        (left, right) =>
+          evidenceSourcePriority(left.url) - evidenceSourcePriority(right.url) ||
+          left.index - right.index
+      )[0]?.url || null
+  );
 }
 
 function parseBenefitEvidenceLayout(value: unknown) {
@@ -615,9 +720,9 @@ function validateResearch(result: Record<string, unknown>) {
 
   const citationUrls = new Set<string>();
   for (const citation of citations) {
-    const url = trimString(citation.url);
+    const url = normalizeEvidenceSourceUrl(citation.url);
     if (!url || !isAllowedUrl(url)) {
-      issues.push(`Citation URL is not allowlisted: ${url || "(blank)"}`);
+      issues.push(`Citation URL is not allowlisted: ${trimString(citation.url) || "(blank)"}`);
     } else {
       citationUrls.add(url);
     }
@@ -660,12 +765,26 @@ function validateResearch(result: Record<string, unknown>) {
     if (/https?:\/\//i.test(evidence)) {
       issues.push(`Benefit evidence must not contain raw URLs: ${label}`);
     }
-    const urls = Array.isArray(benefit.source_urls) ? benefit.source_urls : [];
-    if (!urls.length) issues.push(`Benefit has no source URLs: ${label}`);
-    for (const url of urls) {
-      if (!citationUrls.has(trimString(url)) && !isAllowedUrl(url)) {
-        issues.push(`Benefit source URL is not cited or allowlisted: ${url}`);
+    const rawUrls = Array.isArray(benefit.source_urls) ? benefit.source_urls : [];
+    const normalizedUrls = getBenefitSourceUrls(benefit);
+    if (!rawUrls.length) issues.push(`Benefit has no source URLs: ${label}`);
+    if (!normalizedUrls.length) issues.push(`Benefit has no valid source URLs: ${label}`);
+    for (const url of rawUrls) {
+      const normalizedUrl = normalizeEvidenceSourceUrl(url);
+      if (!normalizedUrl) {
+        issues.push(`Benefit source URL is invalid: ${trimString(url) || "(blank)"} (${label})`);
+        continue;
       }
+      if (!citationUrls.has(normalizedUrl)) {
+        issues.push(`Benefit source URL is not present in citations: ${normalizedUrl} (${label})`);
+        continue;
+      }
+      if (!isAllowedUrl(normalizedUrl)) {
+        issues.push(`Benefit source URL is not allowlisted: ${normalizedUrl} (${label})`);
+      }
+    }
+    if (!selectPrimaryBenefitEvidenceSource(benefit, citations)) {
+      issues.push(`Benefit missing persistable evidence_source: ${label}`);
     }
   }
 
@@ -704,6 +823,12 @@ function shouldCreateLowEvidenceSupplement(result: Record<string, unknown>) {
     "weak",
     "sparse",
   ].some((term) => reason.includes(term));
+}
+
+function hasCitationValidationIssue(issues: string[]) {
+  return issues.some((issue) =>
+    /citation|source url|source urls|evidence_source|persistable/i.test(issue)
+  );
 }
 
 function coerceLowEvidenceSupplement(result: Record<string, unknown>) {
@@ -843,7 +968,7 @@ function buildResearchSchema() {
               score: { type: "integer", minimum: 0, maximum: 100 },
               evidence: { type: "string" },
               ranking_reason: { type: "string" },
-              source_urls: { type: "array", items: { type: "string" } },
+              source_urls: { type: "array", minItems: 1, items: { type: "string" } },
             },
           },
         },
@@ -993,6 +1118,9 @@ async function requestResearch(candidate: Record<string, unknown>, benefitRankin
         "If the candidate is a branded product, multi-ingredient formula, supplement product name, broad category, or cannot be reduced to one clear active ingredient, return decision manual_review.",
         "Use only the allowed web search sources. Do not invent studies, journals, authors, citations, outcomes, rankings, or doses.",
         "Every evidence claim must be supported by a returned citation URL.",
+        "For each benefit, source_urls must contain one or more URLs copied verbatim from citations and ordered best-first because the best valid URL will be stored in supplement_benefits.evidence_source.",
+        "Prefer PubMed, PMC, DOI, official guidance (NIH, ODS, NCCIH, EFSA, EMA, FDA, NHS, WHO), then direct journal landing pages. Never use search result pages, retailer links, blog posts, or generic homepages.",
+        "If you cannot provide a reliable source URL for a claimed benefit, omit that benefit instead of guessing or fabricating a citation.",
         "If the candidate is a clear standalone active ingredient but reliable human evidence is weak, indirect, or insufficient for benefit claims, still return decision create_new with a low evidence_score. Use benefits: [] when no benefit claim is supportable.",
         "Return manual_review only for identity ambiguity, product-like candidates, duplicate/alias uncertainty, or cases where the candidate is not a canonical active ingredient.",
         "Benefit labels must use one of the provided enum labels. Do not create new labels.",
@@ -1248,6 +1376,7 @@ function buildBenefitRows(supplement: { id: string; name: string }, research: Re
     icon: normalizeEvidenceRating(benefit.evidence_rating),
     score: clampScore(benefit.score),
     evidence: normalizeText(benefit.evidence),
+    evidence_source: selectPrimaryBenefitEvidenceSource(benefit, research.citations),
     ranking_reason: normalizeText(benefit.ranking_reason),
   }));
 }
@@ -1499,6 +1628,12 @@ Deno.serve(async (req) => {
         record.research = research;
         const validation = validateResearch(research);
         if (!validation.ok) {
+          if (hasCitationValidationIssue(validation.issues)) {
+            console.warn("[research-pending-supplements] missing or invalid citation URL", {
+              candidate: candidateName,
+              issues: validation.issues,
+            });
+          }
           await upsertManualReview(candidate, validation.issues.join("; "), research, validation.issues);
           record.decision = "manual_review";
           record.reason = validation.issues.join("; ");
