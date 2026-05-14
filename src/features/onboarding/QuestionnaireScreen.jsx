@@ -47,6 +47,7 @@ import {
 import { appTheme, typography } from "@/theme";
 import SupproLogo from "@/assets/icons/Supprologo.png";
 import {
+  hasCompletedOnboardingAppleHealth,
   clearOnboardingDraft,
   hasCompletedOnboardingRating,
   getQuestionnaireAnswers,
@@ -2004,6 +2005,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       const signupCompleted = signupCompletedRef.current;
       if (!signupCompleted) {
         const ratingCompleted = await hasCompletedOnboardingRating();
+        const appleHealthCompleted = await hasCompletedOnboardingAppleHealth();
         const nextStep = shouldRouteThroughOnboardingRatingStep({
           mode: draftMode,
           origin: null,
@@ -2011,7 +2013,9 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
           hasCompletedOnboardingRating: ratingCompleted,
         })
           ? "rating"
-          : "paywall";
+          : appleHealthCompleted
+            ? "paywall"
+            : "apple-health";
         router.replace(`/onboarding?mode=${draftMode}&step=${nextStep}`);
         return;
       }
@@ -2024,7 +2028,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       ]);
     } catch (error) {
       console.error("Failed to route after onboarding helpers", error);
-      router.replace(`/onboarding?mode=${draftMode}&step=paywall`);
+      router.replace(`/onboarding?mode=${draftMode}&step=apple-health`);
     }
   }, [draftMode, standalone]);
 

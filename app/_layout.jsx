@@ -174,6 +174,7 @@ function RootNavigator() {
     const gatedRoutes = {
       needs_questions: "/onboarding?mode=first_run",
       needs_rating: "/onboarding?mode=first_run&step=rating",
+      needs_apple_health: "/onboarding?mode=first_run&step=apple-health",
       needs_paywall: "/onboarding?mode=first_run&step=paywall",
       needs_signup: "/login?mode=create",
       needs_login: "/login?mode=login",
@@ -215,6 +216,15 @@ function RootNavigator() {
         (isOnboardingRoute &&
           !isRetakeOnboarding &&
           (stepParam === "rating" || isBuildingOnboardingRoute)) ||
+        isOnboardingScannerFlow
+      );
+    }
+
+    if (gateState === "needs_apple_health") {
+      return (
+        (isOnboardingRoute &&
+          !isRetakeOnboarding &&
+          (stepParam === "apple-health" || isBuildingOnboardingRoute)) ||
         isOnboardingScannerFlow
       );
     }

@@ -181,6 +181,10 @@ function normalizeIdentityValue(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function hasNonEmptyMessage(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 export function resolveRevenueCatIdentityAction({
   hasConfigured = false,
   sessionAppUserId = "",
@@ -236,6 +240,121 @@ export function resolveOriginAppPaywallAction({
   }
 
   return "present_paywall";
+}
+
+export function resolveOnboardingPaywallViewState({
+  origin = "",
+  hasActiveAccess = false,
+  isReady = false,
+  isLoading = false,
+  isRefreshing = false,
+  isRestoring = false,
+  isPresentingPaywall = false,
+  isIdentitySyncing = false,
+  configurationError = "",
+  hasCurrentOffering = false,
+}) {
+  const hasConfigurationError = hasNonEmptyMessage(configurationError);
+  const isBusy =
+    isLoading ||
+    isRefreshing ||
+    isRestoring ||
+    isPresentingPaywall ||
+    isIdentitySyncing;
+  const shouldRouteToSettings =
+    origin === "app" &&
+    !hasActiveAccess &&
+    !isBusy &&
+    (hasConfigurationError || !hasCurrentOffering);
+
+  if (hasActiveAccess) {
+    return {
+      status: "active",
+      isBusy: false,
+      showActivity: false,
+      showPurchaseButton: false,
+      showRestoreButton: false,
+      showRetryButton: false,
+      shouldAutoContinue: true,
+      shouldRouteToSettings: false,
+    };
+  }
+
+  if (!isReady || isLoading || isRefreshing || isIdentitySyncing) {
+    return {
+      status: "checking_access",
+      isBusy: true,
+      showActivity: true,
+      showPurchaseButton: false,
+      showRestoreButton: false,
+      showRetryButton: false,
+      shouldAutoContinue: false,
+      shouldRouteToSettings: false,
+    };
+  }
+
+  if (isPresentingPaywall) {
+    return {
+      status: "presenting_paywall",
+      isBusy: true,
+      showActivity: true,
+      showPurchaseButton: false,
+      showRestoreButton: false,
+      showRetryButton: false,
+      shouldAutoContinue: false,
+      shouldRouteToSettings: false,
+    };
+  }
+
+  if (isRestoring) {
+    return {
+      status: "restoring",
+      isBusy: true,
+      showActivity: true,
+      showPurchaseButton: false,
+      showRestoreButton: false,
+      showRetryButton: false,
+      shouldAutoContinue: false,
+      shouldRouteToSettings: false,
+    };
+  }
+
+  if (hasConfigurationError) {
+    return {
+      status: "configuration_error",
+      isBusy: false,
+      showActivity: false,
+      showPurchaseButton: false,
+      showRestoreButton: true,
+      showRetryButton: true,
+      shouldAutoContinue: false,
+      shouldRouteToSettings,
+    };
+  }
+
+  if (!hasCurrentOffering) {
+    return {
+      status: "missing_offering",
+      isBusy: false,
+      showActivity: false,
+      showPurchaseButton: false,
+      showRestoreButton: true,
+      showRetryButton: true,
+      shouldAutoContinue: false,
+      shouldRouteToSettings,
+    };
+  }
+
+  return {
+    status: "ready_to_purchase",
+    isBusy: false,
+    showActivity: false,
+    showPurchaseButton: true,
+    showRestoreButton: true,
+    showRetryButton: false,
+    shouldAutoContinue: false,
+    shouldRouteToSettings: false,
+  };
 }
 
 export function resolveBackNavigationAction({

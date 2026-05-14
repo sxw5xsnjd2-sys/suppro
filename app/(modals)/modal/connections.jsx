@@ -11,8 +11,13 @@ import {
 import { appTheme, typography } from "@/theme";
 import {
   APPLE_HEALTH_NO_DATA_MESSAGE,
+  APPLE_HEALTH_PRE_PERMISSION_BODY,
+  APPLE_HEALTH_PRE_PERMISSION_TITLE,
+  APPLE_HEALTH_SETTINGS_SUBTITLE,
+  APPLE_HEALTH_TITLE,
   APPLE_HEALTH_UNAVAILABLE_MESSAGE,
   formatLastSynced,
+  getAppleHealthConnectionStatusLabel,
   useAppleHealthConnection,
 } from "@/features/health/useAppleHealthConnection";
 
@@ -44,6 +49,9 @@ export default function ConnectionsScreen() {
     reconnectAppleHealth,
     disconnectFromAppleHealth,
   } = useAppleHealthConnection();
+  const appleHealthStatus = getAppleHealthConnectionStatusLabel(
+    isAppleHealthConnected,
+  );
 
   let helperText = `Last sync ${formatLastSynced(lastSyncedAt)}.`;
   if (!hasCheckedAppleHealthAvailability) {
@@ -53,8 +61,8 @@ export default function ConnectionsScreen() {
   } else if (!isAppleHealthConnected) {
     helperText =
       connection === "error" && connectionError
-        ? `${connectionError} Reconnect Apple Health to start syncing again.`
-        : "Reconnect Apple Health to pull in the latest sleep, weight, blood pressure, and blood glucose data.";
+        ? connectionError
+        : "Not connected";
   } else if (connection === "error" && connectionError) {
     helperText = `${connectionError} Last successful sync ${formatLastSynced(
       lastSyncedAt
@@ -65,7 +73,19 @@ export default function ConnectionsScreen() {
     if (isSyncing) return;
 
     if (nextValue) {
-      reconnectAppleHealth();
+      Alert.alert(
+        APPLE_HEALTH_PRE_PERMISSION_TITLE,
+        APPLE_HEALTH_PRE_PERMISSION_BODY,
+        [
+          { text: "Not now", style: "cancel" },
+          {
+            text: "Continue",
+            onPress: () => {
+              reconnectAppleHealth();
+            },
+          },
+        ]
+      );
       return;
     }
 
@@ -104,7 +124,9 @@ export default function ConnectionsScreen() {
           title="CONNECTIONS"
           titleStyle={styles.headerTitle}
           bottomSlot={
-            <Text style={styles.headerSubtitle}>Manage app integrations</Text>
+            <Text style={styles.headerSubtitle}>
+              Manage Apple Health
+            </Text>
           }
           bottomSlotStyle={styles.headerBottom}
         />
@@ -117,7 +139,12 @@ export default function ConnectionsScreen() {
           <AppleHealthLogo />
           <View style={styles.appleHealthContent}>
             <View style={styles.appleHealthTitleRow}>
-              <Text style={styles.appleHealthTitle}>Apple Health</Text>
+              <View style={styles.appleHealthTitleGroup}>
+                <Text style={styles.appleHealthTitle}>{APPLE_HEALTH_TITLE}</Text>
+                <Text style={styles.appleHealthStatus}>
+                  Status: {appleHealthStatus}
+                </Text>
+              </View>
               <Switch
                 value={isAppleHealthConnected}
                 onValueChange={handleAppleHealthToggle}
@@ -128,6 +155,11 @@ export default function ConnectionsScreen() {
                 style={styles.appleHealthSwitch}
               />
             </View>
+            {!isAppleHealthConnected ? (
+              <Text style={styles.appleHealthDescription}>
+                {APPLE_HEALTH_SETTINGS_SUBTITLE}
+              </Text>
+            ) : null}
             {isAppleHealthConnected ? (
               <View style={styles.syncRow}>
                 <Text style={[styles.appleHealthBody, styles.syncText]}>
@@ -194,6 +226,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10,
   },
+  appleHealthTitleGroup: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
   logoTile: {
     width: 52,
     height: 52,
@@ -220,6 +257,18 @@ const styles = StyleSheet.create({
     color: appTheme.colors.textPrimary,
     flex: 1,
     minWidth: 0,
+  },
+  appleHealthStatus: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  appleHealthDescription: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textBody,
   },
   appleHealthSwitch: {
     transform: [{ scaleX: 0.84 }, { scaleY: 0.84 }],

@@ -17,6 +17,13 @@ function OnboardingRatingStep() {
   return <OnboardingRatingScreen />;
 }
 
+function OnboardingAppleHealthStep() {
+  const OnboardingAppleHealthScreen =
+    require("@src/features/onboarding/OnboardingAppleHealthScreen").default;
+
+  return <OnboardingAppleHealthScreen />;
+}
+
 export default function OnboardingScreen() {
   const params = useLocalSearchParams();
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
@@ -57,6 +64,17 @@ export default function OnboardingScreen() {
           options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
         />
         <OnboardingRatingStep />
+      </>
+    );
+  }
+
+  if (stepParam === "apple-health") {
+    return (
+      <>
+        <Stack.Screen
+          options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
+        />
+        <OnboardingAppleHealthStep />
       </>
     );
   }

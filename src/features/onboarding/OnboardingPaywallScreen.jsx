@@ -1,13 +1,15 @@
-import React, { useCallback, useEffect, useRef } from "react";
-import { ActivityIndicator, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
+import { AppButton } from "@/components/common/ui";
 import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
-import { resolveOriginAppPaywallAction } from "@/features/subscriptions/accessPolicy";
-import {
-  clearOnboardingPremiumComplete,
-  markOnboardingPremiumComplete,
-} from "@src/lib/onboarding";
+import { resolveOnboardingPaywallViewState } from "@/features/subscriptions/accessPolicy";
+import { appTheme, typography } from "@/theme";
+import { markOnboardingPremiumComplete } from "@src/lib/onboarding";
+
+const SUBSCRIPTION_STATUS_ERROR_MESSAGE =
+  "Unable to check subscription status. Please try again.";
 
 export default function OnboardingPaywallScreen() {
   const params = useLocalSearchParams();
@@ -19,23 +21,50 @@ export default function OnboardingPaywallScreen() {
   const {
     isReady,
     isLoading,
+    isRefreshing,
+    isRestoring,
+    isPresentingPaywall,
+    isIdentitySyncing,
     configurationError,
+    actionError,
+    refreshState,
     presentPremiumPaywall,
     currentOffering,
     lapsedOffering,
     premiumActive,
   } = useRevenueCat();
   const isCompletingRef = useRef(false);
-  const canUseRevenueCat = isReady && !configurationError;
+  const hasRefreshedAccessRef = useRef(false);
+  const [hasAttemptedPaywall, setHasAttemptedPaywall] = useState(false);
+
   const paywallOffering = returnsToApp ? lapsedOffering : currentOffering;
-  const originAppAction = resolveOriginAppPaywallAction({
-    origin: originParam,
-    hasActiveAccess: premiumActive,
-    isReady,
-    isLoading,
-    configurationError,
-    hasCurrentOffering: Boolean(paywallOffering),
-  });
+  const viewState = useMemo(
+    () =>
+      resolveOnboardingPaywallViewState({
+        origin: originParam,
+        hasActiveAccess: premiumActive,
+        isReady,
+        isLoading,
+        isRefreshing,
+        isRestoring,
+        isPresentingPaywall,
+        isIdentitySyncing,
+        configurationError,
+        hasCurrentOffering: Boolean(paywallOffering),
+      }),
+    [
+      configurationError,
+      isIdentitySyncing,
+      isLoading,
+      isPresentingPaywall,
+      isReady,
+      isRefreshing,
+      isRestoring,
+      originParam,
+      paywallOffering,
+      premiumActive,
+    ],
+  );
 
   const continueToAccount = useCallback(async () => {
     if (isCompletingRef.current) return;
@@ -47,78 +76,131 @@ export default function OnboardingPaywallScreen() {
         returnsToApp
           ? "/"
           : returnsToLogin
-          ? "/login?mode=login"
-          : "/login?mode=create"
+            ? "/login?mode=login"
+            : "/login?mode=create",
       );
     } finally {
       isCompletingRef.current = false;
     }
   }, [returnsToApp, returnsToLogin]);
 
-  const routeToLogin = useCallback(async () => {
-    if (returnsToApp) {
-      router.replace("/settings");
+  useEffect(() => {
+    if (hasRefreshedAccessRef.current) {
       return;
     }
 
-    await clearOnboardingPremiumComplete();
-    router.replace("/login?mode=login");
-  }, [returnsToApp]);
-
-  const hasOpenedRef = useRef(false);
+    hasRefreshedAccessRef.current = true;
+    refreshState({
+      silent: true,
+      invalidateCustomerInfo: true,
+    }).catch(() => {
+      hasRefreshedAccessRef.current = false;
+    });
+  }, [refreshState]);
 
   useEffect(() => {
-    if (originAppAction === "continue_to_app") {
+    if (viewState.shouldAutoContinue) {
       continueToAccount();
+    }
+  }, [continueToAccount, viewState.shouldAutoContinue]);
+
+  const handleOpenPaywall = useCallback(async () => {
+    setHasAttemptedPaywall(true);
+
+    const unlocked = await presentPremiumPaywall({
+      ifNeeded: false,
+      offering: paywallOffering,
+      checkExistingSubscription: true,
+      restoreExistingSubscription: true,
+    });
+
+    if (unlocked) {
+      await continueToAccount();
+    }
+  }, [continueToAccount, paywallOffering, presentPremiumPaywall]);
+
+  useEffect(() => {
+    if (viewState.status !== "ready_to_purchase" || hasAttemptedPaywall) {
       return;
     }
 
-    if (originAppAction === "route_settings") {
-      routeToLogin();
-      return;
-    }
+    handleOpenPaywall();
+  }, [handleOpenPaywall, hasAttemptedPaywall, viewState.status]);
 
-    if (originAppAction === "wait") {
-      return;
-    }
+  const handleRetry = useCallback(() => {
+    setHasAttemptedPaywall(false);
+    refreshState({
+      invalidateCustomerInfo: true,
+      silent: false,
+      syncPurchases: true,
+    }).catch(() => null);
+  }, [refreshState]);
 
-    if (!isReady || !canUseRevenueCat || hasOpenedRef.current || !paywallOffering)
-      return;
-
-    hasOpenedRef.current = true;
-
-    const run = async () => {
-      try {
-        const unlocked = await presentPremiumPaywall({
-          ifNeeded: false,
-          offering: paywallOffering,
-        });
-        if (unlocked) {
-          await continueToAccount();
-        } else {
-          await routeToLogin();
-        }
-      } catch {
-        await routeToLogin();
-      }
-    };
-
-    run();
-  }, [
-    originAppAction,
-    isReady,
-    canUseRevenueCat,
-    paywallOffering,
-    continueToAccount,
-    presentPremiumPaywall,
-    routeToLogin,
-  ]);
+  const showError =
+    !viewState.showActivity &&
+    !viewState.shouldAutoContinue &&
+    Boolean(configurationError || actionError);
 
   return (
     <BackdropScreen scrollable={false}>
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator />
+      <View style={styles.screen}>
+        {showError ? (
+          <View style={styles.errorState}>
+            <Text style={styles.errorTitle}>
+              {SUBSCRIPTION_STATUS_ERROR_MESSAGE}
+            </Text>
+            <AppButton
+              label={isRefreshing ? "Trying again..." : "Try again"}
+              variant="primary"
+              size="md"
+              onPress={handleRetry}
+              disabled={viewState.isBusy}
+              style={styles.retryButton}
+              textStyle={styles.retryButtonText}
+            />
+          </View>
+        ) : (
+          <View style={styles.loadingState}>
+            <ActivityIndicator size="small" />
+          </View>
+        )}
       </View>
     </BackdropScreen>
   );
 }
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: appTheme.screen.sidePadding,
+  },
+  loadingState: {
+    minHeight: 120,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  errorState: {
+    width: "100%",
+    maxWidth: 420,
+    alignItems: "center",
+    gap: 16,
+  },
+  errorTitle: {
+    fontSize: 18,
+    lineHeight: 26,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textPrimary,
+    textAlign: "center",
+  },
+  retryButton: {
+    minHeight: 52,
+    minWidth: 160,
+    borderRadius: 18,
+  },
+  retryButtonText: {
+    fontSize: 16,
+    fontFamily: typography.fontFamily.headingSemiBold,
+  },
+});

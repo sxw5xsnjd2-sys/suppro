@@ -49,9 +49,11 @@ function loadOnboardingModule({
     "hasNonAnonymousSession",
     `${transformed}
 return {
+  ONBOARDING_APPLE_HEALTH_COMPLETED_STORAGE_KEY,
   ONBOARDING_RATING_COMPLETED_STORAGE_KEY,
   SIGNUP_COMPLETED_STORAGE_KEY,
   getOnboardingGateState,
+  resolvePostAppleHealthOnboardingHref,
   resolveLoggedOutOnboardingGateState,
   shouldRouteThroughOnboardingRatingStep,
 };`
@@ -107,6 +109,7 @@ test("returning signed-out users resolve to login even without questionnaire dat
       hasCompletedQuestionnaire: false,
       signupCompleted: true,
       hasCompletedOnboardingRating: false,
+      hasCompletedOnboardingAppleHealth: false,
       hasCompletedOnboardingPremium: false,
     }),
     "needs_login"
@@ -132,7 +135,7 @@ test("first-run with no session and no questionnaire answers stays on questions"
   });
 });
 
-test("questionnaire-complete first-run without premium stays on paywall", async () => {
+test("questionnaire-complete first-run without Apple Health step stays on Apple Health onboarding", async () => {
   const asyncStorage = createAsyncStorage({
     "suppro.onboarding.questionnaire.v1": JSON.stringify({
       completedAt: "2026-05-06T10:00:00.000Z",
@@ -147,7 +150,7 @@ test("questionnaire-complete first-run without premium stays on paywall", async 
 
   await assert.doesNotReject(async () => {
     const gateState = await getOnboardingGateState();
-    assert.equal(gateState, "needs_paywall");
+    assert.equal(gateState, "needs_apple_health");
   });
 });
 
@@ -169,7 +172,7 @@ test("questionnaire-complete first-run routes to rating before paywall", async (
   });
 });
 
-test("rating completion routes first-run onboarding to paywall", async () => {
+test("rating completion routes first-run onboarding to Apple Health before paywall", async () => {
   const asyncStorage = createAsyncStorage({
     "suppro.onboarding.questionnaire.v1": JSON.stringify({
       completedAt: "2026-05-06T10:00:00.000Z",
@@ -184,8 +187,72 @@ test("rating completion routes first-run onboarding to paywall", async () => {
 
   await assert.doesNotReject(async () => {
     const gateState = await getOnboardingGateState();
+    assert.equal(gateState, "needs_apple_health");
+  });
+});
+
+test("skipping Apple Health still reaches paywall", async () => {
+  const asyncStorage = createAsyncStorage({
+    "suppro.onboarding.questionnaire.v1": JSON.stringify({
+      completedAt: "2026-05-06T10:00:00.000Z",
+    }),
+    "suppro.onboarding.ratingCompleted.v1": "true",
+    "suppro.onboarding.appleHealthCompleted.v1": "true",
+  });
+
+  const { getOnboardingGateState } = loadOnboardingModule({
+    asyncStorage,
+    session: null,
+  });
+
+  await assert.doesNotReject(async () => {
+    const gateState = await getOnboardingGateState();
     assert.equal(gateState, "needs_paywall");
   });
+});
+
+test("accepting or denying Apple Health still reaches paywall", async () => {
+  const asyncStorage = createAsyncStorage({
+    "suppro.onboarding.questionnaire.v1": JSON.stringify({
+      completedAt: "2026-05-06T10:00:00.000Z",
+    }),
+    "suppro.onboarding.ratingCompleted.v1": "true",
+    "suppro.onboarding.appleHealthCompleted.v1": "true",
+  });
+
+  const { getOnboardingGateState } = loadOnboardingModule({
+    asyncStorage,
+    session: null,
+  });
+
+  await assert.doesNotReject(async () => {
+    const gateState = await getOnboardingGateState();
+    assert.equal(gateState, "needs_paywall");
+  });
+});
+
+test("Apple Health step routes to paywall preflight next", () => {
+  const { resolvePostAppleHealthOnboardingHref } = loadOnboardingModule({
+    asyncStorage: createAsyncStorage(),
+    session: null,
+  });
+
+  assert.equal(
+    resolvePostAppleHealthOnboardingHref({ mode: "first_run" }),
+    "/onboarding?mode=first_run&step=paywall"
+  );
+});
+
+test("Apple Health skipped does not mark signup complete or premium complete in screen code", () => {
+  const source = readFileSync(
+    new URL("../../src/features/onboarding/OnboardingAppleHealthScreen.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.equal(source.includes("SIGNUP_COMPLETED_STORAGE_KEY"), false);
+  assert.equal(source.includes("markOnboardingPremiumComplete"), false);
+  assert.equal(source.includes("/login?mode=create"), false);
+  assert.equal(source.includes("/login?mode=login"), false);
 });
 
 test("paywall-complete first-run without account stays on create-account", async () => {
@@ -194,6 +261,7 @@ test("paywall-complete first-run without account stays on create-account", async
       completedAt: "2026-05-06T10:00:00.000Z",
     }),
     "suppro.onboarding.ratingCompleted.v1": "true",
+    "suppro.onboarding.appleHealthCompleted.v1": "true",
     "suppro.onboarding.premiumCompleted.v1": "true",
   });
 
@@ -233,6 +301,7 @@ test("real non-anonymous sessions without account completion cannot enter authen
       completedAt: "2026-05-06T10:00:00.000Z",
     }),
     "suppro.onboarding.ratingCompleted.v1": "true",
+    "suppro.onboarding.appleHealthCompleted.v1": "true",
     "suppro.onboarding.premiumCompleted.v1": "true",
   });
 

@@ -32,6 +32,21 @@ import {
 
 const RevenueCatContext = createContext(null);
 const REVENUECAT_DEBUG_LOGS_ENABLED = IS_DEVELOPMENT_BUILD;
+const SUBSCRIPTION_STATUS_CHECK_ERROR_MESSAGE =
+  "Unable to check subscription status. Please try again.";
+const EXISTING_SUBSCRIPTION_RESTORED_MESSAGE =
+  "Subscription already active — premium restored.";
+const EXISTING_SUBSCRIPTION_RETRY_MESSAGE =
+  "We couldn't confirm your subscription yet. Use Restore access to try again.";
+const EXISTING_SUBSCRIPTION_MESSAGE_PATTERNS = [
+  /\balready subscribed\b/i,
+  /\balready purchased\b/i,
+  /\balready own(?:s|ed)?\b/i,
+  /\bcurrently subscribed\b/i,
+  /\bactive subscription\b/i,
+  /\bsubscription .* active\b/i,
+  /\byou(?:'re| are) currently subscribed\b/i,
+];
 
 function getRevenueCatAppUserId(user) {
   return hasNonAnonymousUser(user) ? user.id : null;
@@ -119,12 +134,74 @@ function isPurchaseCancelled(error) {
   );
 }
 
+function normalizeRevenueCatSignal(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function getRevenueCatErrorSignals(error) {
+  return [
+    error?.code,
+    error?.readableErrorCode,
+    error?.userInfo?.code,
+    error?.userInfo?.readable_error_code,
+    error?.userInfo?.rc_code_name,
+    error?.userInfo?.underlyingErrorMessage,
+  ]
+    .map(normalizeRevenueCatSignal)
+    .filter(Boolean);
+}
+
+function isAlreadySubscribedError(error) {
+  const sdk = getRevenueCatSdk();
+  const alreadyPurchasedCode =
+    sdk.Purchases?.PURCHASES_ERROR_CODE?.PRODUCT_ALREADY_PURCHASED_ERROR ?? null;
+  const normalizedMessage = normalizeRevenueCatSignal(error?.message);
+
+  if (alreadyPurchasedCode && error?.code === alreadyPurchasedCode) {
+    return true;
+  }
+
+  const hasKnownSignal = getRevenueCatErrorSignals(error).some((signal) =>
+    [
+      "product_already_purchased_error",
+      "product_already_purchased",
+      "already_purchased",
+      "already_subscribed",
+      "already_owned",
+      "active_subscription",
+    ].some((candidate) => signal.includes(candidate))
+  );
+
+  if (hasKnownSignal) {
+    return true;
+  }
+
+  return EXISTING_SUBSCRIPTION_MESSAGE_PATTERNS.some((pattern) =>
+    pattern.test(normalizedMessage)
+  );
+}
+
 function toRevenueCatErrorMessage(error, fallbackMessage) {
   if (typeof error?.message === "string" && error.message.trim()) {
     return error.message.trim();
   }
 
   return fallbackMessage;
+}
+
+function resolveRecoveredPurchaseResult(customerInfo) {
+  const hasPremiumAccess = isPremiumActive(customerInfo);
+
+  return {
+    didRecover: hasPremiumAccess,
+    hasPremiumAccess,
+    message: hasPremiumAccess ? EXISTING_SUBSCRIPTION_RESTORED_MESSAGE : "",
+    error: hasPremiumAccess ? "" : EXISTING_SUBSCRIPTION_RETRY_MESSAGE,
+  };
 }
 
 function resolveRestorePurchasesResult(customerInfo) {
@@ -138,6 +215,40 @@ function resolveRestorePurchasesResult(customerInfo) {
     hasPremiumAccess,
     message,
     error: "",
+  };
+}
+
+function resolveExistingSubscriptionCheckResult({
+  preparedCustomerInfo = null,
+  restoredCustomerInfo = null,
+  error = null,
+} = {}) {
+  if (error) {
+    return {
+      logKey: "subscription_check_failed",
+      hasPremiumAccess: false,
+      shouldPresentPaywall: false,
+      errorMessage: SUBSCRIPTION_STATUS_CHECK_ERROR_MESSAGE,
+    };
+  }
+
+  if (
+    isPremiumActive(restoredCustomerInfo) ||
+    isPremiumActive(preparedCustomerInfo)
+  ) {
+    return {
+      logKey: "existing_subscription_found_skip_paywall",
+      hasPremiumAccess: true,
+      shouldPresentPaywall: false,
+      errorMessage: "",
+    };
+  }
+
+  return {
+    logKey: "no_existing_subscription_present_paywall",
+    hasPremiumAccess: false,
+    shouldPresentPaywall: true,
+    errorMessage: "",
   };
 }
 
@@ -239,7 +350,11 @@ export function RevenueCatProvider({ children }) {
     }
   };
 
-  const refreshState = async ({ silent = false } = {}) => {
+  const refreshState = async ({
+    silent = false,
+    invalidateCustomerInfo = false,
+    syncPurchases = false,
+  } = {}) => {
     if (!hasConfiguredRef.current) return null;
     if (!revenueCatSdk.Purchases) return null;
 
@@ -249,6 +364,40 @@ export function RevenueCatProvider({ children }) {
     }
 
     try {
+      if (
+        invalidateCustomerInfo &&
+        typeof revenueCatSdk.Purchases.invalidateCustomerInfoCache === "function"
+      ) {
+        await Promise.resolve(
+          revenueCatSdk.Purchases.invalidateCustomerInfoCache(),
+        ).catch(() => null);
+      }
+
+      if (syncPurchases) {
+        try {
+          if (
+            typeof revenueCatSdk.Purchases.syncPurchasesForResult === "function"
+          ) {
+            await revenueCatSdk.Purchases.syncPurchasesForResult();
+          } else if (typeof revenueCatSdk.Purchases.syncPurchases === "function") {
+            await Promise.resolve(revenueCatSdk.Purchases.syncPurchases());
+          }
+        } catch (error) {
+          logBuildAwareDiagnostic(
+            "warn",
+            "[revenuecat] Failed to sync purchases",
+            {
+              developmentDetails: {
+                message:
+                  typeof error?.message === "string"
+                    ? error.message
+                    : "Unknown error",
+              },
+            },
+          );
+        }
+      }
+
       logDevelopmentDiagnostic("log", "[revenuecat] Getting offerings...");
 
       const [nextCustomerInfo, nextOfferings, nextAppUserId] =
@@ -358,7 +507,10 @@ export function RevenueCatProvider({ children }) {
         }
 
         await syncSubscriberAttributes(user);
-        return await refreshState({ silent: true });
+        return await refreshState({
+          silent: true,
+          invalidateCustomerInfo: true,
+        });
       } catch (error) {
         if (isMountedRef.current) {
           setActionError(
@@ -392,6 +544,130 @@ export function RevenueCatProvider({ children }) {
     } = await supabase.auth.getSession();
 
     return syncIdentityForUser(session?.user ?? null);
+  };
+
+  const prepareSubscriptionAccess = async ({ syncPurchases = false } = {}) => {
+    await syncIdentityForCurrentSession();
+    return refreshState({
+      silent: true,
+      invalidateCustomerInfo: true,
+      syncPurchases,
+    });
+  };
+
+  const recoverExistingSubscription = async () => {
+    const refreshedState = await prepareSubscriptionAccess({
+      syncPurchases: true,
+    });
+    const recoveryResult = resolveRecoveredPurchaseResult(
+      refreshedState?.customerInfo ?? null,
+    );
+
+    if (isMountedRef.current) {
+      if (recoveryResult.hasPremiumAccess) {
+        setActionError("");
+        setActionMessage(recoveryResult.message);
+      } else {
+        setActionError(recoveryResult.error);
+      }
+    }
+
+    return recoveryResult;
+  };
+
+  const checkExistingSubscriptionBeforePaywall = async ({
+    shouldRestore = false,
+  } = {}) => {
+    logBuildAwareDiagnostic(
+      "log",
+      "checking_existing_subscription_before_paywall",
+      {
+        developmentDetails: {
+          shouldRestore,
+        },
+      },
+    );
+
+    try {
+      const preparedState = await prepareSubscriptionAccess({
+        syncPurchases: true,
+      });
+      const preparedCustomerInfo = preparedState?.customerInfo ?? null;
+      let decision = resolveExistingSubscriptionCheckResult({
+        preparedCustomerInfo,
+      });
+
+      if (decision.hasPremiumAccess) {
+        logBuildAwareDiagnostic("log", decision.logKey, {
+          developmentDetails: {
+            source: "prepared_customer_info",
+          },
+        });
+        if (isMountedRef.current) {
+          setActionError("");
+          setActionMessage(EXISTING_SUBSCRIPTION_RESTORED_MESSAGE);
+        }
+        return decision;
+      }
+
+      if (shouldRestore && typeof revenueCatSdk.Purchases?.restorePurchases === "function") {
+        const restoredCustomerInfo =
+          await revenueCatSdk.Purchases.restorePurchases();
+
+        if (isMountedRef.current) {
+          setCustomerInfo(restoredCustomerInfo);
+        }
+
+        const refreshedState = await refreshState({
+          silent: true,
+          invalidateCustomerInfo: true,
+          syncPurchases: true,
+        });
+
+        decision = resolveExistingSubscriptionCheckResult({
+          preparedCustomerInfo,
+          restoredCustomerInfo:
+            refreshedState?.customerInfo ?? restoredCustomerInfo,
+        });
+
+        if (decision.hasPremiumAccess) {
+          logBuildAwareDiagnostic("log", decision.logKey, {
+            developmentDetails: {
+              source: "restore_purchases",
+            },
+          });
+          if (isMountedRef.current) {
+            setActionError("");
+            setActionMessage(EXISTING_SUBSCRIPTION_RESTORED_MESSAGE);
+          }
+          return decision;
+        }
+      }
+
+      logBuildAwareDiagnostic("log", decision.logKey, {
+        developmentDetails: {
+          shouldRestore,
+        },
+      });
+      return decision;
+    } catch (error) {
+      const decision = resolveExistingSubscriptionCheckResult({ error });
+
+      logBuildAwareDiagnostic("warn", decision.logKey, {
+        developmentDetails: {
+          shouldRestore,
+          message:
+            typeof error?.message === "string" ? error.message : "Unknown error",
+        },
+      });
+
+      if (isMountedRef.current) {
+        setActionError(decision.errorMessage);
+        setActionMessage("");
+      }
+
+      return decision;
+    }
   };
 
   useEffect(() => {
@@ -462,7 +738,10 @@ export function RevenueCatProvider({ children }) {
         );
 
         await syncSubscriberAttributes(initialUser);
-        await refreshState({ silent: true });
+        await refreshState({
+          silent: true,
+          invalidateCustomerInfo: true,
+        });
 
         if (isMountedRef.current) {
           setIsReady(true);
@@ -522,6 +801,27 @@ export function RevenueCatProvider({ children }) {
     setActionMessage("");
 
     try {
+      const preparedState = await prepareSubscriptionAccess({
+        syncPurchases: true,
+      });
+
+      if (isPremiumActive(preparedState?.customerInfo)) {
+        const recoveryResult = resolveRecoveredPurchaseResult(
+          preparedState?.customerInfo,
+        );
+
+        if (isMountedRef.current) {
+          setActionMessage(recoveryResult.message);
+        }
+
+        return {
+          didRestore: true,
+          hasPremiumAccess: true,
+          message: recoveryResult.message,
+          error: "",
+        };
+      }
+
       const nextCustomerInfo = await revenueCatSdk.Purchases.restorePurchases();
       const restoreResult = resolveRestorePurchasesResult(nextCustomerInfo);
 
@@ -529,7 +829,7 @@ export function RevenueCatProvider({ children }) {
         setCustomerInfo(nextCustomerInfo);
         setActionMessage(restoreResult.message);
       }
-      await refreshState({ silent: true });
+      await prepareSubscriptionAccess({ syncPurchases: true });
       return restoreResult;
     } catch (error) {
       const message = toRevenueCatErrorMessage(
@@ -597,6 +897,16 @@ export function RevenueCatProvider({ children }) {
   const purchaseYearly = async () => {
     if (!hasConfiguredRef.current) return false;
     if (!revenueCatSdk.Purchases) return false;
+
+    const preparedState = await prepareSubscriptionAccess();
+    if (isPremiumActive(preparedState?.customerInfo)) {
+      if (isMountedRef.current) {
+        setActionError("");
+        setActionMessage(EXISTING_SUBSCRIPTION_RESTORED_MESSAGE);
+      }
+      return true;
+    }
+
     if (!yearlyPackage) {
       setActionError(
         "No yearly package is available. Confirm your current RevenueCat offering includes the yearly product.",
@@ -615,12 +925,24 @@ export function RevenueCatProvider({ children }) {
         setCustomerInfo(result.customerInfo);
         setActionMessage("Suppro Premium unlocked.");
       }
-      await refreshState({ silent: true });
+      await refreshState({
+        silent: true,
+        invalidateCustomerInfo: true,
+      });
       return true;
     } catch (error) {
+      if (!isPurchaseCancelled(error)) {
+        const recoveryResult = await recoverExistingSubscription();
+        if (recoveryResult.hasPremiumAccess) {
+          return true;
+        }
+      }
+
       if (isMountedRef.current) {
         if (isPurchaseCancelled(error)) {
           setActionMessage("Purchase cancelled.");
+        } else if (isAlreadySubscribedError(error)) {
+          setActionError(EXISTING_SUBSCRIPTION_RETRY_MESSAGE);
         } else {
           setActionError(
             toRevenueCatErrorMessage(error, "Could not complete the purchase."),
@@ -638,20 +960,46 @@ export function RevenueCatProvider({ children }) {
   const presentPremiumPaywall = async ({
     ifNeeded = true,
     offering = currentOffering,
+    checkExistingSubscription = false,
+    restoreExistingSubscription = false,
   } = {}) => {
     if (!hasConfiguredRef.current) return false;
-    if (!revenueCatSdk.uiAvailable || !revenueCatSdk.RevenueCatUI) {
-      if (isMountedRef.current) {
-        setActionError("The RevenueCat paywall could not be presented.");
-      }
-      return false;
-    }
 
     setIsPresentingPaywall(true);
     setActionError("");
     setActionMessage("");
 
     try {
+      if (checkExistingSubscription) {
+        const decision = await checkExistingSubscriptionBeforePaywall({
+          shouldRestore: restoreExistingSubscription,
+        });
+
+        if (decision.hasPremiumAccess) {
+          return true;
+        }
+
+        if (!decision.shouldPresentPaywall) {
+          return false;
+        }
+      } else {
+        const preparedState = await prepareSubscriptionAccess();
+        if (isPremiumActive(preparedState?.customerInfo)) {
+          if (isMountedRef.current) {
+            setActionError("");
+            setActionMessage(EXISTING_SUBSCRIPTION_RESTORED_MESSAGE);
+          }
+          return true;
+        }
+      }
+
+      if (!revenueCatSdk.uiAvailable || !revenueCatSdk.RevenueCatUI) {
+        if (isMountedRef.current) {
+          setActionError("The RevenueCat paywall could not be presented.");
+        }
+        return false;
+      }
+
       const options = offering ? { offering } : {};
       const paywallResult = ifNeeded
         ? await revenueCatSdk.RevenueCatUI.presentPaywallIfNeeded({
@@ -664,8 +1012,12 @@ export function RevenueCatProvider({ children }) {
         paywallResult === revenueCatSdk.PAYWALL_RESULT.PURCHASED ||
         paywallResult === revenueCatSdk.PAYWALL_RESULT.RESTORED
       ) {
-        const nextCustomerInfo =
-          await revenueCatSdk.Purchases.getCustomerInfo();
+        const nextCustomerState = await refreshState({
+          silent: true,
+          invalidateCustomerInfo: true,
+          syncPurchases: paywallResult === revenueCatSdk.PAYWALL_RESULT.RESTORED,
+        });
+        const nextCustomerInfo = nextCustomerState?.customerInfo ?? null;
         if (isMountedRef.current) {
           setCustomerInfo(nextCustomerInfo);
           setActionMessage(
@@ -674,30 +1026,39 @@ export function RevenueCatProvider({ children }) {
               : "Purchases restored.",
           );
         }
-        await refreshState({ silent: true });
-        return true;
+        return isPremiumActive(nextCustomerInfo);
       }
 
       if (
         paywallResult === revenueCatSdk.PAYWALL_RESULT.NOT_PRESENTED &&
         ifNeeded
       ) {
-        const nextCustomerInfo =
-          await revenueCatSdk.Purchases.getCustomerInfo();
+        const nextCustomerState = await refreshState({
+          silent: true,
+          invalidateCustomerInfo: true,
+          syncPurchases: true,
+        });
+        const nextCustomerInfo = nextCustomerState?.customerInfo ?? null;
         const alreadyPremium = isPremiumActive(nextCustomerInfo);
         if (isMountedRef.current) {
           setCustomerInfo(nextCustomerInfo);
           if (alreadyPremium) {
-            setActionMessage("Suppro Premium is already active.");
+            setActionMessage(EXISTING_SUBSCRIPTION_RESTORED_MESSAGE);
           }
         }
-        await refreshState({ silent: true });
         return alreadyPremium;
+      }
+
+      if (paywallResult === revenueCatSdk.PAYWALL_RESULT.ERROR) {
+        const recoveryResult = await recoverExistingSubscription();
+        if (recoveryResult.hasPremiumAccess) {
+          return true;
+        }
       }
 
       if (isMountedRef.current) {
         if (paywallResult === revenueCatSdk.PAYWALL_RESULT.CANCELLED) {
-          setActionMessage("Paywall dismissed.");
+          setActionMessage("Purchase cancelled.");
         } else if (paywallResult === revenueCatSdk.PAYWALL_RESULT.ERROR) {
           setActionError("The RevenueCat paywall could not be presented.");
         }
@@ -705,6 +1066,13 @@ export function RevenueCatProvider({ children }) {
 
       return false;
     } catch (error) {
+      if (!isPurchaseCancelled(error)) {
+        const recoveryResult = await recoverExistingSubscription();
+        if (recoveryResult.hasPremiumAccess) {
+          return true;
+        }
+      }
+
       if (isMountedRef.current) {
         setActionError(
           toRevenueCatErrorMessage(error, "Could not present the paywall."),

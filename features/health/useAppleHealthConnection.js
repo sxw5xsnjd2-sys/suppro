@@ -8,11 +8,24 @@ import {
 } from "./appleHealth";
 import { APPLE_HEALTH_ENTRY_SOURCE } from "./metricDefinitions";
 import { useHealthStore } from "./store";
+import { hasRequestedOnboardingAppleHealthConnect } from "@src/lib/onboarding";
 
+export const APPLE_HEALTH_TITLE = "Apple Health";
+export const APPLE_HEALTH_SETTINGS_SUBTITLE =
+  "Connect Apple Health to help personalise your supplement insights.";
+export const APPLE_HEALTH_CONNECTION_DESCRIPTION =
+  "Suppro can read selected health and fitness data from the Apple Health app, with your permission.";
+export const APPLE_HEALTH_PRE_PERMISSION_TITLE = "Connect Apple Health";
+export const APPLE_HEALTH_PRE_PERMISSION_BODY =
+  "Suppro uses Apple Health data, such as activity and body measurements where available, to help personalise your insights. You can choose what to share and change permissions anytime in the Health app.";
 export const APPLE_HEALTH_UNAVAILABLE_MESSAGE =
   "Apple Health is unavailable on this device or in this build. Use a physical iPhone build of Suppro and make sure Health access is enabled.";
 export const APPLE_HEALTH_NO_DATA_MESSAGE =
   "No Apple Health data was imported. Open Settings > Apple Health > Suppro and turn on all permissions, then try again.";
+
+export function getAppleHealthConnectionStatusLabel(isConnected) {
+  return isConnected ? "Connected" : "Not connected";
+}
 
 function toLocalISODate(dateLike) {
   const parsed = new Date(dateLike);
@@ -69,6 +82,105 @@ export function formatAppleHealthError(error) {
   return message;
 }
 
+function hasLinkedAppleHealthState(state) {
+  return Object.values(state?.sourceSettings ?? {}).includes(
+    APPLE_HEALTH_ENTRY_SOURCE
+  );
+}
+
+async function syncAppleHealthIntoStore({
+  withPermissionPrompt = false,
+  suppressErrors = false,
+} = {}) {
+  const state = useHealthStore.getState();
+  const wasLinked = hasLinkedAppleHealthState(state);
+
+  state.setConnection("connecting");
+
+  try {
+    if (withPermissionPrompt) {
+      await requestAppleHealthPermissions();
+    }
+
+    const sinceDate = getAppleHealthSyncStartDate(state.lastSyncedAt);
+    const normalizedSinceDate = toLocalISODate(sinceDate);
+    const syncResult = await syncAppleHealth({ since: sinceDate });
+
+    if (
+      withPermissionPrompt &&
+      !wasLinked &&
+      (syncResult?.entries?.length ?? 0) === 0
+    ) {
+      throw new Error(APPLE_HEALTH_NO_DATA_MESSAGE);
+    }
+
+    useHealthStore.getState().mergeAppleHealthEntries({
+      ...syncResult,
+      sinceDate: normalizedSinceDate,
+    });
+
+    return {
+      synced: true,
+      error: "",
+    };
+  } catch (error) {
+    const message = formatAppleHealthError(error);
+
+    if (suppressErrors) {
+      useHealthStore.getState().setConnection(
+        wasLinked ? "connected" : "disconnected"
+      );
+    } else {
+      useHealthStore.getState().setConnection("error", message);
+    }
+
+    return {
+      synced: false,
+      error: message,
+    };
+  }
+}
+
+export async function syncAppleHealthAfterAuthentication() {
+  if (Platform.OS !== "ios") {
+    return {
+      synced: false,
+      skipped: true,
+      reason: "not_ios",
+    };
+  }
+
+  const currentState = useHealthStore.getState();
+  const shouldSync =
+    (await hasRequestedOnboardingAppleHealthConnect()) ||
+    currentState.connection === "connected" ||
+    hasLinkedAppleHealthState(currentState);
+
+  if (!shouldSync) {
+    return {
+      synced: false,
+      skipped: true,
+      reason: "not_requested",
+    };
+  }
+
+  const available = await isAppleHealthAvailable();
+  if (!available) {
+    useHealthStore.getState().setConnection(
+      currentState.connection === "connected" || hasLinkedAppleHealthState(currentState)
+        ? "connected"
+        : "disconnected"
+    );
+    return {
+      synced: false,
+      skipped: true,
+      reason: "unavailable",
+    };
+  }
+
+  return syncAppleHealthIntoStore({ suppressErrors: true });
+}
+
 export function useAppleHealthConnection({ showAlerts = true } = {}) {
   const connection = useHealthStore((state) => state.connection);
   const connectionError = useHealthStore((state) => state.connectionError);
@@ -77,9 +189,6 @@ export function useAppleHealthConnection({ showAlerts = true } = {}) {
   const setConnection = useHealthStore((state) => state.setConnection);
   const disconnectAppleHealth = useHealthStore(
     (state) => state.disconnectAppleHealth
-  );
-  const mergeAppleHealthEntries = useHealthStore(
-    (state) => state.mergeAppleHealthEntries
   );
 
   const isIOS = Platform.OS === "ios";
@@ -107,47 +216,15 @@ export function useAppleHealthConnection({ showAlerts = true } = {}) {
   const syncFromAppleHealth = useCallback(
     async ({ withPermissionPrompt = false } = {}) => {
       setIsSyncing(true);
-      setConnection("connecting");
+      const result = await syncAppleHealthIntoStore({ withPermissionPrompt });
 
-      try {
-        if (withPermissionPrompt) {
-          await requestAppleHealthPermissions();
-        }
-
-        const sinceDate = getAppleHealthSyncStartDate(lastSyncedAt);
-        const normalizedSinceDate = toLocalISODate(sinceDate);
-        const syncResult = await syncAppleHealth({ since: sinceDate });
-
-        if (
-          withPermissionPrompt &&
-          !isAppleHealthConnected &&
-          (syncResult?.entries?.length ?? 0) === 0
-        ) {
-          throw new Error(APPLE_HEALTH_NO_DATA_MESSAGE);
-        }
-
-        mergeAppleHealthEntries({
-          ...syncResult,
-          sinceDate: normalizedSinceDate,
-        });
-      } catch (error) {
-        const message = formatAppleHealthError(error);
-        setConnection("error", message);
-
-        if (showAlerts) {
-          Alert.alert("Apple Health", message);
-        }
-      } finally {
-        setIsSyncing(false);
+      if (!result.synced && showAlerts) {
+        Alert.alert("Apple Health", result.error);
       }
+
+      setIsSyncing(false);
     },
-    [
-      isAppleHealthConnected,
-      lastSyncedAt,
-      mergeAppleHealthEntries,
-      setConnection,
-      showAlerts,
-    ]
+    [showAlerts]
   );
 
   const reconnectAppleHealth = useCallback(async () => {

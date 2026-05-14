@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Pressable,
   StyleSheet,
   Text,
@@ -29,7 +30,11 @@ import {
   FullMetricCard,
   HalfMetricCard,
 } from "@/features/health/components/HealthInlineMetricCard";
-import { useAppleHealthConnection } from "@/features/health/useAppleHealthConnection";
+import {
+  APPLE_HEALTH_PRE_PERMISSION_BODY,
+  APPLE_HEALTH_PRE_PERMISSION_TITLE,
+  useAppleHealthConnection,
+} from "@/features/health/useAppleHealthConnection";
 
 const AUTO_REFRESH_STALE_MS = 60 * 60 * 1000;
 
@@ -96,12 +101,12 @@ function buildDisplayRows(enabledMetrics) {
 function AppleHealthPill({ isConnected, isSyncing, onPress }) {
   let label, bg, textColor, iconColor;
   if (isSyncing) {
-    label = "Sync Apple Health";
+    label = "Syncing Apple Health";
     bg = colors.background.shell;
     textColor = colors.text.muted;
     iconColor = colors.text.muted;
   } else if (isConnected) {
-    label = "Apple Health connected";
+    label = "Manage Apple Health";
     bg = "#E3F5E9";
     textColor = "#1A7A38";
     iconColor = "#34C759";
@@ -333,7 +338,20 @@ export default function HealthScreen() {
                     router.push("/connections");
                     return;
                   }
-                  reconnectAppleHealth();
+
+                  Alert.alert(
+                    APPLE_HEALTH_PRE_PERMISSION_TITLE,
+                    APPLE_HEALTH_PRE_PERMISSION_BODY,
+                    [
+                      { text: "Not now", style: "cancel" },
+                      {
+                        text: "Continue",
+                        onPress: () => {
+                          reconnectAppleHealth();
+                        },
+                      },
+                    ]
+                  );
                 }}
               />
             )}

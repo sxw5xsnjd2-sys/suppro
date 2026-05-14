@@ -11,6 +11,10 @@ export const ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY =
   "suppro.onboarding.premiumCompleted.v1";
 export const ONBOARDING_RATING_COMPLETED_STORAGE_KEY =
   "suppro.onboarding.ratingCompleted.v1";
+export const ONBOARDING_APPLE_HEALTH_COMPLETED_STORAGE_KEY =
+  "suppro.onboarding.appleHealthCompleted.v1";
+export const ONBOARDING_APPLE_HEALTH_CONNECT_REQUESTED_STORAGE_KEY =
+  "suppro.onboarding.appleHealthConnectRequested.v1";
 export const ONBOARDING_RATING_REVIEW_ATTEMPTED_STORAGE_KEY =
   "suppro.onboarding.ratingReviewAttempted.v1";
 const ACCOUNT_SETUP_COMPLETIONS_TABLE = "account_setup_completions";
@@ -116,6 +120,21 @@ export async function hasCompletedOnboardingRating() {
   );
 }
 
+export async function hasCompletedOnboardingAppleHealth() {
+  return (
+    (await AsyncStorage.getItem(ONBOARDING_APPLE_HEALTH_COMPLETED_STORAGE_KEY)) ===
+    "true"
+  );
+}
+
+export async function hasRequestedOnboardingAppleHealthConnect() {
+  return (
+    (await AsyncStorage.getItem(
+      ONBOARDING_APPLE_HEALTH_CONNECT_REQUESTED_STORAGE_KEY
+    )) === "true"
+  );
+}
+
 export async function markOnboardingRatingComplete() {
   await AsyncStorage.setItem(ONBOARDING_RATING_COMPLETED_STORAGE_KEY, "true");
   notifyOnboardingGateChange();
@@ -124,6 +143,26 @@ export async function markOnboardingRatingComplete() {
 export async function clearOnboardingRatingComplete() {
   await AsyncStorage.removeItem(ONBOARDING_RATING_COMPLETED_STORAGE_KEY);
   notifyOnboardingGateChange();
+}
+
+export async function markOnboardingAppleHealthComplete() {
+  await AsyncStorage.setItem(
+    ONBOARDING_APPLE_HEALTH_COMPLETED_STORAGE_KEY,
+    "true"
+  );
+  notifyOnboardingGateChange();
+}
+
+export async function clearOnboardingAppleHealthComplete() {
+  await AsyncStorage.removeItem(ONBOARDING_APPLE_HEALTH_COMPLETED_STORAGE_KEY);
+  notifyOnboardingGateChange();
+}
+
+export async function markOnboardingAppleHealthConnectRequested() {
+  await AsyncStorage.setItem(
+    ONBOARDING_APPLE_HEALTH_CONNECT_REQUESTED_STORAGE_KEY,
+    "true"
+  );
 }
 
 export async function hasAttemptedOnboardingRatingReview() {
@@ -155,6 +194,7 @@ export function resolveLoggedOutOnboardingGateState({
   hasCompletedQuestionnaire,
   signupCompleted,
   hasCompletedOnboardingRating,
+  hasCompletedOnboardingAppleHealth,
   hasCompletedOnboardingPremium,
 }) {
   if (signupCompleted) {
@@ -167,6 +207,10 @@ export function resolveLoggedOutOnboardingGateState({
 
   if (!hasCompletedOnboardingRating) {
     return "needs_rating";
+  }
+
+  if (!hasCompletedOnboardingAppleHealth) {
+    return "needs_apple_health";
   }
 
   if (!hasCompletedOnboardingPremium) {
@@ -194,6 +238,10 @@ export function shouldRouteThroughOnboardingRatingStep({
     typeof origin === "string" &&
     origin.trim()
   );
+}
+
+export function resolvePostAppleHealthOnboardingHref({ mode = "first_run" } = {}) {
+  return `/onboarding?mode=${normalizeOnboardingMode(mode)}&step=paywall`;
 }
 
 async function hasCompletedAccountSetup(userId) {
@@ -246,6 +294,7 @@ export async function getOnboardingGateState() {
     hasCompletedQuestionnaire: Boolean(answers?.completedAt),
     signupCompleted: signupCompleted === "true",
     hasCompletedOnboardingRating: await hasCompletedOnboardingRating(),
+    hasCompletedOnboardingAppleHealth: await hasCompletedOnboardingAppleHealth(),
     hasCompletedOnboardingPremium: await hasCompletedOnboardingPremium(),
   });
 

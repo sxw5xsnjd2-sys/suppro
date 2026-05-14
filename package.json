@@ -8,7 +8,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:functions": "node --test scripts/lib/edgeAuthPolicy.test.mjs scripts/lib/lookupAppleAccountPolicy.test.mjs scripts/lib/aiSupplementPolicy.test.mjs scripts/lib/scanSupplementPhotosPolicy.test.mjs scripts/lib/enrichProductImagePolicy.test.mjs scripts/lib/edgeFunctionQuotaPolicy.test.mjs scripts/lib/scanSupplementPhotos.test.mjs scripts/lib/buildLinkedSupplementPayload.test.mjs scripts/lib/researchPendingSupplements.test.mjs"
+    "test:functions": "node --test scripts/lib/edgeAuthPolicy.test.mjs scripts/lib/lookupAppleAccountPolicy.test.mjs scripts/lib/aiSupplementPolicy.test.mjs scripts/lib/scanSupplementPhotosPolicy.test.mjs scripts/lib/enrichProductImagePolicy.test.mjs scripts/lib/edgeFunctionQuotaPolicy.test.mjs scripts/lib/scanSupplementPhotos.test.mjs scripts/lib/buildLinkedSupplementPayload.test.mjs scripts/lib/researchPendingSupplements.test.mjs scripts/lib/subscriptionAccess.test.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/exo": "^0.4.2",

@@ -11,9 +11,15 @@ import {
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
-import { AppButton, AppHeader } from "@/components/common/ui";
+import { AppButton, AppHeader, PrimaryCard } from "@/components/common/ui";
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
+import {
+  APPLE_HEALTH_SETTINGS_SUBTITLE,
+  APPLE_HEALTH_TITLE,
+  getAppleHealthConnectionStatusLabel,
+  useAppleHealthConnection,
+} from "@/features/health/useAppleHealthConnection";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import ConnectionsIcon from "@/assets/icons/profile/connections.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
@@ -164,6 +170,12 @@ function goBackOrFallback() {
 
 export default function SettingsScreen() {
   const { openManageSubscription, restorePurchases } = useRevenueCat();
+  const { isAppleHealthConnected } = useAppleHealthConnection({
+    showAlerts: false,
+  });
+  const appleHealthStatus = getAppleHealthConnectionStatusLabel(
+    isAppleHealthConnected,
+  );
 
   const settingsSections = [
     {
@@ -324,6 +336,29 @@ export default function SettingsScreen() {
             ))}
           </React.Fragment>
         ))}
+        <View style={styles.divider} />
+        <Text style={styles.sectionLabel}>Integrations</Text>
+        <PrimaryCard
+          onPress={() => router.push("/connections")}
+          style={styles.appleHealthCard}
+        >
+          <View style={styles.appleHealthHeaderRow}>
+            <View style={styles.appleHealthCopy}>
+              <Text style={styles.appleHealthTitle}>{APPLE_HEALTH_TITLE}</Text>
+              <Text style={styles.appleHealthStatus}>
+                Status: {appleHealthStatus}
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={appTheme.colors.textSecondary}
+            />
+          </View>
+          <Text style={styles.appleHealthDescription}>
+            {APPLE_HEALTH_SETTINGS_SUBTITLE}
+          </Text>
+        </PrimaryCard>
       </View>
     </BackdropScreen>
   );
@@ -391,5 +426,47 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textStrong,
+  },
+  appleHealthCard: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    gap: 10,
+  },
+  appleHealthEyebrow: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  appleHealthHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+  },
+  appleHealthCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  appleHealthTitle: {
+    fontSize: 18,
+    lineHeight: 22,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textPrimary,
+  },
+  appleHealthStatus: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  appleHealthDescription: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
   },
 });

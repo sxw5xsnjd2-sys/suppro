@@ -18,6 +18,7 @@ return {
   getSubscriptionRouteAccessPolicy,
   resolveRevenueCatAccessState,
   resolveOriginAppPaywallAction,
+  resolveOnboardingPaywallViewState,
   resolveRevenueCatIdentityAction,
   resolveBackNavigationAction,
 };`
@@ -65,7 +66,7 @@ function loadRevenueCatProviderHelpers({
     "utf8"
   );
 
-  const start = source.indexOf("function getRevenueCatAppUserId");
+  const start = source.indexOf("const SUBSCRIPTION_STATUS_CHECK_ERROR_MESSAGE");
   const end = source.indexOf("export function RevenueCatProvider");
   const helperSource = source.slice(start, end);
 
@@ -76,6 +77,7 @@ function loadRevenueCatProviderHelpers({
     "getRevenueCatSdk",
     `${helperSource}
 return {
+  SUBSCRIPTION_STATUS_CHECK_ERROR_MESSAGE,
   getPremiumEntitlement,
   isPremiumActive,
   findYearlyPackage,
@@ -83,7 +85,10 @@ return {
   getOfferingByIdentifier,
   resolvePaywallOffering,
   isPurchaseCancelled,
+  isAlreadySubscribedError,
+  resolveRecoveredPurchaseResult,
   resolveRestorePurchasesResult,
+  resolveExistingSubscriptionCheckResult,
 };`
   );
 
@@ -354,6 +359,126 @@ test("origin=app paywall presents paywall when offering is available", () => {
   );
 });
 
+test("active entitlement skips the onboarding paywall purchase CTA", () => {
+  const { resolveOnboardingPaywallViewState } = loadSubscriptionAccessModule();
+
+  const viewState = resolveOnboardingPaywallViewState({
+    hasActiveAccess: true,
+    isReady: true,
+    isLoading: false,
+    hasCurrentOffering: true,
+  });
+
+  assert.equal(viewState.status, "active");
+  assert.equal(viewState.shouldAutoContinue, true);
+  assert.equal(viewState.showPurchaseButton, false);
+  assert.equal(viewState.showActivity, false);
+});
+
+test("inactive entitlement shows the onboarding paywall once access is resolved", () => {
+  const { resolveOnboardingPaywallViewState } = loadSubscriptionAccessModule();
+
+  const viewState = resolveOnboardingPaywallViewState({
+    hasActiveAccess: false,
+    isReady: true,
+    isLoading: false,
+    hasCurrentOffering: true,
+  });
+
+  assert.equal(viewState.status, "ready_to_purchase");
+  assert.equal(viewState.showPurchaseButton, true);
+  assert.equal(viewState.showRestoreButton, true);
+  assert.equal(viewState.showActivity, false);
+});
+
+test("existing active entitlement skips RevenueCat paywall before onboarding presentation", () => {
+  const { resolveExistingSubscriptionCheckResult } =
+    loadRevenueCatProviderHelpers();
+
+  const result = resolveExistingSubscriptionCheckResult({
+    preparedCustomerInfo: {
+      entitlements: {
+        active: {
+          "Suppro Premium": { productIdentifier: "yearly" },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.logKey, "existing_subscription_found_skip_paywall");
+  assert.equal(result.hasPremiumAccess, true);
+  assert.equal(result.shouldPresentPaywall, false);
+});
+
+test("restorePurchases returning active entitlement skips RevenueCat paywall", () => {
+  const { resolveExistingSubscriptionCheckResult } =
+    loadRevenueCatProviderHelpers();
+
+  const result = resolveExistingSubscriptionCheckResult({
+    preparedCustomerInfo: { entitlements: { active: {} } },
+    restoredCustomerInfo: {
+      entitlements: {
+        active: {
+          "Suppro Premium": { productIdentifier: "yearly" },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.logKey, "existing_subscription_found_skip_paywall");
+  assert.equal(result.hasPremiumAccess, true);
+  assert.equal(result.shouldPresentPaywall, false);
+});
+
+test("inactive entitlement presents RevenueCat paywall after restore-aware check", () => {
+  const { resolveExistingSubscriptionCheckResult } =
+    loadRevenueCatProviderHelpers();
+
+  const result = resolveExistingSubscriptionCheckResult({
+    preparedCustomerInfo: { entitlements: { active: {} } },
+    restoredCustomerInfo: { entitlements: { active: {} } },
+  });
+
+  assert.equal(result.logKey, "no_existing_subscription_present_paywall");
+  assert.equal(result.hasPremiumAccess, false);
+  assert.equal(result.shouldPresentPaywall, true);
+});
+
+test("RevenueCat failure shows non-paywall retry error only", () => {
+  const {
+    SUBSCRIPTION_STATUS_CHECK_ERROR_MESSAGE,
+    resolveExistingSubscriptionCheckResult,
+  } = loadRevenueCatProviderHelpers();
+
+  const result = resolveExistingSubscriptionCheckResult({
+    error: new Error("RevenueCat failed to initialize."),
+  });
+
+  assert.equal(result.logKey, "subscription_check_failed");
+  assert.equal(result.hasPremiumAccess, false);
+  assert.equal(result.shouldPresentPaywall, false);
+  assert.equal(
+    result.errorMessage,
+    SUBSCRIPTION_STATUS_CHECK_ERROR_MESSAGE,
+  );
+});
+
+test("no fallback or custom paywall UI remains in onboarding screen", () => {
+  const source = readFileSync(
+    new URL("../../src/features/onboarding/OnboardingPaywallScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.equal(source.includes("PrimaryCard"), false);
+  assert.equal(source.includes("Unable to load premium options"), false);
+  assert.equal(source.includes("Restore purchases"), false);
+  assert.equal(source.includes("Check access before starting a new subscription"), false);
+  assert.equal(
+    source.includes("Unable to check subscription status. Please try again."),
+    true,
+  );
+});
+
 test("preferred offering chooses one with a yearly package over a current fallback", () => {
   const { findYearlyPackage, getPreferredOffering } =
     loadRevenueCatProviderHelpers();
@@ -561,6 +686,57 @@ test("restore result stays successful but reports no active entitlement when non
     message: "Restore completed, but no active Suppro Premium entitlement was found.",
     error: "",
   });
+});
+
+test("already subscribed purchase errors are treated as a restore path", () => {
+  const { isAlreadySubscribedError, resolveRecoveredPurchaseResult } =
+    loadRevenueCatProviderHelpers();
+  const customerInfo = {
+    entitlements: {
+      active: {
+        "Suppro Premium": { productIdentifier: "yearly" },
+      },
+    },
+  };
+
+  assert.equal(
+    isAlreadySubscribedError({
+      message:
+        "You're currently subscribed to this subscription and it renews on May 15, 2026.",
+    }),
+    true,
+  );
+  assert.deepEqual(resolveRecoveredPurchaseResult(customerInfo), {
+    didRecover: true,
+    hasPremiumAccess: true,
+    message: "Subscription already active — premium restored.",
+    error: "",
+  });
+});
+
+test("onboarding paywall spinner clears after cancellation and failure states", () => {
+  const { resolveOnboardingPaywallViewState } = loadSubscriptionAccessModule();
+
+  const cancelledView = resolveOnboardingPaywallViewState({
+    hasActiveAccess: false,
+    isReady: true,
+    isLoading: false,
+    isPresentingPaywall: false,
+    isRestoring: false,
+    hasCurrentOffering: true,
+  });
+  const failedView = resolveOnboardingPaywallViewState({
+    hasActiveAccess: false,
+    isReady: true,
+    isLoading: false,
+    configurationError: "RevenueCat failed to initialize.",
+    hasCurrentOffering: true,
+  });
+
+  assert.equal(cancelledView.showActivity, false);
+  assert.equal(cancelledView.showPurchaseButton, true);
+  assert.equal(failedView.showActivity, false);
+  assert.equal(failedView.showRetryButton, true);
 });
 
 test("cancelled purchase detection matches RevenueCat cancellation signals", () => {
