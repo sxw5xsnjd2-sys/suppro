@@ -6,5 +6,6 @@
       "@src/*": ["src/*"]
     }
   },
-  "include": ["**/*.js", "**/*.jsx"]
+  "include": ["**/*.js", "**/*.jsx"],
+  "exclude": ["node_modules", "dist", ".expo", "ios", "android"]
 }

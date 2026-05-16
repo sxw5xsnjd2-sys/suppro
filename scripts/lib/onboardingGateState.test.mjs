@@ -255,6 +255,19 @@ test("Apple Health skipped does not mark signup complete or premium complete in 
   assert.equal(source.includes("/login?mode=login"), false);
 });
 
+test("Apple Health screen stays lightweight and routes directly to paywall", () => {
+  const source = readFileSync(
+    new URL("../../src/features/onboarding/OnboardingAppleHealthScreen.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.equal(source.includes('"/onboarding?mode=first_run&step=paywall"'), true);
+  assert.equal(source.includes("useAppleHealthConnection"), false);
+  assert.equal(source.includes("useLocalSearchParams"), false);
+  assert.equal(source.includes("react-native-health"), false);
+  assert.equal(source.includes("apple-health-logo.png"), false);
+});
+
 test("paywall-complete first-run without account stays on create-account", async () => {
   const asyncStorage = createAsyncStorage({
     "suppro.onboarding.questionnaire.v1": JSON.stringify({

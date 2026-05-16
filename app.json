@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "suppro",
+    "name": "Suppro",
     "slug": "suppro",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -49,7 +49,7 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true
+      "reactCompiler": false
     },
     "extra": {
       "router": {},

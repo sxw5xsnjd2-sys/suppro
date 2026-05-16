@@ -6,8 +6,8 @@ import {
   OnboardingShell,
   QuestionHero,
   onboardingV6,
-} from "./v6Primitives";
-import AppleHealthLogoAsset from "@/assets/icons/apple-health-logo-1.png";
+} from "../src/features/onboarding/v6Primitives";
+import AppleHealthLogoAsset from "@/assets/icons/apple-health-logo.png";
 import {
   markOnboardingAppleHealthComplete,
   markOnboardingAppleHealthConnectRequested,
