@@ -20,6 +20,7 @@ import {
   getAppleHealthConnectionStatusLabel,
   useAppleHealthConnection,
 } from "@/features/health/useAppleHealthConnection";
+import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 
 import AppleHealthLogoAsset from "@/assets/icons/apple-health-logo.png";
 
@@ -40,7 +41,6 @@ export default function ConnectionsScreen() {
     connection,
     connectionError,
     lastSyncedAt,
-    isIOS,
     isSyncing,
     isAppleHealthReady,
     hasCheckedAppleHealthAvailability,
@@ -52,11 +52,12 @@ export default function ConnectionsScreen() {
   const appleHealthStatus = getAppleHealthConnectionStatusLabel(
     isAppleHealthConnected,
   );
+  const showsAppleHealthConnection = IS_APPLE_HEALTH_SUPPORTED_PLATFORM;
 
   let helperText = `Last sync ${formatLastSynced(lastSyncedAt)}.`;
   if (!hasCheckedAppleHealthAvailability) {
     helperText = "Checking Apple Health availability...";
-  } else if (!isIOS || !isAppleHealthReady) {
+  } else if (!showsAppleHealthConnection || !isAppleHealthReady) {
     helperText = APPLE_HEALTH_UNAVAILABLE_MESSAGE;
   } else if (!isAppleHealthConnected) {
     helperText =
@@ -124,9 +125,11 @@ export default function ConnectionsScreen() {
           title="CONNECTIONS"
           titleStyle={styles.headerTitle}
           bottomSlot={
-            <Text style={styles.headerSubtitle}>
-              Manage Apple Health
-            </Text>
+            showsAppleHealthConnection ? (
+              <Text style={styles.headerSubtitle}>
+                Manage Apple Health
+              </Text>
+            ) : undefined
           }
           bottomSlotStyle={styles.headerBottom}
         />
@@ -134,61 +137,73 @@ export default function ConnectionsScreen() {
       bottomInsetOffset={96}
       minBottomPadding={120}
     >
-      <PrimaryCard style={styles.appleHealthCard}>
-        <View style={styles.appleHealthRow}>
-          <AppleHealthLogo />
-          <View style={styles.appleHealthContent}>
-            <View style={styles.appleHealthTitleRow}>
-              <View style={styles.appleHealthTitleGroup}>
-                <Text style={styles.appleHealthTitle}>{APPLE_HEALTH_TITLE}</Text>
-                <Text style={styles.appleHealthStatus}>
-                  Status: {appleHealthStatus}
-                </Text>
-              </View>
-              <Switch
-                value={isAppleHealthConnected}
-                onValueChange={handleAppleHealthToggle}
-                disabled={isSyncing || !isIOS || !hasCheckedAppleHealthAvailability}
-                trackColor={{ false: "#D9D4CF", true: "#3D8CE8" }}
-                thumbColor="#FFFFFF"
-                ios_backgroundColor="#D9D4CF"
-                style={styles.appleHealthSwitch}
-              />
-            </View>
-            {!isAppleHealthConnected ? (
-              <Text style={styles.appleHealthDescription}>
-                {APPLE_HEALTH_SETTINGS_SUBTITLE}
-              </Text>
-            ) : null}
-            {isAppleHealthConnected ? (
-              <View style={styles.syncRow}>
-                <Text style={[styles.appleHealthBody, styles.syncText]}>
-                  {helperText}
-                </Text>
-                <AppButton
-                  label={isSyncing ? "Refreshing..." : "Refresh"}
-                  variant="overlay"
-                  size="sm"
-                  onPress={refreshAppleHealth}
-                  disabled={isSyncing}
-                  textStyle={styles.secondaryButtonText}
-                  style={styles.refreshButton}
+      {showsAppleHealthConnection ? (
+        <PrimaryCard style={styles.appleHealthCard}>
+          <View style={styles.appleHealthRow}>
+            <AppleHealthLogo />
+            <View style={styles.appleHealthContent}>
+              <View style={styles.appleHealthTitleRow}>
+                <View style={styles.appleHealthTitleGroup}>
+                  <Text style={styles.appleHealthTitle}>{APPLE_HEALTH_TITLE}</Text>
+                  <Text style={styles.appleHealthStatus}>
+                    Status: {appleHealthStatus}
+                  </Text>
+                </View>
+                <Switch
+                  value={isAppleHealthConnected}
+                  onValueChange={handleAppleHealthToggle}
+                  disabled={
+                    isSyncing ||
+                    !showsAppleHealthConnection ||
+                    !hasCheckedAppleHealthAvailability
+                  }
+                  trackColor={{ false: "#D9D4CF", true: "#3D8CE8" }}
+                  thumbColor="#FFFFFF"
+                  ios_backgroundColor="#D9D4CF"
+                  style={styles.appleHealthSwitch}
                 />
               </View>
-            ) : (
-              <Text style={styles.appleHealthBody}>{helperText}</Text>
-            )}
+              {!isAppleHealthConnected ? (
+                <Text style={styles.appleHealthDescription}>
+                  {APPLE_HEALTH_SETTINGS_SUBTITLE}
+                </Text>
+              ) : null}
+              {isAppleHealthConnected ? (
+                <View style={styles.syncRow}>
+                  <Text style={[styles.appleHealthBody, styles.syncText]}>
+                    {helperText}
+                  </Text>
+                  <AppButton
+                    label={isSyncing ? "Refreshing..." : "Refresh"}
+                    variant="overlay"
+                    size="sm"
+                    onPress={refreshAppleHealth}
+                    disabled={isSyncing}
+                    textStyle={styles.secondaryButtonText}
+                    style={styles.refreshButton}
+                  />
+                </View>
+              ) : (
+                <Text style={styles.appleHealthBody}>{helperText}</Text>
+              )}
+            </View>
           </View>
-        </View>
-        {!isAppleHealthConnected &&
-        connection === "error" &&
-        connectionError === APPLE_HEALTH_NO_DATA_MESSAGE ? (
-          <Text style={styles.appleHealthNote}>
-            Follow this path on your iPhone: Settings &gt; Apple Health &gt;
-            {" "}Suppro &gt; Turn On All.
+          {!isAppleHealthConnected &&
+          connection === "error" &&
+          connectionError === APPLE_HEALTH_NO_DATA_MESSAGE ? (
+            <Text style={styles.appleHealthNote}>
+              Follow this path on your iPhone: Settings &gt; Apple Health &gt;
+              {" "}Suppro &gt; Turn On All.
+            </Text>
+          ) : null}
+        </PrimaryCard>
+      ) : (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateText}>
+            No connections are available on this device.
           </Text>
-        ) : null}
-      </PrimaryCard>
+        </View>
+      )}
     </BackdropScreen>
   );
 }
@@ -202,6 +217,16 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     fontSize: 14,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
+  },
+  emptyState: {
+    paddingHorizontal: 8,
+    paddingVertical: 12,
+  },
+  emptyStateText: {
+    fontSize: 15,
+    lineHeight: 22,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
   },

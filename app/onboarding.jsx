@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { BackHandler } from "react-native";
 import { Redirect, Stack, useLocalSearchParams } from "expo-router";
+import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import QuestionnaireScreen from "@src/features/onboarding/QuestionnaireScreen";
 
 function OnboardingPaywallStep() {
@@ -74,7 +75,11 @@ export default function OnboardingScreen() {
         <Stack.Screen
           options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
         />
-        <OnboardingAppleHealthStep />
+        {IS_APPLE_HEALTH_SUPPORTED_PLATFORM ? (
+          <OnboardingAppleHealthStep />
+        ) : (
+          <Redirect href={`/onboarding?mode=${mode}&step=paywall`} />
+        )}
       </>
     );
   }

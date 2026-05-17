@@ -38,6 +38,7 @@ import {
   PRESET_METRICS,
   PRESET_METRICS_BY_KEY,
 } from "@/features/health/metricDefinitions";
+import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import {
   SUPPLEMENT_SCHEDULE_PRESETS,
   buildScheduleFromPreset,
@@ -2013,7 +2014,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
           hasCompletedOnboardingRating: ratingCompleted,
         })
           ? "rating"
-          : appleHealthCompleted
+          : !IS_APPLE_HEALTH_SUPPORTED_PLATFORM || appleHealthCompleted
             ? "paywall"
             : "apple-health";
         router.replace(`/onboarding?mode=${draftMode}&step=${nextStep}`);
@@ -2028,7 +2029,10 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       ]);
     } catch (error) {
       console.error("Failed to route after onboarding helpers", error);
-      router.replace(`/onboarding?mode=${draftMode}&step=apple-health`);
+      const fallbackStep = IS_APPLE_HEALTH_SUPPORTED_PLATFORM
+        ? "apple-health"
+        : "paywall";
+      router.replace(`/onboarding?mode=${draftMode}&step=${fallbackStep}`);
     }
   }, [draftMode, standalone]);
 

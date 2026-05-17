@@ -196,6 +196,7 @@ export function resolveLoggedOutOnboardingGateState({
   hasCompletedOnboardingRating,
   hasCompletedOnboardingAppleHealth,
   hasCompletedOnboardingPremium,
+  requiresAppleHealthStep = true,
 }) {
   if (signupCompleted) {
     return "needs_login";
@@ -209,7 +210,7 @@ export function resolveLoggedOutOnboardingGateState({
     return "needs_rating";
   }
 
-  if (!hasCompletedOnboardingAppleHealth) {
+  if (requiresAppleHealthStep && !hasCompletedOnboardingAppleHealth) {
     return "needs_apple_health";
   }
 
@@ -264,7 +265,9 @@ async function hasCompletedAccountSetup(userId) {
   );
 }
 
-export async function getOnboardingGateState() {
+export async function getOnboardingGateState({
+  requiresAppleHealthStep = true,
+} = {}) {
   const { data } = await supabase.auth.getSession();
   const session = data?.session ?? null;
   const loggedIn = hasNonAnonymousSession(session);
@@ -296,13 +299,14 @@ export async function getOnboardingGateState() {
     hasCompletedOnboardingRating: await hasCompletedOnboardingRating(),
     hasCompletedOnboardingAppleHealth: await hasCompletedOnboardingAppleHealth(),
     hasCompletedOnboardingPremium: await hasCompletedOnboardingPremium(),
+    requiresAppleHealthStep,
   });
 
   return resolvedState;
 }
 
-export async function hasCompletedOnboarding() {
-  return (await getOnboardingGateState()) === "complete";
+export async function hasCompletedOnboarding(options = {}) {
+  return (await getOnboardingGateState(options)) === "complete";
 }
 
 export function parseNumericField(value) {

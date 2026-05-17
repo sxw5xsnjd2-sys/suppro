@@ -191,6 +191,27 @@ test("rating completion routes first-run onboarding to Apple Health before paywa
   });
 });
 
+test("rating completion on Android skips Apple Health and goes to paywall", async () => {
+  const asyncStorage = createAsyncStorage({
+    "suppro.onboarding.questionnaire.v1": JSON.stringify({
+      completedAt: "2026-05-06T10:00:00.000Z",
+    }),
+    "suppro.onboarding.ratingCompleted.v1": "true",
+  });
+
+  const { getOnboardingGateState } = loadOnboardingModule({
+    asyncStorage,
+    session: null,
+  });
+
+  await assert.doesNotReject(async () => {
+    const gateState = await getOnboardingGateState({
+      requiresAppleHealthStep: false,
+    });
+    assert.equal(gateState, "needs_paywall");
+  });
+});
+
 test("skipping Apple Health still reaches paywall", async () => {
   const asyncStorage = createAsyncStorage({
     "suppro.onboarding.questionnaire.v1": JSON.stringify({

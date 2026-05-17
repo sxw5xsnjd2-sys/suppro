@@ -20,6 +20,7 @@ import {
   getAppleHealthConnectionStatusLabel,
   useAppleHealthConnection,
 } from "@/features/health/useAppleHealthConnection";
+import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import ConnectionsIcon from "@/assets/icons/profile/connections.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
@@ -336,29 +337,33 @@ export default function SettingsScreen() {
             ))}
           </React.Fragment>
         ))}
-        <View style={styles.divider} />
-        <Text style={styles.sectionLabel}>Integrations</Text>
-        <PrimaryCard
-          onPress={() => router.push("/connections")}
-          style={styles.appleHealthCard}
-        >
-          <View style={styles.appleHealthHeaderRow}>
-            <View style={styles.appleHealthCopy}>
-              <Text style={styles.appleHealthTitle}>{APPLE_HEALTH_TITLE}</Text>
-              <Text style={styles.appleHealthStatus}>
-                Status: {appleHealthStatus}
+        {IS_APPLE_HEALTH_SUPPORTED_PLATFORM ? (
+          <>
+            <View style={styles.divider} />
+            <Text style={styles.sectionLabel}>Integrations</Text>
+            <PrimaryCard
+              onPress={() => router.push("/connections")}
+              style={styles.appleHealthCard}
+            >
+              <View style={styles.appleHealthHeaderRow}>
+                <View style={styles.appleHealthCopy}>
+                  <Text style={styles.appleHealthTitle}>{APPLE_HEALTH_TITLE}</Text>
+                  <Text style={styles.appleHealthStatus}>
+                    Status: {appleHealthStatus}
+                  </Text>
+                </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={appTheme.colors.textSecondary}
+                />
+              </View>
+              <Text style={styles.appleHealthDescription}>
+                {APPLE_HEALTH_SETTINGS_SUBTITLE}
               </Text>
-            </View>
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color={appTheme.colors.textSecondary}
-            />
-          </View>
-          <Text style={styles.appleHealthDescription}>
-            {APPLE_HEALTH_SETTINGS_SUBTITLE}
-          </Text>
-        </PrimaryCard>
+            </PrimaryCard>
+          </>
+        ) : null}
       </View>
     </BackdropScreen>
   );

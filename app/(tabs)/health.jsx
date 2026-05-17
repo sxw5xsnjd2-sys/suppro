@@ -35,6 +35,7 @@ import {
   APPLE_HEALTH_PRE_PERMISSION_TITLE,
   useAppleHealthConnection,
 } from "@/features/health/useAppleHealthConnection";
+import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 
 const AUTO_REFRESH_STALE_MS = 60 * 60 * 1000;
 
@@ -177,7 +178,6 @@ export default function HealthScreen() {
   const addEntry = useHealthStore((state) => state.addEntry);
 
   const {
-    isIOS,
     isSyncing,
     lastSyncedAt,
     isAppleHealthConnected,
@@ -263,13 +263,13 @@ export default function HealthScreen() {
   };
 
   useEffect(() => {
-    if (!isIOS || !isFocused || isSyncing) return;
+    if (!IS_APPLE_HEALTH_SUPPORTED_PLATFORM || !isFocused || isSyncing) return;
     if (!isAppleHealthConnected || !lastSyncedAt) return;
     const parsed = new Date(lastSyncedAt);
     if (Number.isNaN(parsed.getTime())) return;
     if (Date.now() - parsed.getTime() <= AUTO_REFRESH_STALE_MS) return;
     refreshAppleHealth();
-  }, [isAppleHealthConnected, isFocused, isIOS, isSyncing, lastSyncedAt, refreshAppleHealth]);
+  }, [isAppleHealthConnected, isFocused, isSyncing, lastSyncedAt, refreshAppleHealth]);
 
   if (!hasActiveAccess) {
     return <BackdropScreen scrollable={false} />;
@@ -329,7 +329,7 @@ export default function HealthScreen() {
         <View style={styles.feed}>
           <View style={styles.sectionRow}>
             <Text style={styles.sectionTitle}>Today</Text>
-            {isIOS && (
+            {IS_APPLE_HEALTH_SUPPORTED_PLATFORM && (
               <AppleHealthPill
                 isConnected={isAppleHealthConnected}
                 isSyncing={isSyncing}

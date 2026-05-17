@@ -39,6 +39,7 @@ import {
   getOnboardingGateState,
   subscribeOnboardingGateChange,
 } from "@src/lib/onboarding";
+import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import { provisionOnboardingSelections } from "@src/lib/onboardingProvisioning";
 import { clearAnonymousSessionIfPresent, supabase } from "@src/lib/supabase";
 
@@ -124,7 +125,9 @@ function RootNavigator() {
         });
 
         const scopedUser = await resolveAccountScopedStores(sessionUser);
-        const nextState = await getOnboardingGateState();
+        const nextState = await getOnboardingGateState({
+          requiresAppleHealthStep: IS_APPLE_HEALTH_SUPPORTED_PLATFORM,
+        });
         if (mounted && requestId === gateRequestRef.current) {
           setGateState(nextState);
         }
