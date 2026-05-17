@@ -367,6 +367,7 @@ test("active entitlement skips the onboarding paywall purchase CTA", () => {
     isReady: true,
     isLoading: false,
     hasCurrentOffering: true,
+    hasPaywallPackages: true,
   });
 
   assert.equal(viewState.status, "active");
@@ -383,12 +384,45 @@ test("inactive entitlement shows the onboarding paywall once access is resolved"
     isReady: true,
     isLoading: false,
     hasCurrentOffering: true,
+    hasPaywallPackages: true,
   });
 
   assert.equal(viewState.status, "ready_to_purchase");
   assert.equal(viewState.showPurchaseButton, true);
   assert.equal(viewState.showRestoreButton, true);
   assert.equal(viewState.showActivity, false);
+});
+
+test("missing paywall offering resolves to a retry state instead of loading forever", () => {
+  const { resolveOnboardingPaywallViewState } = loadSubscriptionAccessModule();
+
+  const viewState = resolveOnboardingPaywallViewState({
+    hasActiveAccess: false,
+    isReady: true,
+    isLoading: false,
+    hasCurrentOffering: false,
+    hasPaywallPackages: false,
+  });
+
+  assert.equal(viewState.status, "missing_offering");
+  assert.equal(viewState.showActivity, false);
+  assert.equal(viewState.showRetryButton, true);
+});
+
+test("missing paywall package resolves to a retry state instead of loading forever", () => {
+  const { resolveOnboardingPaywallViewState } = loadSubscriptionAccessModule();
+
+  const viewState = resolveOnboardingPaywallViewState({
+    hasActiveAccess: false,
+    isReady: true,
+    isLoading: false,
+    hasCurrentOffering: true,
+    hasPaywallPackages: false,
+  });
+
+  assert.equal(viewState.status, "missing_package");
+  assert.equal(viewState.showActivity, false);
+  assert.equal(viewState.showRetryButton, true);
 });
 
 test("existing active entitlement skips RevenueCat paywall before onboarding presentation", () => {
@@ -724,6 +758,7 @@ test("onboarding paywall spinner clears after cancellation and failure states", 
     isPresentingPaywall: false,
     isRestoring: false,
     hasCurrentOffering: true,
+    hasPaywallPackages: true,
   });
   const failedView = resolveOnboardingPaywallViewState({
     hasActiveAccess: false,
@@ -731,6 +766,7 @@ test("onboarding paywall spinner clears after cancellation and failure states", 
     isLoading: false,
     configurationError: "RevenueCat failed to initialize.",
     hasCurrentOffering: true,
+    hasPaywallPackages: true,
   });
 
   assert.equal(cancelledView.showActivity, false);

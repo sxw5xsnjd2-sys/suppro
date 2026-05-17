@@ -10,6 +10,35 @@ import { markOnboardingPremiumComplete } from "@src/lib/onboarding";
 
 const SUBSCRIPTION_STATUS_ERROR_MESSAGE =
   "Unable to check subscription status. Please try again.";
+const MISSING_OFFERING_ERROR_MESSAGE =
+  "No subscription offering is available right now. Please try again.";
+const MISSING_PACKAGE_ERROR_MESSAGE =
+  "No subscription package is available right now. Please try again.";
+const PAYWALL_LOADING_TIMEOUT_MS = 15000;
+
+function getPaywallTimeoutMessage(status) {
+  if (status === "presenting_paywall") {
+    return "The paywall took too long to open. Please try again.";
+  }
+
+  if (status === "restoring") {
+    return "Restoring access took too long. Please try again.";
+  }
+
+  return "Subscription loading took too long. Please try again.";
+}
+
+function getPaywallStateErrorMessage(status) {
+  if (status === "missing_offering") {
+    return MISSING_OFFERING_ERROR_MESSAGE;
+  }
+
+  if (status === "missing_package") {
+    return MISSING_PACKAGE_ERROR_MESSAGE;
+  }
+
+  return "";
+}
 
 export default function OnboardingPaywallScreen() {
   const params = useLocalSearchParams();
@@ -36,8 +65,12 @@ export default function OnboardingPaywallScreen() {
   const isCompletingRef = useRef(false);
   const hasRefreshedAccessRef = useRef(false);
   const [hasAttemptedPaywall, setHasAttemptedPaywall] = useState(false);
+  const [timedOutStatus, setTimedOutStatus] = useState("");
 
   const paywallOffering = returnsToApp ? lapsedOffering : currentOffering;
+  const hasPaywallPackages = Array.isArray(paywallOffering?.availablePackages)
+    ? paywallOffering.availablePackages.length > 0
+    : false;
   const viewState = useMemo(
     () =>
       resolveOnboardingPaywallViewState({
@@ -51,9 +84,11 @@ export default function OnboardingPaywallScreen() {
         isIdentitySyncing,
         configurationError,
         hasCurrentOffering: Boolean(paywallOffering),
+        hasPaywallPackages,
       }),
     [
       configurationError,
+      hasPaywallPackages,
       isIdentitySyncing,
       isLoading,
       isPresentingPaywall,
@@ -99,6 +134,21 @@ export default function OnboardingPaywallScreen() {
   }, [refreshState]);
 
   useEffect(() => {
+    if (!viewState.showActivity) {
+      setTimedOutStatus("");
+      return undefined;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setTimedOutStatus(viewState.status);
+    }, PAYWALL_LOADING_TIMEOUT_MS);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [viewState.showActivity, viewState.status]);
+
+  useEffect(() => {
     if (viewState.shouldAutoContinue) {
       continueToAccount();
     }
@@ -128,6 +178,7 @@ export default function OnboardingPaywallScreen() {
   }, [handleOpenPaywall, hasAttemptedPaywall, viewState.status]);
 
   const handleRetry = useCallback(() => {
+    setTimedOutStatus("");
     setHasAttemptedPaywall(false);
     refreshState({
       invalidateCustomerInfo: true,
@@ -136,25 +187,35 @@ export default function OnboardingPaywallScreen() {
     }).catch(() => null);
   }, [refreshState]);
 
+  const spinnerTimedOut = Boolean(timedOutStatus);
+  const statusErrorMessage = getPaywallStateErrorMessage(viewState.status);
+  const errorMessage =
+    (spinnerTimedOut ? getPaywallTimeoutMessage(timedOutStatus) : "") ||
+    actionError ||
+    configurationError ||
+    statusErrorMessage ||
+    SUBSCRIPTION_STATUS_ERROR_MESSAGE;
+
   const showError =
-    !viewState.showActivity &&
-    !viewState.shouldAutoContinue &&
-    Boolean(configurationError || actionError);
+    spinnerTimedOut ||
+    (
+      !viewState.showActivity &&
+      !viewState.shouldAutoContinue &&
+      Boolean(configurationError || actionError || statusErrorMessage)
+    );
 
   return (
     <BackdropScreen scrollable={false}>
       <View style={styles.screen}>
         {showError ? (
           <View style={styles.errorState}>
-            <Text style={styles.errorTitle}>
-              {SUBSCRIPTION_STATUS_ERROR_MESSAGE}
-            </Text>
+            <Text style={styles.errorTitle}>{errorMessage}</Text>
             <AppButton
               label={isRefreshing ? "Trying again..." : "Try again"}
               variant="primary"
               size="md"
               onPress={handleRetry}
-              disabled={viewState.isBusy}
+              disabled={isRefreshing || (!spinnerTimedOut && viewState.isBusy)}
               style={styles.retryButton}
               textStyle={styles.retryButtonText}
             />

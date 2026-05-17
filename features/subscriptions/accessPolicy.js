@@ -253,6 +253,7 @@ export function resolveOnboardingPaywallViewState({
   isIdentitySyncing = false,
   configurationError = "",
   hasCurrentOffering = false,
+  hasPaywallPackages = false,
 }) {
   const hasConfigurationError = hasNonEmptyMessage(configurationError);
   const isBusy =
@@ -265,7 +266,7 @@ export function resolveOnboardingPaywallViewState({
     origin === "app" &&
     !hasActiveAccess &&
     !isBusy &&
-    (hasConfigurationError || !hasCurrentOffering);
+    (hasConfigurationError || !hasCurrentOffering || !hasPaywallPackages);
 
   if (hasActiveAccess) {
     return {
@@ -335,6 +336,19 @@ export function resolveOnboardingPaywallViewState({
   if (!hasCurrentOffering) {
     return {
       status: "missing_offering",
+      isBusy: false,
+      showActivity: false,
+      showPurchaseButton: false,
+      showRestoreButton: true,
+      showRetryButton: true,
+      shouldAutoContinue: false,
+      shouldRouteToSettings,
+    };
+  }
+
+  if (!hasPaywallPackages) {
+    return {
+      status: "missing_package",
       isBusy: false,
       showActivity: false,
       showPurchaseButton: false,

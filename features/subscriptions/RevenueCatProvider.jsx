@@ -38,6 +38,10 @@ const EXISTING_SUBSCRIPTION_RESTORED_MESSAGE =
   "Subscription already active — premium restored.";
 const EXISTING_SUBSCRIPTION_RETRY_MESSAGE =
   "We couldn't confirm your subscription yet. Use Restore access to try again.";
+const REVENUECAT_REFRESH_TIMEOUT_MS = 12000;
+const REVENUECAT_IDENTITY_TIMEOUT_MS = 12000;
+const REVENUECAT_RESTORE_TIMEOUT_MS = 15000;
+const REVENUECAT_PAYWALL_TIMEOUT_MS = 15000;
 const EXISTING_SUBSCRIPTION_MESSAGE_PATTERNS = [
   /\balready subscribed\b/i,
   /\balready purchased\b/i,
@@ -193,6 +197,42 @@ function toRevenueCatErrorMessage(error, fallbackMessage) {
   return fallbackMessage;
 }
 
+function createRevenueCatTimeoutError(message) {
+  const error = new Error(message);
+  error.name = "RevenueCatTimeoutError";
+  return error;
+}
+
+function withRevenueCatTimeout(
+  operation,
+  message,
+  timeoutMs = REVENUECAT_REFRESH_TIMEOUT_MS,
+) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(createRevenueCatTimeoutError(message));
+    }, timeoutMs);
+
+    Promise.resolve(operation).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
+
 function resolveRecoveredPurchaseResult(customerInfo) {
   const hasPremiumAccess = isPremiumActive(customerInfo);
 
@@ -323,16 +363,20 @@ export function RevenueCatProvider({ children }) {
     const stableUserId = user.id;
 
     try {
-      await Promise.all([
-        revenueCatSdk.Purchases.setEmail(user?.email ?? null),
-        revenueCatSdk.Purchases.setDisplayName(displayName),
-        revenueCatSdk.Purchases.setAttributes({
-          auth_provider: authProvider,
-          suppro_user_id: stableUserId,
-        }),
-      ]);
-
-      return await revenueCatSdk.Purchases.syncAttributesAndOfferingsIfNeeded();
+      return await withRevenueCatTimeout(
+        Promise.all([
+          revenueCatSdk.Purchases.setEmail(user?.email ?? null),
+          revenueCatSdk.Purchases.setDisplayName(displayName),
+          revenueCatSdk.Purchases.setAttributes({
+            auth_provider: authProvider,
+            suppro_user_id: stableUserId,
+          }),
+        ]).then(() =>
+          revenueCatSdk.Purchases.syncAttributesAndOfferingsIfNeeded(),
+        ),
+        "RevenueCat took too long to sync your account details.",
+        REVENUECAT_IDENTITY_TIMEOUT_MS,
+      );
     } catch (error) {
       logBuildAwareDiagnostic(
         "warn",
@@ -354,6 +398,7 @@ export function RevenueCatProvider({ children }) {
     silent = false,
     invalidateCustomerInfo = false,
     syncPurchases = false,
+    throwOnError = false,
   } = {}) => {
     if (!hasConfiguredRef.current) return null;
     if (!revenueCatSdk.Purchases) return null;
@@ -368,8 +413,10 @@ export function RevenueCatProvider({ children }) {
         invalidateCustomerInfo &&
         typeof revenueCatSdk.Purchases.invalidateCustomerInfoCache === "function"
       ) {
-        await Promise.resolve(
-          revenueCatSdk.Purchases.invalidateCustomerInfoCache(),
+        await withRevenueCatTimeout(
+          Promise.resolve(revenueCatSdk.Purchases.invalidateCustomerInfoCache()),
+          "RevenueCat took too long to refresh cached customer info.",
+          REVENUECAT_REFRESH_TIMEOUT_MS,
         ).catch(() => null);
       }
 
@@ -378,9 +425,17 @@ export function RevenueCatProvider({ children }) {
           if (
             typeof revenueCatSdk.Purchases.syncPurchasesForResult === "function"
           ) {
-            await revenueCatSdk.Purchases.syncPurchasesForResult();
+            await withRevenueCatTimeout(
+              revenueCatSdk.Purchases.syncPurchasesForResult(),
+              "RevenueCat took too long to sync purchases.",
+              REVENUECAT_REFRESH_TIMEOUT_MS,
+            );
           } else if (typeof revenueCatSdk.Purchases.syncPurchases === "function") {
-            await Promise.resolve(revenueCatSdk.Purchases.syncPurchases());
+            await withRevenueCatTimeout(
+              Promise.resolve(revenueCatSdk.Purchases.syncPurchases()),
+              "RevenueCat took too long to sync purchases.",
+              REVENUECAT_REFRESH_TIMEOUT_MS,
+            );
           }
         } catch (error) {
           logBuildAwareDiagnostic(
@@ -401,25 +456,29 @@ export function RevenueCatProvider({ children }) {
       logDevelopmentDiagnostic("log", "[revenuecat] Getting offerings...");
 
       const [nextCustomerInfo, nextOfferings, nextAppUserId] =
-        await Promise.all([
-          revenueCatSdk.Purchases.getCustomerInfo(),
-          revenueCatSdk.Purchases.getOfferings().catch((error) => {
-            logBuildAwareDiagnostic(
-              "warn",
-              "[revenuecat] Failed to fetch offerings",
-              {
-                developmentDetails: {
-                  message:
-                    typeof error?.message === "string"
-                      ? error.message
-                      : "Unknown error",
+        await withRevenueCatTimeout(
+          Promise.all([
+            revenueCatSdk.Purchases.getCustomerInfo(),
+            revenueCatSdk.Purchases.getOfferings().catch((error) => {
+              logBuildAwareDiagnostic(
+                "warn",
+                "[revenuecat] Failed to fetch offerings",
+                {
+                  developmentDetails: {
+                    message:
+                      typeof error?.message === "string"
+                        ? error.message
+                        : "Unknown error",
+                  },
                 },
-              },
-            );
-            return null;
-          }),
-          revenueCatSdk.Purchases.getAppUserID(),
-        ]);
+              );
+              return null;
+            }),
+            revenueCatSdk.Purchases.getAppUserID(),
+          ]),
+          "RevenueCat took too long to refresh subscription status.",
+          REVENUECAT_REFRESH_TIMEOUT_MS,
+        );
 
       if (nextOfferings) {
         logDevelopmentDiagnostic("log", "[revenuecat] Offerings loaded", {
@@ -449,6 +508,9 @@ export function RevenueCatProvider({ children }) {
             "Could not refresh Suppro Premium status.",
           ),
         );
+      }
+      if (throwOnError) {
+        throw error;
       }
       return null;
     } finally {
@@ -489,8 +551,10 @@ export function RevenueCatProvider({ children }) {
 
       try {
         if (identityAction === "log_in" && nextIdentifiedAppUserId) {
-          const result = await revenueCatSdk.Purchases.logIn(
-            nextIdentifiedAppUserId,
+          const result = await withRevenueCatTimeout(
+            revenueCatSdk.Purchases.logIn(nextIdentifiedAppUserId),
+            "RevenueCat took too long to sync your account.",
+            REVENUECAT_IDENTITY_TIMEOUT_MS,
           );
           currentIdentifiedAppUserIdRef.current = nextIdentifiedAppUserId;
 
@@ -498,7 +562,11 @@ export function RevenueCatProvider({ children }) {
             setCustomerInfo(result.customerInfo);
           }
         } else if (identityAction === "log_out") {
-          const nextCustomerInfo = await revenueCatSdk.Purchases.logOut();
+          const nextCustomerInfo = await withRevenueCatTimeout(
+            revenueCatSdk.Purchases.logOut(),
+            "RevenueCat took too long to sign out.",
+            REVENUECAT_IDENTITY_TIMEOUT_MS,
+          );
           currentIdentifiedAppUserIdRef.current = null;
 
           if (isMountedRef.current) {
@@ -552,6 +620,7 @@ export function RevenueCatProvider({ children }) {
       silent: true,
       invalidateCustomerInfo: true,
       syncPurchases,
+      throwOnError: true,
     });
   };
 
@@ -612,7 +681,11 @@ export function RevenueCatProvider({ children }) {
 
       if (shouldRestore && typeof revenueCatSdk.Purchases?.restorePurchases === "function") {
         const restoredCustomerInfo =
-          await revenueCatSdk.Purchases.restorePurchases();
+          await withRevenueCatTimeout(
+            revenueCatSdk.Purchases.restorePurchases(),
+            "Restoring access took too long. Please try again.",
+            REVENUECAT_RESTORE_TIMEOUT_MS,
+          );
 
         if (isMountedRef.current) {
           setCustomerInfo(restoredCustomerInfo);
@@ -741,6 +814,7 @@ export function RevenueCatProvider({ children }) {
         await refreshState({
           silent: true,
           invalidateCustomerInfo: true,
+          throwOnError: true,
         });
 
         if (isMountedRef.current) {
@@ -822,7 +896,11 @@ export function RevenueCatProvider({ children }) {
         };
       }
 
-      const nextCustomerInfo = await revenueCatSdk.Purchases.restorePurchases();
+      const nextCustomerInfo = await withRevenueCatTimeout(
+        revenueCatSdk.Purchases.restorePurchases(),
+        "Restoring access took too long. Please try again.",
+        REVENUECAT_RESTORE_TIMEOUT_MS,
+      );
       const restoreResult = resolveRestorePurchasesResult(nextCustomerInfo);
 
       if (isMountedRef.current) {
@@ -1002,11 +1080,19 @@ export function RevenueCatProvider({ children }) {
 
       const options = offering ? { offering } : {};
       const paywallResult = ifNeeded
-        ? await revenueCatSdk.RevenueCatUI.presentPaywallIfNeeded({
-            requiredEntitlementIdentifier: REVENUECAT_ENTITLEMENT_ID,
-            ...options,
-          })
-        : await revenueCatSdk.RevenueCatUI.presentPaywall(options);
+        ? await withRevenueCatTimeout(
+            revenueCatSdk.RevenueCatUI.presentPaywallIfNeeded({
+              requiredEntitlementIdentifier: REVENUECAT_ENTITLEMENT_ID,
+              ...options,
+            }),
+            "The paywall took too long to open. Please try again.",
+            REVENUECAT_PAYWALL_TIMEOUT_MS,
+          )
+        : await withRevenueCatTimeout(
+            revenueCatSdk.RevenueCatUI.presentPaywall(options),
+            "The paywall took too long to open. Please try again.",
+            REVENUECAT_PAYWALL_TIMEOUT_MS,
+          );
 
       if (
         paywallResult === revenueCatSdk.PAYWALL_RESULT.PURCHASED ||
