@@ -1,20 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Alert,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { useIsFocused } from "@react-navigation/native";
-import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { ChatFloatingButton } from "@/components/common/ui";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
-import { appTheme, colors, typography } from "@/theme";
+import { appTheme, typography } from "@/theme";
 import {
   INPUT_ARCHETYPES,
   MANUAL_ENTRY_SOURCE,
@@ -30,14 +27,7 @@ import {
   FullMetricCard,
   HalfMetricCard,
 } from "@/features/health/components/HealthInlineMetricCard";
-import {
-  APPLE_HEALTH_PRE_PERMISSION_BODY,
-  APPLE_HEALTH_PRE_PERMISSION_TITLE,
-  useAppleHealthConnection,
-} from "@/features/health/useAppleHealthConnection";
 import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
-
-const AUTO_REFRESH_STALE_MS = 60 * 60 * 1000;
 
 function todayYYYYMMDD(date = new Date()) {
   const year = date.getFullYear();
@@ -99,56 +89,6 @@ function buildDisplayRows(enabledMetrics) {
   return rows;
 }
 
-function AppleHealthPill({ isConnected, isSyncing, onPress }) {
-  let label, bg, textColor, iconColor;
-  if (isSyncing) {
-    label = "Syncing Apple Health";
-    bg = colors.background.shell;
-    textColor = colors.text.muted;
-    iconColor = colors.text.muted;
-  } else if (isConnected) {
-    label = "Manage Apple Health";
-    bg = "#E3F5E9";
-    textColor = "#1A7A38";
-    iconColor = "#34C759";
-  } else {
-    label = "Connect Apple Health";
-    bg = colors.background.shell;
-    textColor = appTheme.colors.textStrong;
-    iconColor = appTheme.colors.textStrong;
-  }
-
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={isSyncing}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityHint={
-        isConnected
-          ? "Open Apple Health connection settings."
-          : "Connect Suppro to Apple Health."
-      }
-      style={({ pressed }) => [
-        styles.ahPill,
-        { backgroundColor: bg },
-        pressed && !isSyncing && styles.ahPillPressed,
-      ]}
-    >
-      <Ionicons name="logo-apple" size={14} color={iconColor} />
-      <Text style={[styles.ahLabel, { color: textColor }]}>
-        {label}
-      </Text>
-      <Ionicons
-        name="chevron-forward"
-        size={14}
-        color={textColor}
-        style={styles.ahChevron}
-      />
-    </Pressable>
-  );
-}
-
 function PlusIcon({ size = 16, color: c = appTheme.colors.textStrong }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 16 16" fill="none">
@@ -162,6 +102,14 @@ function PlusIcon({ size = 16, color: c = appTheme.colors.textStrong }) {
   );
 }
 
+function IOSHealthConnectionCtaSlot() {
+  const { IOSHealthConnectionCta } = require(
+    "@/features/health/components/IOSHealthConnectionCta"
+  );
+
+  return <IOSHealthConnectionCta />;
+}
+
 export default function HealthScreen() {
   const {
     hasActiveAccess,
@@ -171,19 +119,10 @@ export default function HealthScreen() {
   } = useSubscriptionAccess();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const isFocused = useIsFocused();
 
   const effectiveEntries = useHealthStore((state) => getEffectiveEntries(state));
   const metrics = useHealthStore((state) => state.metrics);
   const addEntry = useHealthStore((state) => state.addEntry);
-
-  const {
-    isSyncing,
-    lastSyncedAt,
-    isAppleHealthConnected,
-    refreshAppleHealth,
-    reconnectAppleHealth,
-  } = useAppleHealthConnection();
 
   const today = useMemo(() => todayYYYYMMDD(), []);
   const [metricPickerOpen, setMetricPickerOpen] = useState(false);
@@ -262,15 +201,6 @@ export default function HealthScreen() {
     });
   };
 
-  useEffect(() => {
-    if (!IS_APPLE_HEALTH_SUPPORTED_PLATFORM || !isFocused || isSyncing) return;
-    if (!isAppleHealthConnected || !lastSyncedAt) return;
-    const parsed = new Date(lastSyncedAt);
-    if (Number.isNaN(parsed.getTime())) return;
-    if (Date.now() - parsed.getTime() <= AUTO_REFRESH_STALE_MS) return;
-    refreshAppleHealth();
-  }, [isAppleHealthConnected, isFocused, isSyncing, lastSyncedAt, refreshAppleHealth]);
-
   if (!hasActiveAccess) {
     return <BackdropScreen scrollable={false} />;
   }
@@ -329,32 +259,9 @@ export default function HealthScreen() {
         <View style={styles.feed}>
           <View style={styles.sectionRow}>
             <Text style={styles.sectionTitle}>Today</Text>
-            {IS_APPLE_HEALTH_SUPPORTED_PLATFORM && (
-              <AppleHealthPill
-                isConnected={isAppleHealthConnected}
-                isSyncing={isSyncing}
-                onPress={() => {
-                  if (isAppleHealthConnected) {
-                    router.push("/connections");
-                    return;
-                  }
-
-                  Alert.alert(
-                    APPLE_HEALTH_PRE_PERMISSION_TITLE,
-                    APPLE_HEALTH_PRE_PERMISSION_BODY,
-                    [
-                      { text: "Not now", style: "cancel" },
-                      {
-                        text: "Continue",
-                        onPress: () => {
-                          reconnectAppleHealth();
-                        },
-                      },
-                    ]
-                  );
-                }}
-              />
-            )}
+            {IS_APPLE_HEALTH_SUPPORTED_PLATFORM ? (
+              <IOSHealthConnectionCtaSlot />
+            ) : null}
           </View>
 
           {displayRows.map((row, rowIndex) => {
@@ -481,27 +388,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 2,
     paddingLeft: 4,
-  },
-  ahPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: appTheme.colors.borderSubtle,
-  },
-  ahPillPressed: {
-    opacity: 0.82,
-  },
-  ahLabel: {
-    fontFamily: typography.fontFamily.heading,
-    fontSize: 12,
-  },
-  ahChevron: {
-    marginLeft: 1,
   },
   halfRow: {
     flexDirection: "row",

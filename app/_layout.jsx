@@ -50,6 +50,12 @@ export const unstable_settings = {
 };
 
 const FALLBACK_GATE_STATE = "needs_questions";
+const ONBOARDING_PAYWALL_TRANSITION_GATE_STATES = new Set([
+  "needs_questions",
+  "needs_rating",
+  "needs_apple_health",
+  "needs_paywall",
+]);
 
 async function resolveAccountScopedStores(sessionUser) {
   let user = sessionUser;
@@ -100,6 +106,8 @@ function RootNavigator() {
   const isRetakeOnboarding = isOnboardingRoute && modeParam === "retake";
   const isBuildingOnboardingRoute =
     isOnboardingRoute && stepParam === "building";
+  const isOnboardingPaywallRoute =
+    isOnboardingRoute && !isRetakeOnboarding && stepParam === "paywall";
   const isAppSubscriptionGateRoute =
     isOnboardingRoute &&
     !isRetakeOnboarding &&
@@ -174,6 +182,17 @@ function RootNavigator() {
     };
   }, []);
 
+  const effectiveGateState = useMemo(() => {
+    if (
+      !IS_APPLE_HEALTH_SUPPORTED_PLATFORM &&
+      gateState === "needs_apple_health"
+    ) {
+      return "needs_paywall";
+    }
+
+    return gateState;
+  }, [gateState]);
+
   const gatedHref = useMemo(() => {
     const gatedRoutes = {
       needs_questions: "/onboarding?mode=first_run",
@@ -184,13 +203,13 @@ function RootNavigator() {
       needs_login: "/login?mode=login",
     };
 
-    return gatedRoutes[gateState];
-  }, [gateState]);
+    return gatedRoutes[effectiveGateState];
+  }, [effectiveGateState]);
 
   const isOnRequiredGateRoute = useMemo(() => {
-    if (!gateState) return false;
+    if (!effectiveGateState) return false;
 
-    if (gateState === "complete") {
+    if (effectiveGateState === "complete") {
       return true;
     }
 
@@ -198,11 +217,18 @@ function RootNavigator() {
       return true;
     }
 
-    if (gateState === "needs_login") {
+    if (
+      isOnboardingPaywallRoute &&
+      ONBOARDING_PAYWALL_TRANSITION_GATE_STATES.has(effectiveGateState)
+    ) {
+      return true;
+    }
+
+    if (effectiveGateState === "needs_login") {
       return isLoginRoute;
     }
 
-    if (gateState === "needs_questions") {
+    if (effectiveGateState === "needs_questions") {
       return (
         (isOnboardingRoute &&
           !isRetakeOnboarding &&
@@ -211,11 +237,11 @@ function RootNavigator() {
       );
     }
 
-    if (gateState === "needs_signup") {
+    if (effectiveGateState === "needs_signup") {
       return isLoginRoute;
     }
 
-    if (gateState === "needs_rating") {
+    if (effectiveGateState === "needs_rating") {
       return (
         (isOnboardingRoute &&
           !isRetakeOnboarding &&
@@ -224,7 +250,7 @@ function RootNavigator() {
       );
     }
 
-    if (gateState === "needs_apple_health") {
+    if (effectiveGateState === "needs_apple_health") {
       return (
         (isOnboardingRoute &&
           !isRetakeOnboarding &&
@@ -233,7 +259,7 @@ function RootNavigator() {
       );
     }
 
-    if (gateState === "needs_paywall") {
+    if (effectiveGateState === "needs_paywall") {
       return (
         (isOnboardingRoute &&
           !isRetakeOnboarding &&
@@ -248,9 +274,10 @@ function RootNavigator() {
 
     return false;
   }, [
-    gateState,
+    effectiveGateState,
     isBuildingOnboardingRoute,
     isLoginRoute,
+    isOnboardingPaywallRoute,
     isResetPasswordRoute,
     isOnboardingRoute,
     isOnboardingScannerFlow,
@@ -261,11 +288,11 @@ function RootNavigator() {
   ]);
 
   const isRedirectingToAllowedRoute = useMemo(() => {
-    if (!gateResolved || !gateState) {
+    if (!gateResolved || !effectiveGateState) {
       return true;
     }
 
-    if (gateState === "complete") {
+    if (effectiveGateState === "complete") {
       return (
         (isOnboardingRoute &&
           !isRetakeOnboarding &&
@@ -276,8 +303,8 @@ function RootNavigator() {
 
     return !isOnRequiredGateRoute;
   }, [
+    effectiveGateState,
     gateResolved,
-    gateState,
     isAppSubscriptionGateRoute,
     isLoginRoute,
     isOnRequiredGateRoute,
@@ -285,12 +312,15 @@ function RootNavigator() {
     isRetakeOnboarding,
   ]);
 
+  const shouldShowGateOverlay =
+    isRedirectingToAllowedRoute && !isOnboardingPaywallRoute;
+
   useEffect(() => {
-    if (!gateResolved || !gateState) return;
+    if (!gateResolved || !effectiveGateState) return;
 
     let nextRedirectHref = null;
 
-    if (gateState === "complete") {
+    if (effectiveGateState === "complete") {
       if ((isOnboardingRoute && !isRetakeOnboarding) || isLoginRoute) {
         if (isAppSubscriptionGateRoute) {
           lastRedirectHrefRef.current = null;
@@ -314,7 +344,7 @@ function RootNavigator() {
     lastRedirectHrefRef.current = nextRedirectHref;
     router.replace(nextRedirectHref);
   }, [
-    gateState,
+    effectiveGateState,
     gatedHref,
     gateResolved,
     isAppSubscriptionGateRoute,
@@ -359,7 +389,7 @@ function RootNavigator() {
         <Stack.Screen name="health" options={{ headerShown: false }} />
       </Stack>
       <GlobalToast />
-      {isRedirectingToAllowedRoute ? <LoadingScreen overlay /> : undefined}
+      {shouldShowGateOverlay ? <LoadingScreen overlay /> : undefined}
     </>
   );
 }

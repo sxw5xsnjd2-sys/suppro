@@ -36,6 +36,7 @@ import {
   isNumericMetric,
   normalizeMetric,
 } from "@/features/health/metricDefinitions";
+import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import { HealthMetricInsetView } from "./HealthMetricInsetView";
 
 const CHART_HEIGHT = 260;
@@ -672,7 +673,9 @@ export function HealthMetricSummaryModal({
                   title="Timeline"
                   subtitle={
                     isReadOnlyAppleMetric
-                      ? "Apple Health entries are read-only in Suppro."
+                      ? IS_APPLE_HEALTH_SUPPORTED_PLATFORM
+                        ? "Apple Health entries are read-only in Suppro."
+                        : "Imported entries are read-only in Suppro."
                       : "Swipe left on an entry to delete it."
                   }
                   titleStyle={styles.cardTitle}
@@ -704,7 +707,9 @@ export function HealthMetricSummaryModal({
                         canDelete={entry.source !== APPLE_HEALTH_ENTRY_SOURCE}
                         sourceLabel={
                           entry.source === APPLE_HEALTH_ENTRY_SOURCE
-                            ? "Apple Health"
+                            ? IS_APPLE_HEALTH_SUPPORTED_PLATFORM
+                              ? "Apple Health"
+                              : ""
                             : "Manual"
                         }
                         onDeletePress={handleEntryDeletePress}

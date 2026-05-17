@@ -18,13 +18,6 @@ function OnboardingRatingStep() {
   return <OnboardingRatingScreen />;
 }
 
-function OnboardingAppleHealthStep() {
-  const OnboardingAppleHealthScreen =
-    require("@src/features/onboarding/OnboardingAppleHealthScreen").default;
-
-  return <OnboardingAppleHealthScreen />;
-}
-
 export default function OnboardingScreen() {
   const params = useLocalSearchParams();
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
@@ -70,16 +63,26 @@ export default function OnboardingScreen() {
   }
 
   if (stepParam === "apple-health") {
+    if (!IS_APPLE_HEALTH_SUPPORTED_PLATFORM) {
+      return (
+        <>
+          <Stack.Screen
+            options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
+          />
+          <Redirect href={`/onboarding?mode=${mode}&step=paywall`} />
+        </>
+      );
+    }
+
+    const OnboardingAppleHealthScreen =
+      require("@src/features/onboarding/OnboardingAppleHealthScreen").default;
+
     return (
       <>
         <Stack.Screen
           options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
         />
-        {IS_APPLE_HEALTH_SUPPORTED_PLATFORM ? (
-          <OnboardingAppleHealthStep />
-        ) : (
-          <Redirect href={`/onboarding?mode=${mode}&step=paywall`} />
-        )}
+        <OnboardingAppleHealthScreen />
       </>
     );
   }

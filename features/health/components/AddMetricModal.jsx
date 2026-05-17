@@ -18,6 +18,7 @@ import {
   normalizeMetric,
 } from "@/features/health/metricDefinitions";
 import { GROUP_ACCENTS } from "@/features/health/groupAccents";
+import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import { MetricGlyph } from "./MetricGlyph";
 
 const GROUP_ORDER = [
@@ -126,7 +127,9 @@ function MetricRow({ metric, enabled, onToggle }) {
       <View style={styles.metricCopy}>
         <View style={styles.labelRow}>
           <Text style={styles.metricLabel}>{metric.label}</Text>
-          {metric.appleHealthSupported ? <AppleHealthBadge /> : null}
+          {IS_APPLE_HEALTH_SUPPORTED_PLATFORM && metric.appleHealthSupported ? (
+            <AppleHealthBadge />
+          ) : null}
         </View>
         <Text numberOfLines={2} style={styles.metricDescription}>
           {metric.description}

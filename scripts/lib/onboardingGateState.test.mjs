@@ -289,6 +289,105 @@ test("Apple Health screen stays lightweight and routes directly to paywall", () 
   assert.equal(source.includes("apple-health-logo.png"), false);
 });
 
+test("Android screen modules gate Apple Health at the actual render and call sites", () => {
+  const onboardingSource = readFileSync(
+    new URL("../../app/onboarding.jsx", import.meta.url),
+    "utf8"
+  );
+  const healthTabSource = readFileSync(
+    new URL("../../app/(tabs)/health.jsx", import.meta.url),
+    "utf8"
+  );
+  const settingsSource = readFileSync(
+    new URL("../../app/(modals)/modal/settings.jsx", import.meta.url),
+    "utf8"
+  );
+  const connectionsSource = readFileSync(
+    new URL("../../app/(modals)/modal/connections.jsx", import.meta.url),
+    "utf8"
+  );
+  const loginSource = readFileSync(
+    new URL("../../app/login.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.equal(
+    onboardingSource.includes('if (stepParam === "apple-health") {'),
+    true
+  );
+  assert.equal(
+    onboardingSource.includes("if (!IS_APPLE_HEALTH_SUPPORTED_PLATFORM) {"),
+    true
+  );
+  assert.equal(
+    onboardingSource.includes(
+      'const OnboardingAppleHealthScreen =\n      require("@src/features/onboarding/OnboardingAppleHealthScreen").default;'
+    ),
+    true
+  );
+
+  assert.equal(healthTabSource.includes("useAppleHealthConnection"), false);
+  assert.equal(healthTabSource.includes("AppleHealthPill"), false);
+  assert.equal(
+    healthTabSource.includes('import { IOSHealthConnectionCta }'),
+    false
+  );
+
+  assert.equal(settingsSource.includes("useAppleHealthConnection"), false);
+  assert.equal(
+    settingsSource.includes('import { IOSSettingsAppleHealthCard }'),
+    false
+  );
+  assert.equal(settingsSource.includes("Manage Apple Health"), false);
+  assert.equal(settingsSource.includes("Connect Apple Health"), false);
+
+  assert.equal(connectionsSource.includes("useAppleHealthConnection"), false);
+  assert.equal(connectionsSource.includes("Manage Apple Health"), false);
+  assert.equal(connectionsSource.includes("Connect Apple Health"), false);
+
+  assert.equal(
+    loginSource.includes(
+      'import { syncAppleHealthAfterAuthentication } from "@/features/health/useAppleHealthConnection";'
+    ),
+    false
+  );
+  assert.equal(
+    loginSource.includes('if (IS_APPLE_HEALTH_SUPPORTED_PLATFORM) {'),
+    true
+  );
+  assert.equal(
+    loginSource.includes(
+      'const { syncAppleHealthAfterAuthentication } = require('
+    ),
+    true
+  );
+});
+
+test("onboarding paywall route stays visible while gate state catches up", () => {
+  const source = readFileSync(
+    new URL("../../app/_layout.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.equal(
+    source.includes("const ONBOARDING_PAYWALL_TRANSITION_GATE_STATES = new Set(["),
+    true
+  );
+  assert.equal(source.includes("isOnboardingPaywallRoute &&"), true);
+  assert.equal(
+    source.includes(
+      "ONBOARDING_PAYWALL_TRANSITION_GATE_STATES.has(effectiveGateState)"
+    ),
+    true
+  );
+  assert.equal(
+    source.includes(
+      "const shouldShowGateOverlay =\n    isRedirectingToAllowedRoute && !isOnboardingPaywallRoute;"
+    ),
+    true
+  );
+});
+
 test("paywall-complete first-run without account stays on create-account", async () => {
   const asyncStorage = createAsyncStorage({
     "suppro.onboarding.questionnaire.v1": JSON.stringify({

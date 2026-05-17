@@ -20,7 +20,7 @@ import { StatusBar } from "expo-status-bar";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
-import { syncAppleHealthAfterAuthentication } from "@/features/health/useAppleHealthConnection";
+import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import { typography } from "@/theme";
 import { supabase } from "@src/lib/supabase";
 import {
@@ -250,7 +250,12 @@ export default function LoginScreen() {
   const finalizeAuthenticatedAccount = async () => {
     await markAccountCreationComplete();
     await syncIdentityForCurrentSession();
-    await syncAppleHealthAfterAuthentication();
+    if (IS_APPLE_HEALTH_SUPPORTED_PLATFORM) {
+      const { syncAppleHealthAfterAuthentication } = require(
+        "@/features/health/useAppleHealthConnection"
+      );
+      await syncAppleHealthAfterAuthentication();
+    }
     // Root gate owns the post-login transition into the app shell.
   };
 

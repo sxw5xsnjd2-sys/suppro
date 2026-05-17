@@ -11,21 +11,23 @@ import {
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
-import { AppButton, AppHeader, PrimaryCard } from "@/components/common/ui";
+import { AppButton, AppHeader } from "@/components/common/ui";
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
-import {
-  APPLE_HEALTH_SETTINGS_SUBTITLE,
-  APPLE_HEALTH_TITLE,
-  getAppleHealthConnectionStatusLabel,
-  useAppleHealthConnection,
-} from "@/features/health/useAppleHealthConnection";
 import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import ConnectionsIcon from "@/assets/icons/profile/connections.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
 import QuestionnaireIcon from "@/assets/icons/profile/questionnaire.svg";
 import { appTheme, spacing, typography } from "@/theme";
+
+function IOSSettingsAppleHealthCardSlot({ styles }) {
+  const { IOSSettingsAppleHealthCard } = require(
+    "@/features/health/components/IOSSettingsAppleHealthCard"
+  );
+
+  return <IOSSettingsAppleHealthCard styles={styles} />;
+}
 
 function SupplementsIcon({ width, height, color }) {
   return (
@@ -171,12 +173,6 @@ function goBackOrFallback() {
 
 export default function SettingsScreen() {
   const { openManageSubscription, restorePurchases } = useRevenueCat();
-  const { isAppleHealthConnected } = useAppleHealthConnection({
-    showAlerts: false,
-  });
-  const appleHealthStatus = getAppleHealthConnectionStatusLabel(
-    isAppleHealthConnected,
-  );
 
   const settingsSections = [
     {
@@ -338,31 +334,7 @@ export default function SettingsScreen() {
           </React.Fragment>
         ))}
         {IS_APPLE_HEALTH_SUPPORTED_PLATFORM ? (
-          <>
-            <View style={styles.divider} />
-            <Text style={styles.sectionLabel}>Integrations</Text>
-            <PrimaryCard
-              onPress={() => router.push("/connections")}
-              style={styles.appleHealthCard}
-            >
-              <View style={styles.appleHealthHeaderRow}>
-                <View style={styles.appleHealthCopy}>
-                  <Text style={styles.appleHealthTitle}>{APPLE_HEALTH_TITLE}</Text>
-                  <Text style={styles.appleHealthStatus}>
-                    Status: {appleHealthStatus}
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={18}
-                  color={appTheme.colors.textSecondary}
-                />
-              </View>
-              <Text style={styles.appleHealthDescription}>
-                {APPLE_HEALTH_SETTINGS_SUBTITLE}
-              </Text>
-            </PrimaryCard>
-          </>
+          <IOSSettingsAppleHealthCardSlot styles={styles} />
         ) : null}
       </View>
     </BackdropScreen>
