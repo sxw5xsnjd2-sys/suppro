@@ -308,6 +308,38 @@ export default function LoginScreen() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    const payloadEmail = normalizeEmail(email);
+
+    if (!isLikelyEmail(payloadEmail)) {
+      setErrorMessage("Enter your email address first, then tap Forgot password.");
+      return;
+    }
+
+    setErrorMessage("");
+    setSaving(true);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(payloadEmail, {
+        redirectTo: "suppro://reset-password",
+      });
+
+      if (error) {
+        throw new Error(error.message || "Could not send reset email.");
+      }
+
+      setErrorMessage("Password reset email sent. Check your inbox.");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not send reset email. Please try again."
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleEmailSignUp = async () => {
     if (!canSubmit || saving) return;
 
@@ -718,6 +750,23 @@ export default function LoginScreen() {
                       />
                     </View>
                   ) : null}
+                  {!isCreateMode ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Forgot password"
+                      disabled={saving}
+                      onPress={handleForgotPassword}
+                      style={({ pressed }) => [
+                        styles.forgotPasswordButton,
+                        pressed && styles.pressed,
+                        saving && styles.disabled,
+                      ]}
+                    >
+                      <Text style={styles.forgotPasswordText}>
+                        Forgot password?
+                      </Text>
+                    </Pressable>
+                  ) : null}
                   {errorMessage ? (
                     <Text style={styles.errorText}>{errorMessage}</Text>
                   ) : null}
@@ -975,6 +1024,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 21,
     fontFamily: typography.fontFamily.body,
+  },
+  forgotPasswordButton: {
+    alignSelf: "flex-end",
+    marginTop: -4,
+    paddingVertical: 4,
+  },
+  forgotPasswordText: {
+    color: TOKENS.primaryDk,
+    fontSize: 13,
+    lineHeight: 17,
+    fontFamily: typography.fontFamily.bodySemiBold,
   },
   errorText: {
     color: TOKENS.danger,

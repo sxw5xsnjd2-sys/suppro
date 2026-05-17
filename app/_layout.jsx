@@ -87,6 +87,7 @@ function RootNavigator() {
   const isOnboardingRoute = segments[0] === "onboarding";
   const isLoginRoute = segments[0] === "login";
   const isVerifyEmailRoute = segments[0] === "verify-email";
+  const isResetPasswordRoute = segments[0] === "reset-password";
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
   const stepParam = Array.isArray(params.step) ? params.step[0] : params.step;
   const sourceParam = Array.isArray(params.source)
@@ -190,7 +191,7 @@ function RootNavigator() {
       return true;
     }
 
-    if (isLoginRoute || isVerifyEmailRoute) {
+    if (isLoginRoute || isVerifyEmailRoute || isResetPasswordRoute) {
       return true;
     }
 
@@ -247,6 +248,7 @@ function RootNavigator() {
     gateState,
     isBuildingOnboardingRoute,
     isLoginRoute,
+    isResetPasswordRoute,
     isOnboardingRoute,
     isOnboardingScannerFlow,
     isRetakeOnboarding,
@@ -314,6 +316,7 @@ function RootNavigator() {
     gateResolved,
     isAppSubscriptionGateRoute,
     isLoginRoute,
+    isResetPasswordRoute,
     isOnRequiredGateRoute,
     isOnboardingRoute,
     isRetakeOnboarding,
