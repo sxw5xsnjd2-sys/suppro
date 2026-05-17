@@ -642,7 +642,7 @@ function BenefitGridCard({
             ]}
           >
             <Text style={styles.benefitCtaText}>
-              {`Go to ${String(benefit.label).toLowerCase()}`}
+              {`Go to ${String(benefit.label)}`}
             </Text>
             <Ionicons
               name="arrow-forward"
@@ -1004,7 +1004,7 @@ function BenefitRow({
             ]}
           >
             <Text style={styles.benefitCtaText}>
-              {`Go to ${String(benefit.label).toLowerCase()}`}
+              {`Go to ${String(benefit.label)}`}
             </Text>
             <Ionicons
               name="arrow-forward"
@@ -3496,7 +3496,6 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textStrong,
     marginRight: 8,
-    textTransform: "lowercase",
   },
   moreBenefitsRow: {
     flexDirection: "row",
