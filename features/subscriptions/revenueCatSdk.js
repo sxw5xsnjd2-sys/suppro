@@ -15,6 +15,10 @@ const REVENUECAT_CANCELLATION_LOG_PATTERNS = [
   /\buser cancell?ed\b/i,
   /\bcancelled purchase\b/i,
 ];
+const REVENUECAT_BENIGN_ATTRIBUTE_SYNC_LOG_PATTERNS = [
+  /\$attConsentStatus":\s*"A newer value exists for this attribute\./i,
+  /\berror when syncing subscriber attributes\b/i,
+];
 
 function buildUnavailableSdk(error) {
   return {
@@ -111,9 +115,35 @@ export function isExpectedRevenueCatCancellationLog({
   );
 }
 
-function forwardRevenueCatLog(logLevel, message) {
+function shouldDowngradeRevenueCatErrorLog({ logLevel = "", message = "" } = {}) {
+  if (typeof message !== "string") {
+    return false;
+  }
+
   const normalizedLevel =
     typeof logLevel === "string" ? logLevel.trim().toUpperCase() : "";
+
+  if (normalizedLevel !== "ERROR") {
+    return false;
+  }
+
+  const normalizedMessage = message.trim();
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  return REVENUECAT_BENIGN_ATTRIBUTE_SYNC_LOG_PATTERNS.some((pattern) =>
+    pattern.test(normalizedMessage)
+  );
+}
+
+function forwardRevenueCatLog(logLevel, message) {
+  let normalizedLevel =
+    typeof logLevel === "string" ? logLevel.trim().toUpperCase() : "";
+
+  if (shouldDowngradeRevenueCatErrorLog({ logLevel: normalizedLevel, message })) {
+    normalizedLevel = "WARN";
+  }
 
   if (
     !IS_DEVELOPMENT_BUILD &&

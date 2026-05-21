@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@src/lib/supabase";
 import { hasNonAnonymousUser } from "@src/lib/authState";
 import { getUserAuthProvider, getUserDisplayName } from "@src/lib/account";
@@ -42,6 +43,8 @@ const REVENUECAT_REFRESH_TIMEOUT_MS = 12000;
 const REVENUECAT_IDENTITY_TIMEOUT_MS = 12000;
 const REVENUECAT_RESTORE_TIMEOUT_MS = 15000;
 const REVENUECAT_PAYWALL_TIMEOUT_MS = 15000;
+const REVENUECAT_SUBSCRIBER_ATTRIBUTES_CACHE_KEY =
+  "suppro:revenuecat:subscriber-attributes:v1";
 const EXISTING_SUBSCRIPTION_MESSAGE_PATTERNS = [
   /\balready subscribed\b/i,
   /\balready purchased\b/i,
@@ -203,6 +206,43 @@ function createRevenueCatTimeoutError(message) {
   return error;
 }
 
+function normalizeSubscriberAttributeValue(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function buildSubscriberAttributesSnapshot(user) {
+  if (!hasNonAnonymousUser(user)) {
+    return null;
+  }
+
+  const appUserId = normalizeSubscriberAttributeValue(user.id);
+  if (!appUserId) {
+    return null;
+  }
+
+  const displayName =
+    normalizeSubscriberAttributeValue(getUserDisplayName({ user })) ?? null;
+  const email = normalizeSubscriberAttributeValue(user?.email) ?? null;
+  const authProvider = normalizeSubscriberAttributeValue(
+    getUserAuthProvider(user),
+  );
+
+  return {
+    appUserId,
+    email,
+    displayName,
+    attributes: {
+      auth_provider: authProvider ?? "",
+      suppro_user_id: appUserId,
+    },
+  };
+}
+
 function withRevenueCatTimeout(
   operation,
   message,
@@ -314,6 +354,10 @@ export function RevenueCatProvider({ children }) {
   const currentIdentifiedAppUserIdRef = useRef(null);
   const identitySyncPromiseRef = useRef(null);
   const identitySyncTargetRef = useRef("");
+  const cachedSubscriberAttributesRef = useRef("");
+  const hasLoadedSubscriberAttributesCacheRef = useRef(false);
+  const subscriberAttributesSyncPromiseRef = useRef(null);
+  const subscriberAttributesSyncTargetRef = useRef("");
   const isMountedRef = useRef(false);
 
   const currentOffering = useMemo(
@@ -355,28 +399,134 @@ export function RevenueCatProvider({ children }) {
 
   const syncSubscriberAttributes = async (user) => {
     if (!hasConfiguredRef.current) return null;
-    if (!hasNonAnonymousUser(user)) return null;
     if (!revenueCatSdk.Purchases) return null;
+    const snapshot = buildSubscriberAttributesSnapshot(user);
 
-    const displayName = getUserDisplayName({ user }) || null;
-    const authProvider = getUserAuthProvider(user) || "";
-    const stableUserId = user.id;
+    if (!snapshot) return null;
 
+    if (!hasLoadedSubscriberAttributesCacheRef.current) {
+      try {
+        cachedSubscriberAttributesRef.current =
+          (await AsyncStorage.getItem(
+            REVENUECAT_SUBSCRIBER_ATTRIBUTES_CACHE_KEY,
+          )) ?? "";
+      } catch (error) {
+        logBuildAwareDiagnostic(
+          "warn",
+          "[revenuecat] Failed to load subscriber attribute cache",
+          {
+            developmentDetails: {
+              message:
+                typeof error?.message === "string"
+                  ? error.message
+                  : "Unknown error",
+            },
+          },
+        );
+      } finally {
+        hasLoadedSubscriberAttributesCacheRef.current = true;
+      }
+    }
+
+    const snapshotKey = JSON.stringify(snapshot);
+    if (cachedSubscriberAttributesRef.current === snapshotKey) {
+      return null;
+    }
+
+    if (
+      subscriberAttributesSyncPromiseRef.current &&
+      subscriberAttributesSyncTargetRef.current === snapshotKey
+    ) {
+      return subscriberAttributesSyncPromiseRef.current;
+    }
+
+    let syncPromise = null;
     try {
-      return await withRevenueCatTimeout(
-        Promise.all([
-          revenueCatSdk.Purchases.setEmail(user?.email ?? null),
-          revenueCatSdk.Purchases.setDisplayName(displayName),
-          revenueCatSdk.Purchases.setAttributes({
-            auth_provider: authProvider,
-            suppro_user_id: stableUserId,
-          }),
-        ]).then(() =>
-          revenueCatSdk.Purchases.syncAttributesAndOfferingsIfNeeded(),
-        ),
-        "RevenueCat took too long to sync your account details.",
-        REVENUECAT_IDENTITY_TIMEOUT_MS,
-      );
+      syncPromise = (async () => {
+        try {
+          const currentAppUserIdBeforeSet =
+            typeof revenueCatSdk.Purchases.getAppUserID === "function"
+              ? await revenueCatSdk.Purchases
+                  .getAppUserID()
+                  .catch(() => snapshot.appUserId)
+              : snapshot.appUserId;
+
+          if (currentAppUserIdBeforeSet !== snapshot.appUserId) {
+            return null;
+          }
+
+          await Promise.all([
+            revenueCatSdk.Purchases.setEmail(snapshot.email),
+            revenueCatSdk.Purchases.setDisplayName(snapshot.displayName),
+            revenueCatSdk.Purchases.setAttributes(snapshot.attributes),
+          ]);
+
+          const currentAppUserId =
+            typeof revenueCatSdk.Purchases.getAppUserID === "function"
+              ? await revenueCatSdk.Purchases
+                  .getAppUserID()
+                  .catch(() => snapshot.appUserId)
+              : snapshot.appUserId;
+
+          if (currentAppUserId !== snapshot.appUserId) {
+            return null;
+          }
+
+          await withRevenueCatTimeout(
+            revenueCatSdk.Purchases.syncAttributesAndOfferingsIfNeeded(),
+            "RevenueCat took too long to sync your account details.",
+            REVENUECAT_IDENTITY_TIMEOUT_MS,
+          );
+
+          cachedSubscriberAttributesRef.current = snapshotKey;
+
+          try {
+            await AsyncStorage.setItem(
+              REVENUECAT_SUBSCRIBER_ATTRIBUTES_CACHE_KEY,
+              snapshotKey,
+            );
+          } catch (error) {
+            logBuildAwareDiagnostic(
+              "warn",
+              "[revenuecat] Failed to persist subscriber attribute cache",
+              {
+                developmentDetails: {
+                  message:
+                    typeof error?.message === "string"
+                      ? error.message
+                      : "Unknown error",
+                },
+              },
+            );
+          }
+
+          return true;
+        } catch (error) {
+          logBuildAwareDiagnostic(
+            "warn",
+            "[revenuecat] Failed to sync subscriber attributes",
+            {
+              developmentDetails: {
+                message:
+                  typeof error?.message === "string"
+                    ? error.message
+                    : "Unknown error",
+              },
+            },
+          );
+          return null;
+        } finally {
+          if (subscriberAttributesSyncPromiseRef.current === syncPromise) {
+            subscriberAttributesSyncPromiseRef.current = null;
+            subscriberAttributesSyncTargetRef.current = "";
+          }
+        }
+      })();
+
+      subscriberAttributesSyncPromiseRef.current = syncPromise;
+      subscriberAttributesSyncTargetRef.current = snapshotKey;
+
+      return syncPromise;
     } catch (error) {
       logBuildAwareDiagnostic(
         "warn",
@@ -392,6 +542,10 @@ export function RevenueCatProvider({ children }) {
       );
       return null;
     }
+  };
+
+  const syncSubscriberAttributesInBackground = (user) => {
+    void syncSubscriberAttributes(user);
   };
 
   const refreshState = async ({
@@ -533,6 +687,7 @@ export function RevenueCatProvider({ children }) {
     });
 
     if (identityAction === "skip") {
+      syncSubscriberAttributesInBackground(user);
       return null;
     }
 
@@ -574,7 +729,7 @@ export function RevenueCatProvider({ children }) {
           }
         }
 
-        await syncSubscriberAttributes(user);
+        syncSubscriberAttributesInBackground(user);
         return await refreshState({
           silent: true,
           invalidateCustomerInfo: true,
@@ -810,7 +965,7 @@ export function RevenueCatProvider({ children }) {
           customerInfoListener,
         );
 
-        await syncSubscriberAttributes(initialUser);
+        syncSubscriberAttributesInBackground(initialUser);
         await refreshState({
           silent: true,
           invalidateCustomerInfo: true,
