@@ -319,7 +319,7 @@ test("scanner barcode orchestration preserves the DSLD secondary match when Open
   });
 });
 
-test("non-retail barcodes take the not_found path without calling retail data sources", async () => {
+test("non-retail barcodes check the local cache before taking the not_found path", async () => {
   const sequence = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "code128",
@@ -342,5 +342,56 @@ test("non-retail barcodes take the not_found path without calling retail data so
   const finalState = useScannerStore.getState();
   assert.equal(finalState.status, "not_found");
   assert.equal(finalState.error.code, "product_not_found");
-  assert.deepEqual(sequence, []);
+  assert.deepEqual(sequence, ["local"]);
+});
+
+test("photo rescue forwards barcodeType from scanner state", async () => {
+  let capturedPayload = null;
+  const { useScannerStore } = loadScannerStoreModule({
+    scanSupplementPhotos: async (payload) => {
+      capturedPayload = payload;
+      return {
+        productId: "",
+        displayName: "Scanned supplement",
+        productName: "Scanned supplement",
+        ingredients: ["Magnesium 200 mg"],
+        servingSizeText: "",
+        source: "photo_rescue",
+        confidence: null,
+        classificationConfidence: null,
+        createdProduct: false,
+        wroteCanonicalData: false,
+        isSupplement: true,
+        category: "",
+        message: "",
+        unresolvedIngredientCount: 0,
+        rawText: "",
+      };
+    },
+    fetchIngredientMatchCatalog: async () => [],
+    matchIngredientsToCatalog: (ingredients) => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: Array.isArray(ingredients) ? ingredients : [],
+    }),
+    extractIngredientCandidatesFromList: (ingredients) =>
+      Array.isArray(ingredients) ? ingredients : [],
+  });
+
+  useScannerStore.setState({
+    scanSessionId: 11,
+    barcode: "X00131RGZ5",
+    barcodeType: "code128",
+    product: null,
+  });
+
+  await useScannerStore.getState().enhanceScanWithPhotos({
+    scanSessionId: 11,
+    ingredientsPhoto: "data:image/png;base64,abcd",
+    productPhoto: "data:image/png;base64,efgh",
+  });
+
+  assert.equal(capturedPayload?.barcode, "X00131RGZ5");
+  assert.equal(capturedPayload?.barcodeType, "code128");
+  assert.equal(capturedPayload?.scanSessionId, "11");
 });

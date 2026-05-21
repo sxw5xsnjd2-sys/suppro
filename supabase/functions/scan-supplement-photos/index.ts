@@ -39,6 +39,8 @@ const REVIEW_TYPES = {
   doseUnverified: "dose_unverified",
 };
 
+const RETAIL_BARCODE_TYPES = new Set(["ean13", "ean8", "upc_a", "upc_e"]);
+const ALPHANUMERIC_BARCODE_TYPES = new Set(["code128", "code39", "code93"]);
 const ALLOWED_UNITS = new Set(["mcg", "mg", "g", "ml", "IU", "CFU"]);
 const CLASSIFICATION_PROMPT_VERSION = "photo_rescue_classify_v1";
 const EXTRACTION_PROMPT_VERSION = "photo_rescue_extract_v1";
@@ -288,8 +290,84 @@ function normalizeTextKey(value: unknown): string {
   return normalizeWhitespace(value).toLowerCase();
 }
 
-function normalizeBarcode(value: unknown): string {
-  return String(value ?? "").replace(/\D/g, "");
+function canonicalizeBarcodeType(value: unknown): string {
+  const rawType = trimString(value);
+  if (!rawType) {
+    return "";
+  }
+
+  const lowered = rawType.toLowerCase();
+
+  if (lowered.includes("ean13") || lowered.includes("ean-13")) {
+    return "ean13";
+  }
+
+  if (lowered.includes("ean8") || lowered.includes("ean-8")) {
+    return "ean8";
+  }
+
+  if (
+    lowered.includes("upca") ||
+    lowered.includes("upc-a") ||
+    lowered.includes("upc_a")
+  ) {
+    return "upc_a";
+  }
+
+  if (
+    lowered.includes("upce") ||
+    lowered.includes("upc-e") ||
+    lowered.includes("upc_e")
+  ) {
+    return "upc_e";
+  }
+
+  if (
+    lowered.includes("code128") ||
+    lowered.includes("code-128") ||
+    lowered.includes("code_128")
+  ) {
+    return "code128";
+  }
+
+  if (
+    lowered.includes("code39") ||
+    lowered.includes("code-39") ||
+    lowered.includes("code_39")
+  ) {
+    return "code39";
+  }
+
+  if (
+    lowered.includes("code93") ||
+    lowered.includes("code-93") ||
+    lowered.includes("code_93")
+  ) {
+    return "code93";
+  }
+
+  return lowered;
+}
+
+function normalizeBarcode(value: unknown, barcodeType?: unknown): string {
+  const rawBarcode = trimString(value);
+  const normalizedType = canonicalizeBarcodeType(barcodeType);
+
+  if (RETAIL_BARCODE_TYPES.has(normalizedType)) {
+    const cleaned = rawBarcode.replace(/\D/g, "");
+
+    if (normalizedType === "ean13" && /^\d{12}$/.test(cleaned)) {
+      return `0${cleaned}`;
+    }
+
+    return cleaned;
+  }
+
+  if (ALPHANUMERIC_BARCODE_TYPES.has(normalizedType)) {
+    return rawBarcode;
+  }
+
+  return rawBarcode;
 }
 
 function parseIntegerLike(value: unknown): number | null {
@@ -357,8 +435,11 @@ function sanitizeCurrentProduct(value: unknown): CurrentProductContext {
   };
 }
 
-function buildBarcodeLookupCandidates(barcode: string): string[] {
-  const normalizedBarcode = normalizeBarcode(barcode);
+function buildBarcodeLookupCandidates(
+  barcode: string,
+  barcodeType?: string | null
+): string[] {
+  const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
   const candidates = [normalizedBarcode];
 
   if (/^\d{12}$/.test(normalizedBarcode)) {
@@ -1018,16 +1099,18 @@ async function sha256Hex(input: string) {
 
 async function buildContentHash({
   barcode,
+  barcodeType,
   name,
   ingredients,
 }: {
   barcode: string;
+  barcodeType?: string | null;
   name: string;
   ingredients: string;
 }) {
   return sha256Hex(
     [
-      normalizeBarcode(barcode),
+      normalizeBarcode(barcode, barcodeType),
       normalizePlainText(name),
       normalizePlainText(ingredients),
     ].join("|")
@@ -1126,8 +1209,11 @@ async function fetchOffProductById(productId: string) {
   return data;
 }
 
-async function fetchOffProductByBarcode(barcode: string) {
-  const barcodeCandidates = buildBarcodeLookupCandidates(barcode);
+async function fetchOffProductByBarcode(
+  barcode: string,
+  barcodeType?: string | null
+) {
+  const barcodeCandidates = buildBarcodeLookupCandidates(barcode, barcodeType);
   const { data, error } = await adminSupabase!
     .from(TABLES.products)
     .select("id, barcode, name, ingredients")
@@ -1147,11 +1233,13 @@ async function fetchOffProductByBarcode(barcode: string) {
 async function resolveOrCreateProduct({
   requestedProductId,
   barcode,
+  barcodeType,
   fallbackName,
   fallbackIngredients,
 }: {
   requestedProductId: string;
   barcode: string;
+  barcodeType?: string | null;
   fallbackName: string;
   fallbackIngredients: string;
 }) {
@@ -1168,7 +1256,7 @@ async function resolveOrCreateProduct({
     }
   }
 
-  const existingByBarcode = await fetchOffProductByBarcode(barcode);
+  const existingByBarcode = await fetchOffProductByBarcode(barcode, barcodeType);
   if (existingByBarcode?.id) {
     return {
       productId: trimString(existingByBarcode.id),
@@ -1179,7 +1267,7 @@ async function resolveOrCreateProduct({
 
   const nextProduct = {
     id: crypto.randomUUID(),
-    barcode: normalizeBarcode(barcode),
+    barcode: normalizeBarcode(barcode, barcodeType),
     name: fallbackName || "Scanned supplement",
     ingredients: fallbackIngredients || "",
   };
@@ -1189,7 +1277,7 @@ async function resolveOrCreateProduct({
     .insert(nextProduct);
 
   if (insertError) {
-    const winningRow = await fetchOffProductByBarcode(barcode);
+    const winningRow = await fetchOffProductByBarcode(barcode, barcodeType);
     if (winningRow?.id) {
       return {
         productId: trimString(winningRow.id),
@@ -1619,6 +1707,7 @@ async function restoreCanonicalSnapshot({
 
 async function replaceCanonicalRows({
   productId,
+  barcode,
   rowsToInsert,
   masterRows,
   displayName,
@@ -1626,6 +1715,7 @@ async function replaceCanonicalRows({
   namingConfidence,
 }: {
   productId: string;
+  barcode: string | null;
   rowsToInsert: Record<string, unknown>[];
   masterRows: Record<string, unknown>[];
   displayName: string;
@@ -1667,6 +1757,7 @@ async function replaceCanonicalRows({
       .upsert(
         {
           product_id: productId,
+          barcode: trimString(barcode) || null,
           display_name: displayName,
           serving_size_text: servingSizeText,
           name_source: "photo_rescue_ai",
@@ -2102,6 +2193,7 @@ Deno.serve(async (req) => {
     const {
       scanSessionId,
       barcode,
+      barcodeType,
       ingredientsImage,
       productImage,
       currentProduct,
@@ -2141,11 +2233,10 @@ Deno.serve(async (req) => {
     const productResolution = await resolveOrCreateProduct({
       requestedProductId,
       barcode,
+      barcodeType,
       fallbackName: rawProductName,
       fallbackIngredients: rawIngredientText,
     });
-    const canonicalBarcode =
-      trimString(productResolution.product?.barcode) || barcode;
 
     const processedAt = new Date().toISOString();
     const offProductName =
@@ -2153,7 +2244,8 @@ Deno.serve(async (req) => {
       trimString(productResolution.product?.name) ||
       "Scanned supplement";
     const contentHash = await buildContentHash({
-      barcode: canonicalBarcode,
+      barcode,
+      barcodeType,
       name: offProductName,
       ingredients: rawIngredientText,
     });
@@ -2163,7 +2255,7 @@ Deno.serve(async (req) => {
       .upsert(
         {
           id: productResolution.productId,
-          barcode: canonicalBarcode,
+          barcode,
           name: offProductName,
           ingredients: rawIngredientText,
         },
@@ -2183,7 +2275,7 @@ Deno.serve(async (req) => {
       .upsert(
         {
           product_id: productResolution.productId,
-          barcode: canonicalBarcode,
+          barcode,
           name: offProductName,
           ingredients: rawIngredientText,
           content_hash: contentHash,
@@ -2323,6 +2415,7 @@ Deno.serve(async (req) => {
 
     await replaceCanonicalRows({
       productId: productResolution.productId,
+      barcode,
       rowsToInsert: resolvedIngredients.rows,
       masterRows: resolvedIngredients.activeRows,
       displayName,

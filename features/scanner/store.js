@@ -263,10 +263,28 @@ export const useScannerStore = create((set, get) => ({
       let dsldCacheHit = false;
       let dsldConfidence = null;
 
-      if (!retailBarcode) {
-          const notFound = normalizeBarcodeScanFailure({
-            code: "product_not_found",
-          });
+      try {
+        product = await fetchLocalBarcodeScanProduct(nextBarcode, nextBarcodeType);
+        extractionSource = trimString(product?.scanDataSource) || null;
+      } catch (localLookupError) {
+        logBuildAwareDiagnostic(
+          "warn",
+          "[scanner] local barcode lookup failed; falling back to OpenFoodFacts",
+          {
+            developmentDetails: {
+              message:
+                typeof localLookupError?.message === "string"
+                  ? localLookupError.message
+                  : "Unknown error",
+            },
+          }
+        );
+      }
+
+      if (!product && !retailBarcode) {
+        const notFound = normalizeBarcodeScanFailure({
+          code: "product_not_found",
+        });
 
         set(() => ({
           status: notFound.status,
@@ -286,25 +304,6 @@ export const useScannerStore = create((set, get) => ({
         }));
 
         return null;
-      }
-
-      try {
-        // Local and OpenFoodFacts lookups are retail-only and expect numeric barcodes.
-        product = await fetchLocalBarcodeScanProduct(nextBarcode, nextBarcodeType);
-        extractionSource = trimString(product?.scanDataSource) || null;
-      } catch (localLookupError) {
-        logBuildAwareDiagnostic(
-          "warn",
-          "[scanner] local barcode lookup failed; falling back to OpenFoodFacts",
-          {
-            developmentDetails: {
-              message:
-                typeof localLookupError?.message === "string"
-                  ? localLookupError.message
-                  : "Unknown error",
-            },
-          }
-        );
       }
 
       if (!product) {
@@ -551,6 +550,7 @@ export const useScannerStore = create((set, get) => ({
       const extraction = await scanSupplementPhotos({
         scanSessionId: String(requestedScanSessionId),
         barcode: currentState.barcode,
+        barcodeType: currentState.barcodeType,
         productId: trimString(currentState.product?.productId) || undefined,
         currentProduct: currentState.product,
         ingredientsImage,

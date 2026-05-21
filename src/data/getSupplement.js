@@ -411,7 +411,7 @@ async function getSupplementProductById(catalogId, fallbackName) {
   const { data, error } = await supabase
     .from("supplement_products_master")
     .select(
-      "product_id, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at"
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at"
     )
     .eq("product_id", productId)
     .maybeSingle();
@@ -432,7 +432,8 @@ async function getSupplementProductById(catalogId, fallbackName) {
   );
   const displayName =
     trimString(data?.display_name) || trimString(fallbackName) || "Supplement";
-  const barcode = await getOffProductBarcode(data.product_id);
+  const barcode =
+    trimString(data?.barcode) || (await getOffProductBarcode(data.product_id));
 
   return {
     ...buildLinkedSupplementPayload({

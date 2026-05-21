@@ -347,6 +347,29 @@ test("scanSupplementPhotos normalizes nested response envelopes and snake_case f
   });
 });
 
+test("scanSupplementPhotos forwards barcodeType to the edge function payload", async () => {
+  let capturedBody = null;
+  const { scanSupplementPhotos } = loadScanSupplementPhotosModule({
+    fetch: async (_url, options) => {
+      capturedBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({}),
+      };
+    },
+  });
+
+  await scanSupplementPhotos({
+    barcode: "X00131RGZ5",
+    barcodeType: "code128",
+    scanSessionId: "9",
+  });
+
+  assert.equal(capturedBody?.barcode, "X00131RGZ5");
+  assert.equal(capturedBody?.barcodeType, "code128");
+  assert.equal(capturedBody?.scanSessionId, "9");
+});
+
 test("scanSupplementPhotos normalizes backend validation failures with safe messages", async () => {
   const { scanSupplementPhotos } = loadScanSupplementPhotosModule({
     fetch: async () => ({

@@ -102,6 +102,43 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
     normalizedBarcode,
     barcodeType
   );
+  const { data: masterBarcodeRows, error: masterBarcodeError } = await supabase
+    .from("supplement_products_master")
+    .select(
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text"
+    )
+    .in("barcode", barcodeCandidates);
+
+  if (masterBarcodeError) {
+    throw masterBarcodeError;
+  }
+
+  const masterByBarcode = barcodeCandidates
+    .map((candidate) =>
+      (masterBarcodeRows ?? []).find((row) => trimString(row?.barcode) === candidate)
+    )
+    .find(Boolean);
+
+  if (masterByBarcode?.product_id) {
+    const masterIngredients = extractMasterIngredients(
+      masterByBarcode.active_ingredients_json
+    );
+
+    return {
+      barcode: trimString(masterByBarcode.barcode) || normalizedBarcode,
+      productId: trimString(masterByBarcode.product_id) || null,
+      productName: trimString(masterByBarcode.display_name) || "Scanned supplement",
+      ingredientsText: masterIngredients
+        .map((item) => getIngredientDisplayName(item))
+        .join(", "),
+      sourceIngredients: masterIngredients,
+      sourceStatus: 1,
+      sourceStatusVerbose: "supplement_products_master",
+      scanDataSource: "supplement_products_master",
+      servingSizeText: trimString(masterByBarcode.serving_size_text) || null,
+    };
+  }
+
   const { data: productRows, error: productError } = await supabase
     .from("off_products")
     .select("id, barcode, name, ingredients")
@@ -123,7 +160,9 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
 
   const { data: masterRows, error: masterError } = await supabase
     .from("supplement_products_master")
-    .select("product_id, display_name, active_ingredients_json, serving_size_text")
+    .select(
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text"
+    )
     .eq("product_id", product.id)
     .limit(1);
 
@@ -151,7 +190,10 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
     : "off_products";
 
   return {
-    barcode: trimString(product?.barcode) || normalizedBarcode,
+    barcode:
+      trimString(master?.barcode) ||
+      trimString(product?.barcode) ||
+      normalizedBarcode,
     productId: trimString(product?.id) || null,
     productName,
     ingredientsText,

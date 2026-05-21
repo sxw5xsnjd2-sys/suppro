@@ -1,4 +1,7 @@
 const MAX_REQUEST_BYTES = 8_000_000
+const RETAIL_BARCODE_TYPES = new Set(["ean13", "ean8", "upc_a", "upc_e"])
+const ALPHANUMERIC_BARCODE_TYPES = new Set(["code128", "code39", "code93"])
+const SAFE_ALPHANUMERIC_BARCODE_PATTERN = /^[A-Za-z0-9._-]{4,40}$/
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : ""
@@ -6,6 +9,65 @@ function trimString(value) {
 
 function normalizeWhitespace(value) {
   return trimString(value).replace(/\s+/g, " ").trim()
+}
+
+function canonicalizeBarcodeType(value) {
+  const rawType = trimString(value)
+  if (!rawType) {
+    return ""
+  }
+
+  const lowered = rawType.toLowerCase()
+
+  if (lowered.includes("ean13") || lowered.includes("ean-13")) {
+    return "ean13"
+  }
+
+  if (lowered.includes("ean8") || lowered.includes("ean-8")) {
+    return "ean8"
+  }
+
+  if (
+    lowered.includes("upca") ||
+    lowered.includes("upc-a") ||
+    lowered.includes("upc_a")
+  ) {
+    return "upc_a"
+  }
+
+  if (
+    lowered.includes("upce") ||
+    lowered.includes("upc-e") ||
+    lowered.includes("upc_e")
+  ) {
+    return "upc_e"
+  }
+
+  if (
+    lowered.includes("code128") ||
+    lowered.includes("code-128") ||
+    lowered.includes("code_128")
+  ) {
+    return "code128"
+  }
+
+  if (
+    lowered.includes("code39") ||
+    lowered.includes("code-39") ||
+    lowered.includes("code_39")
+  ) {
+    return "code39"
+  }
+
+  if (
+    lowered.includes("code93") ||
+    lowered.includes("code-93") ||
+    lowered.includes("code_93")
+  ) {
+    return "code93"
+  }
+
+  return lowered
 }
 
 function getByteLength(value) {
@@ -16,8 +78,47 @@ function getByteLength(value) {
   return String(value ?? "").length
 }
 
-function normalizeBarcode(value) {
-  return String(value ?? "").replace(/\D/g, "")
+function normalizeBarcode(value, barcodeType) {
+  const rawBarcode = trimString(value)
+  const normalizedType = canonicalizeBarcodeType(barcodeType)
+
+  if (RETAIL_BARCODE_TYPES.has(normalizedType)) {
+    const cleaned = rawBarcode.replace(/\D/g, "")
+
+    if (normalizedType === "ean13" && /^\d{12}$/.test(cleaned)) {
+      return `0${cleaned}`
+    }
+
+    return cleaned
+  }
+
+  return rawBarcode
+}
+
+function isValidBarcode(barcode, barcodeType) {
+  const normalizedType = canonicalizeBarcodeType(barcodeType)
+
+  if (normalizedType === "ean13") {
+    return /^\d{13}$/.test(barcode)
+  }
+
+  if (normalizedType === "ean8") {
+    return /^\d{8}$/.test(barcode)
+  }
+
+  if (normalizedType === "upc_a") {
+    return /^\d{12}$/.test(barcode)
+  }
+
+  if (normalizedType === "upc_e") {
+    return /^\d{6,8}$/.test(barcode)
+  }
+
+  if (ALPHANUMERIC_BARCODE_TYPES.has(normalizedType)) {
+    return SAFE_ALPHANUMERIC_BARCODE_PATTERN.test(barcode)
+  }
+
+  return SAFE_ALPHANUMERIC_BARCODE_PATTERN.test(barcode)
 }
 
 function parseIntegerLike(value) {
@@ -97,7 +198,8 @@ export function validateScanSupplementPhotosRequest(rawBodyText) {
   }
 
   const scanSessionId = parseIntegerLike(body.scanSessionId)
-  const barcode = normalizeBarcode(body.barcode)
+  const barcodeType = canonicalizeBarcodeType(body.barcodeType)
+  const barcode = normalizeBarcode(body.barcode, barcodeType)
   const ingredientsImage = sanitizeImageDataUrl(body.ingredientsImage)
   const productImage = sanitizeImageDataUrl(body.productImage)
   const currentProduct = sanitizeCurrentProduct(body.currentProduct)
@@ -112,6 +214,10 @@ export function validateScanSupplementPhotosRequest(rawBodyText) {
     return buildInvalidPayloadResponse("Missing barcode.")
   }
 
+  if (!isValidBarcode(barcode, barcodeType)) {
+    return buildInvalidPayloadResponse("Invalid barcode.")
+  }
+
   if (!ingredientsImage || !productImage) {
     return buildInvalidPayloadResponse(
       "Both ingredientsImage and productImage are required."
@@ -124,6 +230,7 @@ export function validateScanSupplementPhotosRequest(rawBodyText) {
       body,
       scanSessionId,
       barcode,
+      barcodeType,
       ingredientsImage,
       productImage,
       currentProduct,

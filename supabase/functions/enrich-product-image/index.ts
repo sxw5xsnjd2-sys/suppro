@@ -494,7 +494,7 @@ async function fetchProduct(productId: string) {
   const { data, error } = await adminSupabase!
     .from(TABLES.supplementProducts)
     .select(
-      "product_id, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at"
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at"
     )
     .eq("product_id", productId)
     .maybeSingle();
@@ -520,29 +520,36 @@ async function fetchProduct(productId: string) {
     });
   }
 
-  const { data: sourceProduct, error: sourceProductError } =
-    await adminSupabase!
-      .from(TABLES.products)
-      .select("barcode")
-      .eq("id", productId)
-      .maybeSingle();
+  const masterBarcode = trimString(data?.barcode) || null;
+  let sourceProductBarcode: string | null = null;
 
-  if (sourceProductError) {
-    logEdgeDiagnostic(
-      "warn",
-      "[enrich-product-image] source product barcode lookup failed",
-      {
-        productId,
-        message: sourceProductError.message,
-      }
-    );
+  if (!masterBarcode) {
+    const { data: sourceProduct, error: sourceProductError } =
+      await adminSupabase!
+        .from(TABLES.products)
+        .select("barcode")
+        .eq("id", productId)
+        .maybeSingle();
+
+    if (sourceProductError) {
+      logEdgeDiagnostic(
+        "warn",
+        "[enrich-product-image] source product barcode lookup failed",
+        {
+          productId,
+          message: sourceProductError.message,
+        }
+      );
+    } else {
+      sourceProductBarcode = trimString(sourceProduct?.barcode) || null;
+    }
   }
 
   return {
     ...data,
     id: String(data.product_id),
     catalogType: "supplement_product",
-    barcode: trimString(sourceProduct?.barcode) || null,
+    barcode: masterBarcode || sourceProductBarcode,
     brand_name: trimString(naming?.brand_name) || null,
     naming_display_name: trimString(naming?.display_name) || null,
     product_type: trimString(naming?.product_type) || null,

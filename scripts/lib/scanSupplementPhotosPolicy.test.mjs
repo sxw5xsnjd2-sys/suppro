@@ -77,6 +77,7 @@ test("scan/photo rescue validator normalizes accepted payloads", () => {
     JSON.stringify({
       scanSessionId: "42",
       barcode: " 0123-4567-8901 ",
+      barcodeType: "ean13",
       ingredientsImage: "data:image/png;base64,abcd",
       productImage: "data:image/jpeg;base64,efgh",
       currentProduct: {
@@ -93,6 +94,7 @@ test("scan/photo rescue validator normalizes accepted payloads", () => {
     body: {
       scanSessionId: "42",
       barcode: " 0123-4567-8901 ",
+      barcodeType: "ean13",
       ingredientsImage: "data:image/png;base64,abcd",
       productImage: "data:image/jpeg;base64,efgh",
       currentProduct: {
@@ -103,7 +105,8 @@ test("scan/photo rescue validator normalizes accepted payloads", () => {
       },
     },
     scanSessionId: 42,
-    barcode: "012345678901",
+    barcode: "0012345678901",
+    barcodeType: "ean13",
     ingredientsImage: "data:image/png;base64,abcd",
     productImage: "data:image/jpeg;base64,efgh",
     currentProduct: {
@@ -115,4 +118,23 @@ test("scan/photo rescue validator normalizes accepted payloads", () => {
     },
     requestedProductId: "prod_123",
   })
+})
+
+test("scan/photo rescue validator preserves alphanumeric non-retail barcodes", () => {
+  const { validateScanSupplementPhotosRequest } =
+    loadScanSupplementPhotosPolicyModule()
+
+  const result = validateScanSupplementPhotosRequest(
+    JSON.stringify({
+      scanSessionId: 7,
+      barcode: " X00131RGZ5 ",
+      barcodeType: "code128",
+      ingredientsImage: "data:image/png;base64,abcd",
+      productImage: "data:image/jpeg;base64,efgh",
+    })
+  )
+
+  assert.equal(result.ok, true)
+  assert.equal(result.value.barcode, "X00131RGZ5")
+  assert.equal(result.value.barcodeType, "code128")
 })
