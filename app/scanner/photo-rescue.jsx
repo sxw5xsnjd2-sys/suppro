@@ -78,6 +78,18 @@ function normalizeOriginParam(value) {
   return value === "onboarding" ? "onboarding" : "";
 }
 
+function normalizeEntryParam(value) {
+  if (Array.isArray(value)) {
+    return normalizeEntryParam(value[0]);
+  }
+
+  if (value === "scanner_not_found" || value === "supplement_info") {
+    return value;
+  }
+
+  return "";
+}
+
 function PhotoRescueFallback({
   title,
   description,
@@ -112,6 +124,7 @@ export default function ScannerPhotoRescueScreen() {
   const params = useLocalSearchParams();
   const requestedScanSessionId = normalizeIntegerParam(params.scanSessionId);
   const originParam = normalizeOriginParam(params.origin);
+  const entryParam = normalizeEntryParam(params.entry);
   const [permission, requestPermission] = useCameraPermissions();
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [step, setStep] = useState("ingredients");
@@ -261,10 +274,42 @@ export default function ScannerPhotoRescueScreen() {
         productPhoto: nextPhoto,
       });
 
+      if (entryParam === "scanner_not_found") {
+        const nextScanState = useScannerStore.getState();
+        const nextScanSessionId = Number.isFinite(nextScanState.scanSessionId)
+          ? nextScanState.scanSessionId
+          : effectiveScanSessionId;
+
+        router.replace({
+          pathname: "/modal/supplement-info",
+          params: {
+            source: "scanned",
+            origin: originParam || undefined,
+            scanSessionId: String(nextScanSessionId),
+            name:
+              nextScanState.product?.productName ||
+              nextScanState.product?.name ||
+              nextScanState.product?.displayName ||
+              "Scanned supplement",
+          },
+        });
+        return;
+      }
+
       router.back();
     } catch (error) {
+      console.warn("[scanner-photo-rescue] screen submit failed", {
+        message: error?.message,
+        code: error?.code,
+        category: error?.category,
+        status: error?.status,
+        isQuotaLimited: error?.isQuotaLimited,
+        retryAfterSeconds: error?.retryAfterSeconds,
+        raw: error,
+      });
+
       setCaptureError(
-        error instanceof Error
+        typeof error?.message === "string" && error.message.trim()
           ? error.message
           : "We could not improve that scan with those photos."
       );

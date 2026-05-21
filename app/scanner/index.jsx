@@ -192,6 +192,7 @@ export default function ScannerScreen() {
     router.push({
       pathname: "/scanner/photo-rescue",
       params: {
+        entry: "scanner_not_found",
         scanSessionId: String(scanSessionId),
         origin: scannerOrigin,
       },

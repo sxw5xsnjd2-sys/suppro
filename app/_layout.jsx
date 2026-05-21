@@ -42,6 +42,9 @@ import {
 import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import { provisionOnboardingSelections } from "@src/lib/onboardingProvisioning";
 import { clearAnonymousSessionIfPresent, supabase } from "@src/lib/supabase";
+import * as WebBrowser from "expo-web-browser";
+
+WebBrowser.maybeCompleteAuthSession();
 
 SplashScreen.preventAutoHideAsync();
 

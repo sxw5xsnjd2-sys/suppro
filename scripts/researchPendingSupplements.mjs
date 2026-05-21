@@ -1248,19 +1248,23 @@ async function upsertAlias(supabase, supplementId, alias) {
 
   const { data: existing, error: existingError } = await supabase
     .from("supplement_aliases")
-    .select("id")
-    .eq("supplement_id", supplementId)
+    .select("id, supplement_id")
     .eq("alias_normalized", normalized)
     .limit(1);
+
   if (existingError) throw new Error(`[supplement_aliases] ${existingError.message}`);
-  if (existing?.length) return;
+
+  if (existing?.length) {
+    return;
+  }
 
   const { error } = await supabase.from("supplement_aliases").insert({
-      supplement_id: supplementId,
-      alias: normalizeText(alias),
-      alias_normalized: normalized,
-      alias_type: "ai_researched",
-    });
+    supplement_id: supplementId,
+    alias: normalizeText(alias),
+    alias_normalized: normalized,
+    alias_type: "ai_researched",
+  });
+
   if (error) throw new Error(`[supplement_aliases] ${error.message}`);
 }
 
@@ -1487,20 +1491,42 @@ async function applyAliasExisting({ supabase, candidate, match, aliases }) {
 }
 
 function buildBenefitRows(supplement, research, allowedDomains) {
-  return (research.benefits ?? []).map((benefit) => ({
-    supplement_id: supplement.id,
-    supplement_name: supplement.name,
-    label: benefit.label,
-    icon: normalizeEvidenceRating(benefit.evidence_rating),
-    score: clampScore(benefit.score),
-    evidence: normalizeText(benefit.evidence),
-    evidence_source: selectPrimaryBenefitEvidenceSource(
-      benefit,
-      research.citations,
-      allowedDomains
-    ),
-    ranking_reason: normalizeText(benefit.ranking_reason),
-  }));
+  const rows = [];
+  const seenByLabel = new Map();
+
+  for (const benefit of research.benefits ?? []) {
+    const label = normalizeText(benefit?.label);
+    const labelKey = normalizeLookupText(label);
+    if (!label || !labelKey) continue;
+
+    const row = {
+      supplement_id: supplement.id,
+      supplement_name: supplement.name,
+      label,
+      icon: normalizeEvidenceRating(benefit.evidence_rating),
+      score: clampScore(benefit.score),
+      evidence: normalizeText(benefit.evidence),
+      evidence_source: selectPrimaryBenefitEvidenceSource(
+        benefit,
+        research.citations,
+        allowedDomains
+      ),
+      ranking_reason: normalizeText(benefit.ranking_reason),
+    };
+
+    const existingIndex = seenByLabel.get(labelKey);
+    if (existingIndex === undefined) {
+      seenByLabel.set(labelKey, rows.length);
+      rows.push(row);
+      continue;
+    }
+
+    if (row.score > rows[existingIndex].score) {
+      rows[existingIndex] = row;
+    }
+  }
+
+  return rows;
 }
 
 async function applyResearchRelations({
@@ -1540,6 +1566,29 @@ async function applyNewSupplement({ supabase, candidate, research, allowedDomain
     fetchAllRows(supabase, "supplements", "id, name, status"),
     fetchAllRows(supabase, "supplement_aliases", "supplement_id, alias, alias_normalized"),
   ]);
+  const exactExistingSupplement = freshSupplements.find(
+    (row) => normalizeLookupText(row?.name) === normalizeLookupText(canonicalName)
+  );
+
+  if (exactExistingSupplement) {
+    if (exactExistingSupplement.status === "pending") {
+      return applyPendingSupplementRefresh({
+        supabase,
+        candidate,
+        match: exactExistingSupplement,
+        research,
+        allowedDomains,
+      });
+    }
+
+    return applyAliasExisting({
+      supabase,
+      candidate,
+      match: exactExistingSupplement,
+      aliases: research.aliases ?? [],
+    });
+  }
+
   const duplicate = findDuplicateCandidate(
     canonicalName,
     buildCatalogEntries(freshSupplements, freshAliases)

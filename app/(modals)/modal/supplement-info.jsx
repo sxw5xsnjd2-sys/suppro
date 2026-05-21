@@ -1774,6 +1774,7 @@ export default function SupplementInfoModal() {
     router.push({
       pathname: "/scanner/photo-rescue",
       params: {
+        entry: "supplement_info",
         scanSessionId: String(effectiveScanSessionId ?? ""),
       },
     });
