@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -877,6 +878,15 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
+    ...Platform.select({
+      android: {
+        backgroundColor: appTheme.colors.surface,
+        borderColor: appTheme.colors.borderSubtle,
+        overflow: "hidden",
+        elevation: 0,
+        shadowOpacity: 0,
+      },
+    }),
   },
   adherenceHeroCardStacked: {
     flexDirection: "column",
@@ -991,6 +1001,14 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
     overflow: "hidden",
+    ...Platform.select({
+      android: {
+        backgroundColor: appTheme.colors.surface,
+        borderColor: appTheme.colors.borderSubtle,
+        elevation: 0,
+        shadowOpacity: 0,
+      },
+    }),
   },
   insetDividerWrap: {
     paddingHorizontal: 16,

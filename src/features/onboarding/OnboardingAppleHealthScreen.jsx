@@ -15,7 +15,7 @@ import {
 import { requestOnboardingAppleHealthPermissions } from "@/features/health/onboardingAppleHealth";
 import { typography } from "@/theme";
 
-const NEXT_STEP_HREF = "/onboarding?mode=first_run&step=paywall";
+const NEXT_STEP_HREF = "/onboarding?mode=first_run&step=referral-source";
 
 export default function OnboardingAppleHealthScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);

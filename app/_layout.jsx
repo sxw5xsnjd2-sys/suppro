@@ -57,6 +57,7 @@ const ONBOARDING_PAYWALL_TRANSITION_GATE_STATES = new Set([
   "needs_questions",
   "needs_rating",
   "needs_apple_health",
+  "needs_referral_source",
   "needs_paywall",
 ]);
 
@@ -201,6 +202,7 @@ function RootNavigator() {
       needs_questions: "/onboarding?mode=first_run",
       needs_rating: "/onboarding?mode=first_run&step=rating",
       needs_apple_health: "/onboarding?mode=first_run&step=apple-health",
+      needs_referral_source: "/onboarding?mode=first_run&step=referral-source",
       needs_paywall: "/onboarding?mode=first_run&step=paywall",
       needs_signup: "/login?mode=create",
       needs_login: "/login?mode=login",
@@ -262,12 +264,19 @@ function RootNavigator() {
       );
     }
 
+    if (effectiveGateState === "needs_referral_source") {
+      return (
+        isOnboardingRoute &&
+        !isRetakeOnboarding &&
+        stepParam === "referral-source"
+      );
+    }
+
     if (effectiveGateState === "needs_paywall") {
       return (
-        (isOnboardingRoute &&
-          !isRetakeOnboarding &&
-          (stepParam === "paywall" || isBuildingOnboardingRoute)) ||
-        (isLoginRoute && modeParam === "login")
+        isOnboardingRoute &&
+        !isRetakeOnboarding &&
+        (stepParam === "paywall" || stepParam === "book-offer")
       );
     }
 
@@ -286,7 +295,6 @@ function RootNavigator() {
     isOnboardingScannerFlow,
     isRetakeOnboarding,
     isVerifyEmailRoute,
-    modeParam,
     stepParam,
   ]);
 

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import {
   AppButton,
@@ -261,6 +263,7 @@ const DAYS = [
 ];
 
 export default function SupplementModal() {
+  const insets = useSafeAreaInsets();
   const {
     newCatalogId,
     newCatalogName,
@@ -342,6 +345,12 @@ export default function SupplementModal() {
   const timeLabel =
     TIME_OPTIONS.find((option) => option.minutes === timeMinutes)?.label ??
     "08:00";
+  const headerTopInsetOffset =
+    Platform.OS === "android"
+      ? typeof appTheme.header.topInsetOffset === "number"
+        ? appTheme.header.topInsetOffset
+        : Math.max(insets.top, 24)
+      : undefined;
 
   const toggleDay = (day) => {
     setDaysOfWeek((previous) =>
@@ -562,9 +571,11 @@ export default function SupplementModal() {
       <BackdropScreen
         bottomInsetOffset={72}
         minBottomPadding={96}
+        nestedScrollEnabled={Platform.OS === "android"}
         header={
           <AppHeader
             insetPreset="modal"
+            topInsetOffset={headerTopInsetOffset}
             bottomPadding={8}
             leftSlot={
               <AppButton
@@ -848,6 +859,8 @@ export default function SupplementModal() {
               <ScrollView
                 ref={timeScrollRef}
                 showsVerticalScrollIndicator={false}
+                nestedScrollEnabled={Platform.OS === "android"}
+                keyboardShouldPersistTaps="handled"
                 snapToInterval={TIME_ITEM_HEIGHT}
                 decelerationRate="fast"
                 contentOffset={{ x: 0, y: initialTimeOffset }}

@@ -19,6 +19,8 @@ export function BackdropScreen({
   bottomInsetOffset = 120,
   minBottomPadding = 132,
   showsVerticalScrollIndicator = false,
+  nestedScrollEnabled = false,
+  keyboardShouldPersistTaps,
   scrollable = true,
   onHeaderHeightChange,
   floatingSlot,
@@ -94,6 +96,8 @@ export function BackdropScreen({
         <ScrollView
           ref={scrollViewRef}
           showsVerticalScrollIndicator={showsVerticalScrollIndicator}
+          nestedScrollEnabled={nestedScrollEnabled}
+          keyboardShouldPersistTaps={keyboardShouldPersistTaps}
           onScroll={isCollapsibleHeader ? handleScroll : undefined}
           scrollEventThrottle={isCollapsibleHeader ? 16 : undefined}
           contentContainerStyle={[

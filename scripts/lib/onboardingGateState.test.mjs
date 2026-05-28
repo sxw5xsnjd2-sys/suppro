@@ -51,6 +51,7 @@ function loadOnboardingModule({
 return {
   ONBOARDING_APPLE_HEALTH_COMPLETED_STORAGE_KEY,
   ONBOARDING_RATING_COMPLETED_STORAGE_KEY,
+  ONBOARDING_REFERRAL_SOURCE_STORAGE_KEY,
   SIGNUP_COMPLETED_STORAGE_KEY,
   getOnboardingGateState,
   resolvePostAppleHealthOnboardingHref,
@@ -191,7 +192,7 @@ test("rating completion routes first-run onboarding to Apple Health before paywa
   });
 });
 
-test("rating completion on Android skips Apple Health and goes to paywall", async () => {
+test("rating completion on Android skips Apple Health and goes to referral source", async () => {
   const asyncStorage = createAsyncStorage({
     "suppro.onboarding.questionnaire.v1": JSON.stringify({
       completedAt: "2026-05-06T10:00:00.000Z",
@@ -208,11 +209,11 @@ test("rating completion on Android skips Apple Health and goes to paywall", asyn
     const gateState = await getOnboardingGateState({
       requiresAppleHealthStep: false,
     });
-    assert.equal(gateState, "needs_paywall");
+    assert.equal(gateState, "needs_referral_source");
   });
 });
 
-test("skipping Apple Health still reaches paywall", async () => {
+test("skipping Apple Health still reaches referral source", async () => {
   const asyncStorage = createAsyncStorage({
     "suppro.onboarding.questionnaire.v1": JSON.stringify({
       completedAt: "2026-05-06T10:00:00.000Z",
@@ -228,11 +229,11 @@ test("skipping Apple Health still reaches paywall", async () => {
 
   await assert.doesNotReject(async () => {
     const gateState = await getOnboardingGateState();
-    assert.equal(gateState, "needs_paywall");
+    assert.equal(gateState, "needs_referral_source");
   });
 });
 
-test("accepting or denying Apple Health still reaches paywall", async () => {
+test("accepting or denying Apple Health still reaches referral source", async () => {
   const asyncStorage = createAsyncStorage({
     "suppro.onboarding.questionnaire.v1": JSON.stringify({
       completedAt: "2026-05-06T10:00:00.000Z",
@@ -248,11 +249,35 @@ test("accepting or denying Apple Health still reaches paywall", async () => {
 
   await assert.doesNotReject(async () => {
     const gateState = await getOnboardingGateState();
+    assert.equal(gateState, "needs_referral_source");
+  });
+});
+
+test("referral source completion routes first-run onboarding to paywall", async () => {
+  const asyncStorage = createAsyncStorage({
+    "suppro.onboarding.questionnaire.v1": JSON.stringify({
+      completedAt: "2026-05-06T10:00:00.000Z",
+    }),
+    "suppro.onboarding.ratingCompleted.v1": "true",
+    "suppro.onboarding.appleHealthCompleted.v1": "true",
+    "suppro.onboarding.referralSource.v1": JSON.stringify({
+      source: "App Store",
+      completedAt: "2026-05-06T10:05:00.000Z",
+    }),
+  });
+
+  const { getOnboardingGateState } = loadOnboardingModule({
+    asyncStorage,
+    session: null,
+  });
+
+  await assert.doesNotReject(async () => {
+    const gateState = await getOnboardingGateState();
     assert.equal(gateState, "needs_paywall");
   });
 });
 
-test("Apple Health step routes to paywall preflight next", () => {
+test("Apple Health step routes to referral source next", () => {
   const { resolvePostAppleHealthOnboardingHref } = loadOnboardingModule({
     asyncStorage: createAsyncStorage(),
     session: null,
@@ -260,7 +285,7 @@ test("Apple Health step routes to paywall preflight next", () => {
 
   assert.equal(
     resolvePostAppleHealthOnboardingHref({ mode: "first_run" }),
-    "/onboarding?mode=first_run&step=paywall"
+    "/onboarding?mode=first_run&step=referral-source"
   );
 });
 
@@ -276,17 +301,60 @@ test("Apple Health skipped does not mark signup complete or premium complete in 
   assert.equal(source.includes("/login?mode=login"), false);
 });
 
-test("Apple Health screen stays lightweight and routes directly to paywall", () => {
+test("Apple Health screen stays lightweight and routes directly to referral source", () => {
   const source = readFileSync(
     new URL("../../src/features/onboarding/OnboardingAppleHealthScreen.jsx", import.meta.url),
     "utf8"
   );
 
-  assert.equal(source.includes('"/onboarding?mode=first_run&step=paywall"'), true);
+  assert.equal(
+    source.includes('"/onboarding?mode=first_run&step=referral-source"'),
+    true
+  );
   assert.equal(source.includes("useAppleHealthConnection"), false);
   assert.equal(source.includes("useLocalSearchParams"), false);
   assert.equal(source.includes("react-native-health"), false);
   assert.equal(source.includes("apple-health-logo.png"), false);
+});
+
+test("book offer does not complete premium onboarding", () => {
+  const source = readFileSync(
+    new URL("../../src/features/onboarding/OnboardingBookOfferScreen.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.equal(source.includes("markOnboardingPremiumComplete"), false);
+  assert.equal(source.includes("ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY"), false);
+});
+
+test("referral source screen does not complete premium onboarding", () => {
+  const source = readFileSync(
+    new URL("../../src/features/onboarding/OnboardingReferralSourceScreen.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.equal(source.includes("markOnboardingPremiumComplete"), false);
+  assert.equal(source.includes("ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY"), false);
+});
+
+test("needs paywall gate only allows paywall and book offer onboarding steps", () => {
+  const source = readFileSync(
+    new URL("../../app/_layout.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.equal(
+    source.includes(
+      '(stepParam === "paywall" || stepParam === "book-offer")'
+    ),
+    true
+  );
+  assert.equal(
+    source.includes(
+      'effectiveGateState === "needs_paywall") {\n      return (\n        (isOnboardingRoute'
+    ),
+    false
+  );
 });
 
 test("Android screen modules gate Apple Health at the actual render and call sites", () => {
@@ -395,6 +463,10 @@ test("paywall-complete first-run without account stays on create-account", async
     }),
     "suppro.onboarding.ratingCompleted.v1": "true",
     "suppro.onboarding.appleHealthCompleted.v1": "true",
+    "suppro.onboarding.referralSource.v1": JSON.stringify({
+      source: "App Store",
+      completedAt: "2026-05-06T10:05:00.000Z",
+    }),
     "suppro.onboarding.premiumCompleted.v1": "true",
   });
 
@@ -435,6 +507,10 @@ test("real non-anonymous sessions without account completion cannot enter authen
     }),
     "suppro.onboarding.ratingCompleted.v1": "true",
     "suppro.onboarding.appleHealthCompleted.v1": "true",
+    "suppro.onboarding.referralSource.v1": JSON.stringify({
+      source: "App Store",
+      completedAt: "2026-05-06T10:05:00.000Z",
+    }),
     "suppro.onboarding.premiumCompleted.v1": "true",
   });
 

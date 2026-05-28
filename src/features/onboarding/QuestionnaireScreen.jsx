@@ -259,7 +259,7 @@ const TIMING_OPTIONS = [
 
 const LOADER_LINES = [
   "Collecting your answers",
-  "Cross-referencing 10,432 supplements",
+  "Cross-referencing 210,432 products",
   "Flagging interactions",
 ];
 const LOADER_LINE_DURATIONS = [900, 900, 1000];
@@ -517,7 +517,7 @@ function createInitialAnswers() {
 function normalizeEvidencePreference(answers) {
   if (
     EVIDENCE_OPTIONS.some(
-      (option) => option.value === answers.evidencePreference
+      (option) => option.value === answers.evidencePreference,
     )
   ) {
     return answers.evidencePreference;
@@ -576,29 +576,29 @@ function mergeStoredAnswers(base, stored) {
       merged.pregnancyStatus === "breastfeeding"
         ? merged.pregnancyStatus
         : merged.pregnancyStatus === "no" ||
-          merged.pregnancyStatus === "not_applicable"
-        ? "none"
-        : "";
+            merged.pregnancyStatus === "not_applicable"
+          ? "none"
+          : "";
   }
   merged.confidence = CONFIDENCE_OPTIONS.some(
-    (option) => option.value === merged.confidence
+    (option) => option.value === merged.confidence,
   )
     ? merged.confidence
     : "";
   merged.evidencePreference = normalizeEvidencePreference(merged);
   merged.priorityPreference = PRIORITY_OPTIONS.some(
-    (option) => option.value === merged.priorityPreference
+    (option) => option.value === merged.priorityPreference,
   )
     ? merged.priorityPreference
     : "";
   merged.cautionPreference = normalizeCautionPreference(merged);
   merged.supplementTiming = TIMING_OPTIONS.some(
-    (option) => option.value === merged.supplementTiming
+    (option) => option.value === merged.supplementTiming,
   )
     ? merged.supplementTiming
     : TIMING_OPTIONS.some((option) => option.value === merged.adherencePlan)
-    ? merged.adherencePlan
-    : "";
+      ? merged.adherencePlan
+      : "";
   merged.consentAnalytics = Boolean(stored.consentAnalytics);
 
   return merged;
@@ -676,7 +676,7 @@ function coerceVisibleStepKey(stepKey, visibleStepKeys) {
 
   return (
     STEP_KEYS.slice(sourceIndex + 1).find((candidate) =>
-      visibleStepKeys.includes(candidate)
+      visibleStepKeys.includes(candidate),
     ) ??
     STEP_KEYS.slice(0, sourceIndex)
       .reverse()
@@ -710,22 +710,22 @@ function resolveSavedStepKey(savedDraft) {
 function getRecommendationFields(answers) {
   const evidence =
     EVIDENCE_OPTIONS.find(
-      (option) => option.value === answers.evidencePreference
+      (option) => option.value === answers.evidencePreference,
     ) ?? EVIDENCE_OPTIONS[1];
   const priority =
     PRIORITY_OPTIONS.find(
-      (option) => option.value === answers.priorityPreference
+      (option) => option.value === answers.priorityPreference,
     ) ?? PRIORITY_OPTIONS[1];
   const caution =
     CAUTION_OPTIONS.find(
-      (option) => option.value === answers.cautionPreference
+      (option) => option.value === answers.cautionPreference,
     ) ?? CAUTION_OPTIONS[1];
 
   return {
     evidenceStrength: evidence.evidenceStrength,
     mixedEvidence: evidence.mixedEvidence,
     priorityFactors: Array.from(
-      new Set([...evidence.priorityFactors, ...priority.priorityFactors])
+      new Set([...evidence.priorityFactors, ...priority.priorityFactors]),
     ),
     cautionLevel: caution.cautionLevel,
   };
@@ -733,7 +733,7 @@ function getRecommendationFields(answers) {
 
 function buildQuestionnairePayload(answers) {
   const supplementRows = normalizeSupplementRows(answers.supplementRows).filter(
-    (row) => row.name.trim()
+    (row) => row.name.trim(),
   );
   const recommendationFields = getRecommendationFields(answers);
   const heightCm = String(answers.heightCm || "172").trim();
@@ -788,7 +788,7 @@ function triggerImpact(style = Haptics.ImpactFeedbackStyle.Light) {
 
 function triggerSuccess() {
   void Haptics.notificationAsync(
-    Haptics.NotificationFeedbackType.Success
+    Haptics.NotificationFeedbackType.Success,
   ).catch(() => {});
 }
 
@@ -852,7 +852,7 @@ function InlineSlider({
       onChange(nextValue);
       return nextValue;
     },
-    [maximumValue, minimumValue, onChange, safeValue, step, trackWidth]
+    [maximumValue, minimumValue, onChange, safeValue, step, trackWidth],
   );
 
   const panResponder = useMemo(
@@ -877,7 +877,7 @@ function InlineSlider({
         },
         onShouldBlockNativeResponder: () => true,
       }),
-    [onChangeEnd, safeValue, updateFromLocation]
+    [onChangeEnd, safeValue, updateFromLocation],
   );
 
   return (
@@ -1012,7 +1012,7 @@ function WeightScreen({ unit, value, onUnitChange, onValueChange }) {
   const storedValue = clamp(
     Math.round(Number(value) || fallbackValue),
     minValue,
-    maxValue
+    maxValue,
   );
   const [draftValue, setDraftValue] = useState(storedValue);
 
@@ -1091,7 +1091,7 @@ function DatePickerCards({ value, onChangePart }) {
   useEffect(() => {
     const activeIndex = Math.max(
       0,
-      activeOptions.findIndex((option) => option.value === activeValue)
+      activeOptions.findIndex((option) => option.value === activeValue),
     );
     const id = setTimeout(() => {
       scrollRef.current?.scrollTo({
@@ -1107,7 +1107,7 @@ function DatePickerCards({ value, onChangePart }) {
     const nextIndex = clamp(
       Math.round(event.nativeEvent.contentOffset.y / 48),
       0,
-      activeOptions.length - 1
+      activeOptions.length - 1,
     );
     const nextOption = activeOptions[nextIndex];
     if (nextOption && nextOption.value !== activeValue) {
@@ -1216,7 +1216,7 @@ function SupplementManualSheet({ visible, rows, onAdd, onRemove, onClose }) {
             (preset) =>
               preset.value !== "custom" &&
               preset.label.toLowerCase() ===
-                customFrequency.trim().toLowerCase()
+                customFrequency.trim().toLowerCase(),
           )
         : null;
     const schedule = buildScheduleFromPreset(
@@ -1224,7 +1224,7 @@ function SupplementManualSheet({ visible, rows, onAdd, onRemove, onClose }) {
       {
         anchorDate: toISODate(new Date()),
         customLabel: customFrequency,
-      }
+      },
     );
     onAdd({
       ...createSupplementRow(),
@@ -1377,7 +1377,7 @@ function LoaderScreen({ onComplete }) {
   useEffect(() => {
     const totalDuration = LOADER_LINE_DURATIONS.reduce(
       (sum, duration) => sum + duration,
-      0
+      0,
     );
     const start = Date.now();
     let frameId = 0;
@@ -1414,12 +1414,12 @@ function LoaderScreen({ onComplete }) {
         {LOADER_LINES.map((line, index) => {
           const lineStart = LOADER_LINE_DURATIONS.slice(0, index).reduce(
             (sum, duration) => sum + duration,
-            0
+            0,
           );
           const rawProgress = clamp(
             (elapsedMs - lineStart) / LOADER_LINE_DURATIONS[index],
             0,
-            1
+            1,
           );
           const pct = easeInOutCubic(rawProgress);
           const done = rawProgress >= 1;
@@ -1792,11 +1792,11 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
   const visibleStepKeys = useMemo(() => getVisibleStepKeys(answers), [answers]);
   const progress = useMemo(
     () => getProgress(stepKey, visibleStepKeys),
-    [stepKey, visibleStepKeys]
+    [stepKey, visibleStepKeys],
   );
   const localizedAnnualWasteLabel = useMemo(
     () => getLocalizedAnnualWasteLabel(),
-    []
+    [],
   );
   const isStrictFirstRun = standalone && draftMode === "first_run";
 
@@ -1914,7 +1914,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () =>
-      goBack()
+      goBack(),
     );
     return () => subscription.remove();
   }, [goBack]);
@@ -1951,7 +1951,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
         dispatch({ type: "setStep", stepKey: nextStepKey });
       }
     },
-    [answers, stepKey]
+    [answers, stepKey],
   );
 
   const autoAdvanceSingleSelectStep = useCallback(
@@ -1963,7 +1963,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
         moveToNextStep(sourceStepKey, nextAnswers);
       }, AUTO_ADVANCE_DELAY_MS);
     },
-    [clearAutoAdvanceTimeout, moveToNextStep]
+    [clearAutoAdvanceTimeout, moveToNextStep],
   );
 
   useEffect(() => clearAutoAdvanceTimeout, [clearAutoAdvanceTimeout]);
@@ -1983,7 +1983,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
         JSON.stringify({
           ...completedAnswers,
           completedAt: new Date().toISOString(),
-        })
+        }),
       );
       await clearOnboardingDraft();
 
@@ -1994,7 +1994,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       console.error("Could not save onboarding", error);
       Alert.alert(
         "Could not save onboarding",
-        "Please try again. Your answers are still on screen."
+        "Please try again. Your answers are still on screen.",
       );
     } finally {
       setSubmitting(false);
@@ -2031,7 +2031,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       console.error("Failed to route after onboarding helpers", error);
       const fallbackStep = IS_APPLE_HEALTH_SUPPORTED_PLATFORM
         ? "apple-health"
-        : "paywall";
+        : "referral-source";
       router.replace(`/onboarding?mode=${draftMode}&step=${fallbackStep}`);
     }
   }, [draftMode, standalone]);
@@ -2125,11 +2125,11 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       const day = part === "day" ? value : clamp(current.getDate(), 1, maxDay);
       setField(
         "dateOfBirth",
-        toISODate(new Date(year, month, day, 12, 0, 0, 0))
+        toISODate(new Date(year, month, day, 12, 0, 0, 0)),
       );
       triggerImpact();
     },
-    [answers.dateOfBirth, setField]
+    [answers.dateOfBirth, setField],
   );
 
   const toggleGoal = (value) => {
@@ -2225,7 +2225,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     const normalized = clamp(
       Math.round(Number(value) || (unit === "kg" ? 68 : 150)),
       rangeBounds.min,
-      rangeBounds.max
+      rangeBounds.max,
     );
     setFields({ weightUnit: unit, weightValue: String(normalized) });
   };
@@ -2490,7 +2490,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
 
     if (stepKey === "stack") {
       const rows = normalizeSupplementRows(answers.supplementRows).filter(
-        (row) => row.name.trim()
+        (row) => row.name.trim(),
       );
       return (
         <>
@@ -2903,7 +2903,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       <SupplementManualSheet
         visible={manualSheetOpen}
         rows={normalizeSupplementRows(answers.supplementRows).filter((row) =>
-          row.name.trim()
+          row.name.trim(),
         )}
         onAdd={(row) => {
           setFields({
@@ -2911,7 +2911,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
             currentSupplementsSource: "manual",
             supplementRows: [
               ...normalizeSupplementRows(answers.supplementRows).filter(
-                (item) => item.name.trim()
+                (item) => item.name.trim(),
               ),
               row,
             ],
@@ -2919,7 +2919,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
         }}
         onRemove={(rowId) => {
           const nextRows = normalizeSupplementRows(
-            answers.supplementRows
+            answers.supplementRows,
           ).filter((row) => row.id !== rowId);
           setFields({
             supplementRows: nextRows,

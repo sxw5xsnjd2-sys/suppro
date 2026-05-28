@@ -79,7 +79,7 @@ export default function OnboardingRatingScreen() {
           productionDetails: {
             message: "store review unavailable",
           },
-        }
+        },
       );
     }
   }, []);
@@ -132,7 +132,7 @@ export default function OnboardingRatingScreen() {
           productionDetails: {
             message: "rating step completion failed",
           },
-        }
+        },
       );
       setIsSubmitting(false);
       isRoutingRef.current = false;
@@ -160,7 +160,7 @@ export default function OnboardingRatingScreen() {
         </View>
         <QuestionHero
           centered
-          title="Enjoying Suppro so far?"
+          title="Mind leaving us a review?"
           subtitle="A quick rating helps us keep improving the app."
         />
       </View>

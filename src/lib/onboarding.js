@@ -17,6 +17,8 @@ export const ONBOARDING_APPLE_HEALTH_CONNECT_REQUESTED_STORAGE_KEY =
   "suppro.onboarding.appleHealthConnectRequested.v1";
 export const ONBOARDING_RATING_REVIEW_ATTEMPTED_STORAGE_KEY =
   "suppro.onboarding.ratingReviewAttempted.v1";
+export const ONBOARDING_REFERRAL_SOURCE_STORAGE_KEY =
+  "suppro.onboarding.referralSource.v1";
 const ACCOUNT_SETUP_COMPLETIONS_TABLE = "account_setup_completions";
 
 const onboardingGateListeners = new Set();
@@ -135,6 +137,19 @@ export async function hasRequestedOnboardingAppleHealthConnect() {
   );
 }
 
+export async function hasCompletedOnboardingReferralSource() {
+  const data = parseStoredJson(
+    await AsyncStorage.getItem(ONBOARDING_REFERRAL_SOURCE_STORAGE_KEY)
+  );
+
+  return Boolean(
+    typeof data?.source === "string" &&
+      data.source.trim() &&
+      typeof data?.completedAt === "string" &&
+      data.completedAt.trim()
+  );
+}
+
 export async function markOnboardingRatingComplete() {
   await AsyncStorage.setItem(ONBOARDING_RATING_COMPLETED_STORAGE_KEY, "true");
   notifyOnboardingGateChange();
@@ -180,6 +195,28 @@ export async function markOnboardingRatingReviewAttempted() {
   );
 }
 
+export async function markOnboardingReferralSourceComplete(source) {
+  const normalizedSource = typeof source === "string" ? source.trim() : "";
+
+  if (!normalizedSource) {
+    throw new Error("Onboarding referral source is required.");
+  }
+
+  await AsyncStorage.setItem(
+    ONBOARDING_REFERRAL_SOURCE_STORAGE_KEY,
+    JSON.stringify({
+      source: normalizedSource,
+      completedAt: new Date().toISOString(),
+    })
+  );
+  notifyOnboardingGateChange();
+}
+
+export async function clearOnboardingReferralSourceComplete() {
+  await AsyncStorage.removeItem(ONBOARDING_REFERRAL_SOURCE_STORAGE_KEY);
+  notifyOnboardingGateChange();
+}
+
 export async function markOnboardingPremiumComplete() {
   await AsyncStorage.setItem(ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY, "true");
   notifyOnboardingGateChange();
@@ -195,6 +232,7 @@ export function resolveLoggedOutOnboardingGateState({
   signupCompleted,
   hasCompletedOnboardingRating,
   hasCompletedOnboardingAppleHealth,
+  hasCompletedOnboardingReferralSource,
   hasCompletedOnboardingPremium,
   requiresAppleHealthStep = true,
 }) {
@@ -212,6 +250,10 @@ export function resolveLoggedOutOnboardingGateState({
 
   if (requiresAppleHealthStep && !hasCompletedOnboardingAppleHealth) {
     return "needs_apple_health";
+  }
+
+  if (!hasCompletedOnboardingReferralSource) {
+    return "needs_referral_source";
   }
 
   if (!hasCompletedOnboardingPremium) {
@@ -242,7 +284,7 @@ export function shouldRouteThroughOnboardingRatingStep({
 }
 
 export function resolvePostAppleHealthOnboardingHref({ mode = "first_run" } = {}) {
-  return `/onboarding?mode=${normalizeOnboardingMode(mode)}&step=paywall`;
+  return `/onboarding?mode=${normalizeOnboardingMode(mode)}&step=referral-source`;
 }
 
 async function hasCompletedAccountSetup(userId) {
@@ -298,6 +340,8 @@ export async function getOnboardingGateState({
     signupCompleted: signupCompleted === "true",
     hasCompletedOnboardingRating: await hasCompletedOnboardingRating(),
     hasCompletedOnboardingAppleHealth: await hasCompletedOnboardingAppleHealth(),
+    hasCompletedOnboardingReferralSource:
+      await hasCompletedOnboardingReferralSource(),
     hasCompletedOnboardingPremium: await hasCompletedOnboardingPremium(),
     requiresAppleHealthStep,
   });

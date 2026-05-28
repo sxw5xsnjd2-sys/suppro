@@ -1,6 +1,7 @@
 import React from "react";
 import {
   Alert,
+  Image,
   Linking,
   Pressable,
   Share,
@@ -14,20 +15,13 @@ import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { AppButton, AppHeader } from "@/components/common/ui";
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
-import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import AccountIcon from "@/assets/icons/profile/account.svg";
 import ConnectionsIcon from "@/assets/icons/profile/connections.svg";
 import FavouriteIcon from "@/assets/icons/profile/favourite.svg";
 import QuestionnaireIcon from "@/assets/icons/profile/questionnaire.svg";
 import { appTheme, spacing, typography } from "@/theme";
 
-function IOSSettingsAppleHealthCardSlot({ styles }) {
-  const { IOSSettingsAppleHealthCard } = require(
-    "@/features/health/components/IOSSettingsAppleHealthCard"
-  );
-
-  return <IOSSettingsAppleHealthCard styles={styles} />;
-}
+const SUPPRO_BOOK_IMAGE = require("@/assets/images/suppro-book.png");
 
 function SupplementsIcon({ width, height, color }) {
   return (
@@ -79,16 +73,6 @@ function ShareIcon({ width, height, color }) {
   );
 }
 
-function LegalIcon({ width, height, color }) {
-  return (
-    <Ionicons
-      name="document-text-outline"
-      size={Math.min(width, height)}
-      color={color}
-    />
-  );
-}
-
 async function inviteFriendsAndFamily() {
   try {
     await Share.share({
@@ -99,6 +83,69 @@ async function inviteFriendsAndFamily() {
   } catch (_error) {
     // share sheet dismissed or failed — no action needed
   }
+}
+
+function BookPromoCard() {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Buy the Suppro book"
+      onPress={() =>
+        openExternalUrl(
+          "https://www.amazon.co.uk/SUPPRO-Supplements-Dr-Govind-Dhillon/dp/B0GYS1F7W5/ref=sr_1_1?crid=2CVZ0K963VTCI&dib=eyJ2IjoiMSJ9.ZvxxQpwbb8K06vWZu1iS7g.swCGkzXYCqC8P25zoUROy6DVVbnwZ_p4EzV_QRm-4uE&dib_tag=se&keywords=suppro&qid=1779905813&sprefix=suppro%2Caps%2C172&sr=8-1"
+        )
+      }
+      style={({ pressed }) => [
+        styles.bookPromoCard,
+        pressed && styles.bookPromoCardPressed,
+      ]}
+    >
+      <Image
+        source={SUPPRO_BOOK_IMAGE}
+        resizeMode="contain"
+        style={styles.bookPromoImage}
+      />
+      <View style={styles.bookPromoCopy}>
+        <Text style={styles.bookPromoEyebrow}>Want more?</Text>
+        <Text style={styles.bookPromoTitle}>Buy our book</Text>
+        <Text style={styles.bookPromoSubtitle}>
+          The science behind supplements - from the doctors who built Suppro.
+        </Text>
+        <View style={styles.bookPromoCta}>
+          <Text style={styles.bookPromoCtaText}>Get the book</Text>
+          <Ionicons
+            name="chevron-forward"
+            size={14}
+            color={appTheme.colors.textPrimary}
+          />
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+function LegalFooter() {
+  return (
+    <View style={styles.legalFooter}>
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel="Privacy Policy"
+        onPress={() => openExternalUrl("https://suppro.co.uk/privacy")}
+        style={({ pressed }) => pressed && styles.legalFooterLinkPressed}
+      >
+        <Text style={styles.legalFooterLink}>Privacy Policy</Text>
+      </Pressable>
+      <View style={styles.legalFooterDot} />
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel="Terms of Service"
+        onPress={() => openExternalUrl("https://suppro.co.uk/terms")}
+        style={({ pressed }) => pressed && styles.legalFooterLinkPressed}
+      >
+        <Text style={styles.legalFooterLink}>Terms of Service</Text>
+      </Pressable>
+    </View>
+  );
 }
 
 async function contactSupport() {
@@ -270,24 +317,6 @@ export default function SettingsScreen() {
         },
       ],
     },
-    {
-      key: "legal",
-      title: "Legal",
-      items: [
-        {
-          key: "privacy-policy",
-          label: "Privacy Policy",
-          onPress: () => openExternalUrl("https://suppro.co.uk/privacy"),
-          Icon: LegalIcon,
-        },
-        {
-          key: "terms-of-service",
-          label: "Terms of Service",
-          onPress: () => openExternalUrl("https://suppro.co.uk/terms"),
-          Icon: LegalIcon,
-        },
-      ],
-    },
   ];
 
   return (
@@ -321,6 +350,7 @@ export default function SettingsScreen() {
       bottomInsetOffset={96}
       minBottomPadding={120}
     >
+      <BookPromoCard />
       <View style={styles.shortcutsList}>
         {settingsSections.map((section) => (
           <React.Fragment key={section.key}>
@@ -333,9 +363,7 @@ export default function SettingsScreen() {
             ))}
           </React.Fragment>
         ))}
-        {IS_APPLE_HEALTH_SUPPORTED_PLATFORM ? (
-          <IOSSettingsAppleHealthCardSlot styles={styles} />
-        ) : null}
+        <LegalFooter />
       </View>
     </BackdropScreen>
   );
@@ -354,6 +382,75 @@ const styles = StyleSheet.create({
     color: appTheme.colors.textBody,
   },
   shortcutsList: {},
+  bookPromoCard: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+    paddingTop: 14,
+    paddingBottom: 14,
+    paddingLeft: 14,
+    paddingRight: spacing.md,
+    borderRadius: 22,
+    backgroundColor: appTheme.colors.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    shadowColor: "#2A1240",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.1,
+    shadowRadius: 22,
+    elevation: 4,
+  },
+  bookPromoCardPressed: {
+    transform: [{ scale: 0.985 }],
+    shadowOpacity: 0.06,
+  },
+  bookPromoImage: {
+    width: 86,
+    height: 110,
+    flexShrink: 0,
+    transform: [{ rotate: "-1.5deg" }],
+    shadowColor: "#3C1428",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+  },
+  bookPromoCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  bookPromoEyebrow: {
+    marginBottom: 4,
+    fontSize: 11,
+    fontFamily: typography.fontFamily.bodyBold,
+    color: "#B5557A",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+  },
+  bookPromoTitle: {
+    fontSize: 19,
+    lineHeight: 21,
+    fontFamily: typography.fontFamily.headingBlack,
+    color: appTheme.colors.textPrimary,
+  },
+  bookPromoSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
+  },
+  bookPromoCta: {
+    marginTop: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  bookPromoCtaText: {
+    fontSize: 13,
+    fontFamily: typography.fontFamily.bodyBold,
+    color: appTheme.colors.textPrimary,
+  },
   divider: {
     height: 1,
     backgroundColor: appTheme.colors.borderSubtle,
@@ -404,46 +501,28 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textStrong,
   },
-  appleHealthCard: {
-    marginHorizontal: spacing.md,
-    marginTop: spacing.sm,
-    gap: 10,
-  },
-  appleHealthEyebrow: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-  },
-  appleHealthHeaderRow: {
+  legalFooter: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md,
+    justifyContent: "center",
+    gap: 14,
   },
-  appleHealthCopy: {
-    flex: 1,
-    minWidth: 0,
-    gap: 4,
+  legalFooterLinkPressed: {
+    opacity: 0.6,
   },
-  appleHealthTitle: {
-    fontSize: 18,
-    lineHeight: 22,
-    fontFamily: typography.fontFamily.heading,
-    color: appTheme.colors.textPrimary,
-  },
-  appleHealthStatus: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.bodySemiBold,
-    color: appTheme.colors.textStrong,
-  },
-  appleHealthDescription: {
-    fontSize: 13,
-    lineHeight: 19,
+  legalFooterLink: {
+    fontSize: 12,
     fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textBody,
+    letterSpacing: 0.1,
+    color: appTheme.colors.textSecondary,
+  },
+  legalFooterDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: appTheme.colors.textMuted,
+    opacity: 0.6,
   },
 });

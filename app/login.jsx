@@ -27,6 +27,7 @@ import {
   clearOnboardingDraft,
   getQuestionnaireAnswers,
   hasCompletedOnboardingPremium,
+  hasCompletedOnboardingReferralSource,
   hasCompletedQuestionnaire,
 } from "@src/lib/onboarding";
 import {
@@ -217,8 +218,9 @@ export default function LoginScreen() {
   };
 
   const ensureCanCreateAccount = async () => {
-    const [questionnaireDone, premiumDone] = await Promise.all([
+    const [questionnaireDone, referralSourceDone, premiumDone] = await Promise.all([
       hasCompletedQuestionnaire(),
+      hasCompletedOnboardingReferralSource(),
       hasCompletedOnboardingPremium(),
     ]);
 
@@ -227,6 +229,12 @@ export default function LoginScreen() {
     if (!questionnaireDone) {
       setQuestionnaireComplete(false);
       redirectToOnboarding();
+      return false;
+    }
+
+    if (!referralSourceDone) {
+      setQuestionnaireComplete(true);
+      router.replace("/onboarding?mode=first_run&step=referral-source");
       return false;
     }
 

@@ -11,6 +11,20 @@ function OnboardingPaywallStep() {
   return <OnboardingPaywallScreen />;
 }
 
+function OnboardingBookOfferStep() {
+  const OnboardingBookOfferScreen =
+    require("@src/features/onboarding/OnboardingBookOfferScreen").default;
+
+  return <OnboardingBookOfferScreen />;
+}
+
+function OnboardingReferralSourceStep() {
+  const OnboardingReferralSourceScreen =
+    require("@src/features/onboarding/OnboardingReferralSourceScreen").default;
+
+  return <OnboardingReferralSourceScreen />;
+}
+
 function OnboardingRatingStep() {
   const OnboardingRatingScreen =
     require("@src/features/onboarding/OnboardingRatingScreen").default;
@@ -25,7 +39,11 @@ export default function OnboardingScreen() {
   const mode = modeParam === "retake" ? "retake" : "first_run";
   const isStrictFirstRun = mode === "first_run";
   const locksHardwareBack =
-    isStrictFirstRun && (stepParam === "account" || stepParam === "paywall");
+    isStrictFirstRun &&
+    (stepParam === "account" ||
+      stepParam === "paywall" ||
+      stepParam === "referral-source" ||
+      stepParam === "book-offer");
 
   useEffect(() => {
     if (!locksHardwareBack) return undefined;
@@ -51,6 +69,28 @@ export default function OnboardingScreen() {
     );
   }
 
+  if (stepParam === "book-offer") {
+    return (
+      <>
+        <Stack.Screen
+          options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
+        />
+        <OnboardingBookOfferStep />
+      </>
+    );
+  }
+
+  if (stepParam === "referral-source") {
+    return (
+      <>
+        <Stack.Screen
+          options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
+        />
+        <OnboardingReferralSourceStep />
+      </>
+    );
+  }
+
   if (stepParam === "rating") {
     return (
       <>
@@ -69,7 +109,7 @@ export default function OnboardingScreen() {
           <Stack.Screen
             options={{ headerShown: false, gestureEnabled: !isStrictFirstRun }}
           />
-          <Redirect href={`/onboarding?mode=${mode}&step=paywall`} />
+          <Redirect href={`/onboarding?mode=${mode}&step=referral-source`} />
         </>
       );
     }
