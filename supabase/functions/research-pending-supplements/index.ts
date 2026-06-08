@@ -1053,10 +1053,13 @@ function shouldCreateLowEvidenceSupplement(result: Record<string, unknown>) {
     "multi-ingredient",
     "formula",
     "blend",
-    "cannot be reduced",
-    "uncertain identity",
-    "ambiguous identity",
     "duplicate",
+    "branded product",
+    "finished supplement",
+    "product line",
+    "product-like",
+    "duplicate",
+    "alias",
   ];
   if (identityBlockers.some((term) => reason.includes(term))) return false;
   return [
@@ -1069,6 +1072,11 @@ function shouldCreateLowEvidenceSupplement(result: Record<string, unknown>) {
     "not enough",
     "weak",
     "sparse",
+    "not a safe canonical active ingredient",
+    "cannot be normalized confidently",
+    "species- and preparation-specific",
+    "not standardized",
+    "identity ambiguity",
   ].some((term) => reason.includes(term));
 }
 
