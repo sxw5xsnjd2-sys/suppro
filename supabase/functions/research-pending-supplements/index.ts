@@ -2090,8 +2090,10 @@ Deno.serve(async (req) => {
         if (
           !validation.ok &&
           validation.issues.length === 1 &&
-          validation.issues[0] ===
-            "How to use must include dose information when available."
+          [
+            "How to use must include dose information when available.",
+            "How to use must not mention sample products, provided product examples, product labels, or label-only amounts.",
+          ].includes(validation.issues[0])
         ) {
           research = coerceLowEvidenceSupplement(
             await requestResearch(candidate, context.benefitRankings),
