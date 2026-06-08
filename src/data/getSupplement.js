@@ -104,7 +104,30 @@ function normalizeIngredientComparisonName(value) {
   return trimString(value)
     .replace(/\([^)]*\)/g, "")
     .replace(/\s+/g, " ")
-    .toLowerCase();
+    .toLowerCase()
+    .trim();
+}
+
+function buildProductIngredientDisplayDedupKey(match) {
+  const catalogId = trimString(match?.catalogId);
+  const ingredientName =
+    normalizeIngredientComparisonName(
+      match?.ingredientRaw || match?.ingredientName || match?.catalogName
+    ) || "";
+  const normalizedDose = normalizeDoseForComparison(
+    match?.dosageValue,
+    match?.dosageUnit
+  );
+  const normalizedUnit = trimString(match?.dosageUnit).toLowerCase();
+  const chemicalForm = normalizeIngredientComparisonName(match?.chemicalForm);
+
+  return [
+    catalogId,
+    ingredientName,
+    Number.isFinite(normalizedDose) ? normalizedDose : "",
+    normalizedUnit,
+    chemicalForm,
+  ].join("|");
 }
 
 function normalizeDoseForComparison(value, unit) {
@@ -176,9 +199,7 @@ function dedupeProductIngredientsForDisplay(matches) {
   const bestByKey = new Map();
 
   (matches ?? []).forEach((match) => {
-    const catalogId = trimString(match?.catalogId);
-    const rawKey = normalizeIngredientComparisonName(match?.ingredientRaw);
-    const key = catalogId ? `catalog:${catalogId}` : `raw:${rawKey}`;
+    const key = buildProductIngredientDisplayDedupKey(match);
 
     if (!key) {
       return;

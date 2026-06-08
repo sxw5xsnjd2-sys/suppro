@@ -1,15 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import Ionicons from "@expo/vector-icons/Ionicons";
 import RevenueCatUI from "react-native-purchases-ui";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { AppButton } from "@/components/common/ui";
 import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
@@ -59,29 +56,19 @@ function hasActivePremiumEntitlement(customerInfo, entitlementId) {
   return Boolean(customerInfo?.entitlements?.active?.[entitlementId]);
 }
 
-function buildBookOfferHref(originParam) {
-  const suffix =
-    typeof originParam === "string" && originParam.trim()
-      ? `&origin=${encodeURIComponent(originParam.trim())}`
-      : "";
-
-  return `/onboarding?mode=first_run&step=book-offer${suffix}`;
-}
-
-export default function OnboardingPaywallScreen() {
+export default function OnboardingPaywallScreen({
+  hasShownBookAfterPaymentCancel = false,
+  hasShownBookAfterPaymentCancelRef = { current: false },
+  onPurchaseCancelled = () => false,
+}) {
   const params = useLocalSearchParams();
-  const insets = useSafeAreaInsets();
   const originParam = Array.isArray(params.origin)
     ? params.origin[0]
     : params.origin;
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
-  const lockedParam = Array.isArray(params.locked)
-    ? params.locked[0]
-    : params.locked;
   const returnsToApp = originParam === "app";
   const returnsToLogin = originParam === "login";
   const usesEmbeddedPaywall = modeParam !== "retake" && !returnsToApp;
-  const showCloseButton = usesEmbeddedPaywall && lockedParam !== "1";
   const {
     isReady,
     isLoading,
@@ -257,9 +244,23 @@ export default function OnboardingPaywallScreen() {
     );
   }, []);
 
-  const handleCloseEmbeddedPaywall = useCallback(() => {
-    router.replace(buildBookOfferHref(originParam));
-  }, [originParam]);
+  const handleEmbeddedPurchaseCancelled = useCallback(() => {
+    setEmbeddedPaywallError("");
+
+    if (
+      hasShownBookAfterPaymentCancel ||
+      hasShownBookAfterPaymentCancelRef.current
+    ) {
+      return;
+    }
+
+    onPurchaseCancelled(originParam);
+  }, [
+    hasShownBookAfterPaymentCancel,
+    hasShownBookAfterPaymentCancelRef,
+    onPurchaseCancelled,
+    originParam,
+  ]);
 
   const handleRetry = useCallback(() => {
     setTimedOutStatus("");
@@ -323,27 +324,9 @@ export default function OnboardingPaywallScreen() {
             });
           }}
           onPurchaseError={handleEmbeddedPaywallError}
+          onPurchaseCancelled={handleEmbeddedPurchaseCancelled}
           onRestoreError={handleEmbeddedPaywallError}
         />
-        {showCloseButton ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close paywall"
-            hitSlop={12}
-            onPress={handleCloseEmbeddedPaywall}
-            style={({ pressed }) => [
-              styles.closeButton,
-              { top: Math.max(insets.top + 12, 58) },
-              pressed && styles.closeButtonPressed,
-            ]}
-          >
-            <Ionicons
-              name="close"
-              size={22}
-              color={appTheme.colors.textStrong}
-            />
-          </Pressable>
-        ) : null}
       </View>
     );
   }
@@ -378,26 +361,6 @@ const styles = StyleSheet.create({
   embeddedPaywallScreen: {
     flex: 1,
     backgroundColor: appTheme.colors.surface,
-  },
-  closeButton: {
-    position: "absolute",
-    top: 58,
-    right: 20,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.92)",
-    shadowColor: "#17151B",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-  closeButtonPressed: {
-    opacity: 0.68,
-    transform: [{ scale: 0.96 }],
   },
   screen: {
     flex: 1,

@@ -181,13 +181,54 @@ const photoRescueResponseSchema = {
   },
 };
 
+const doseVerificationResponseSchema = {
+  name: "photo_rescue_dose_verification",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      verified_ingredients: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            index: { type: "integer" },
+            dosage_value: { type: ["number", "null"] },
+            dosage_unit: { type: ["string", "null"] },
+            dosage_original_text: { type: ["string", "null"] },
+          },
+          required: [
+            "index",
+            "dosage_value",
+            "dosage_unit",
+            "dosage_original_text",
+          ],
+        },
+      },
+    },
+    required: ["verified_ingredients"],
+  },
+};
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const openAiApiKey = Deno.env.get("OPENAI_API_KEY");
+const azureDocumentIntelligenceEndpoint = Deno.env.get(
+  "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"
+);
+const azureDocumentIntelligenceKey = Deno.env.get(
+  "AZURE_DOCUMENT_INTELLIGENCE_KEY"
+);
 const openAiModel =
   Deno.env.get("OPENAI_VISION_MODEL") ??
   Deno.env.get("OPENAI_MODEL") ??
   "gpt-4o-mini";
+const AZURE_DOCUMENT_INTELLIGENCE_MODEL = "prebuilt-layout";
+const AZURE_DOCUMENT_INTELLIGENCE_API_VERSION = "2024-11-30";
+const AZURE_DOCUMENT_INTELLIGENCE_POLL_INTERVAL_MS = 1000;
+const AZURE_DOCUMENT_INTELLIGENCE_MAX_POLL_ATTEMPTS = 15;
 
 const adminSupabase =
   supabaseUrl && supabaseServiceRoleKey
@@ -211,6 +252,13 @@ type NormalizedIngredient = {
   dosage_original_text: string | null;
   chemical_form: string | null;
   amount_basis: string | null;
+};
+
+type AzureIngredientPanelOcr = {
+  fullText: string;
+  lines: string[];
+  tableRows: string[];
+  combinedText: string;
 };
 
 type NormalizedPhotoRescueResult = {
@@ -409,6 +457,12 @@ function roundTo(value: number, places: number) {
 function sanitizeImageDataUrl(value: unknown): string {
   const dataUrl = trimString(value);
   return /^data:image\/[a-z0-9.+-]+;base64,/i.test(dataUrl) ? dataUrl : "";
+}
+
+function extractBase64PayloadFromDataUrl(value: unknown): string {
+  const dataUrl = sanitizeImageDataUrl(value);
+  const separatorIndex = dataUrl.indexOf(",");
+  return separatorIndex >= 0 ? dataUrl.slice(separatorIndex + 1).trim() : "";
 }
 
 function sanitizeStringArray(value: unknown): string[] {
@@ -905,6 +959,212 @@ function stringifyDosage(value: unknown, unit: unknown) {
   }${normalizedUnit}`;
 }
 
+function normalizeAzureDocumentEndpoint(value: unknown) {
+  return trimString(value).replace(/\/+$/, "");
+}
+
+function buildAzureDocumentIntelligenceHeaders(apiKey: string) {
+  return {
+    "Content-Type": "application/json",
+    "Ocp-Apim-Subscription-Key": apiKey,
+  };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractAzureTableRows(tables: unknown): string[] {
+  if (!Array.isArray(tables)) {
+    return [];
+  }
+
+  const rows: string[] = [];
+
+  tables.forEach((table) => {
+    const cells = Array.isArray((table as Record<string, unknown>)?.cells)
+      ? (((table as Record<string, unknown>).cells as unknown[]) ?? [])
+      : [];
+    const rowMap = new Map<number, Map<number, string>>();
+
+    cells.forEach((candidate) => {
+      const cell = candidate as Record<string, unknown>;
+      const rowIndex = parseIntegerLike(cell?.rowIndex);
+      const columnIndex = parseIntegerLike(cell?.columnIndex);
+      const content = normalizeWhitespace(cell?.content);
+
+      if (rowIndex === null || columnIndex === null || !content) {
+        return;
+      }
+
+      const nextRow = rowMap.get(rowIndex) ?? new Map<number, string>();
+      const existing = nextRow.get(columnIndex);
+      nextRow.set(
+        columnIndex,
+        existing ? `${existing} ${content}`.trim() : content
+      );
+      rowMap.set(rowIndex, nextRow);
+    });
+
+    Array.from(rowMap.keys())
+      .sort((a, b) => a - b)
+      .forEach((rowIndex) => {
+        const columns = rowMap.get(rowIndex);
+        if (!columns) {
+          return;
+        }
+
+        const orderedValues = Array.from(columns.entries())
+          .sort(([left], [right]) => left - right)
+          .map(([, value]) => normalizeWhitespace(value));
+
+        while (orderedValues.length && !orderedValues.at(-1)) {
+          orderedValues.pop();
+        }
+
+        if (!orderedValues.some(Boolean)) {
+          return;
+        }
+
+        rows.push(orderedValues.join("\t"));
+      });
+  });
+
+  return Array.from(new Set(rows));
+}
+
+function normalizeAzureIngredientPanelOcr(
+  value: unknown
+): AzureIngredientPanelOcr | null {
+  const row = (value ?? {}) as Record<string, unknown>;
+  const analyzeResult =
+    row?.analyzeResult && typeof row.analyzeResult === "object"
+      ? (row.analyzeResult as Record<string, unknown>)
+      : row;
+
+  const pages = Array.isArray(analyzeResult?.pages)
+    ? (analyzeResult.pages as unknown[])
+    : [];
+  const lines = Array.from(
+    new Set(
+      pages
+        .flatMap((page) =>
+          Array.isArray((page as Record<string, unknown>)?.lines)
+            ? (((page as Record<string, unknown>).lines as unknown[]) ?? [])
+            : []
+        )
+        .map((line) => normalizeWhitespace((line as Record<string, unknown>)?.content))
+        .filter(Boolean)
+    )
+  );
+  const tableRows = extractAzureTableRows(analyzeResult?.tables);
+  const fullText = trimString(analyzeResult?.content);
+
+  const combinedText = [
+    tableRows.length ? ["Table rows (TSV):", ...tableRows].join("\n") : "",
+    lines.length ? ["OCR lines:", ...lines].join("\n") : "",
+    fullText ? `Full OCR text:\n${fullText}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
+  if (!combinedText) {
+    return null;
+  }
+
+  return {
+    fullText,
+    lines,
+    tableRows,
+    combinedText,
+  };
+}
+
+async function fetchAzureIngredientPanelOcr(ingredientsImage: string) {
+  const endpoint = normalizeAzureDocumentEndpoint(
+    azureDocumentIntelligenceEndpoint
+  );
+  const apiKey = trimString(azureDocumentIntelligenceKey);
+  const base64Source = extractBase64PayloadFromDataUrl(ingredientsImage);
+
+  if (!endpoint || !apiKey || !base64Source) {
+    return null;
+  }
+
+  const analyzeUrl =
+    `${endpoint}/documentintelligence/documentModels/` +
+    `${AZURE_DOCUMENT_INTELLIGENCE_MODEL}:analyze` +
+    `?api-version=${AZURE_DOCUMENT_INTELLIGENCE_API_VERSION}`;
+  const analyzeResponse = await fetch(analyzeUrl, {
+    method: "POST",
+    headers: buildAzureDocumentIntelligenceHeaders(apiKey),
+    body: JSON.stringify({
+      base64Source,
+    }),
+  });
+
+  if (!analyzeResponse.ok) {
+    const errorText = await analyzeResponse.text();
+    throw new Error(
+      `Azure OCR analyze request failed: ${errorText.slice(0, 500)}`
+    );
+  }
+
+  const operationLocation =
+    analyzeResponse.headers.get("Operation-Location") ??
+    analyzeResponse.headers.get("operation-location");
+
+  if (!operationLocation) {
+    throw new Error("Azure OCR response missing Operation-Location header.");
+  }
+
+  for (
+    let attempt = 0;
+    attempt < AZURE_DOCUMENT_INTELLIGENCE_MAX_POLL_ATTEMPTS;
+    attempt += 1
+  ) {
+    if (attempt > 0) {
+      await sleep(AZURE_DOCUMENT_INTELLIGENCE_POLL_INTERVAL_MS);
+    }
+
+    const resultResponse = await fetch(operationLocation, {
+      method: "GET",
+      headers: {
+        "Ocp-Apim-Subscription-Key": apiKey,
+      },
+    });
+
+    if (!resultResponse.ok) {
+      const errorText = await resultResponse.text();
+      throw new Error(
+        `Azure OCR result request failed: ${errorText.slice(0, 500)}`
+      );
+    }
+
+    const result = await resultResponse.json();
+    const status = trimString((result as Record<string, unknown>)?.status).toLowerCase();
+
+    if (status === "succeeded") {
+      return normalizeAzureIngredientPanelOcr(result);
+    }
+
+    if (status === "failed" || status === "cancelled") {
+      throw new Error(`Azure OCR analysis ended with status '${status}'.`);
+    }
+  }
+
+  throw new Error("Azure OCR analysis timed out.");
+}
+
+async function tryFetchAzureIngredientPanelOcr(ingredientsImage: string) {
+  try {
+    return await fetchAzureIngredientPanelOcr(ingredientsImage);
+  } catch {
+    return null;
+  }
+}
+
 function normalizeIngredient(item: unknown): NormalizedIngredient {
   const ingredient = item as Record<string, unknown>;
   const amountBasis = trimString(ingredient?.amount_basis);
@@ -976,10 +1236,14 @@ function normalizePhotoRescueOutput(
   };
 }
 
-function buildSystemPrompt() {
+function buildSystemPrompt({
+  hasDedicatedOcr,
+}: {
+  hasDedicatedOcr?: boolean;
+} = {}) {
   return [
     "You classify whether the photographed product is a dietary supplement, normalize its product name, and extract structured supplement ingredients.",
-    "Use the images as the source of truth.",
+    "Use only the photographed label images as the source of truth.",
     "Return valid JSON that exactly matches the provided schema.",
     "If the product is not clearly a dietary supplement, set is_supplement false.",
     "For supplement naming, produce a concise user-facing display name.",
@@ -987,15 +1251,25 @@ function buildSystemPrompt() {
     "Extract brand_name and product_name separately whenever the front label supports it.",
     "If the front label reads like '<Brand> <Product>', split the first part into brand_name and the remainder into product_name when that split is visually supported.",
     "For extraction, keep only active supplement ingredients where possible.",
+    "Internally reconstruct any visible supplement facts or nutrition table row-by-row before producing ingredients_found. Do not output that reconstruction.",
     "Use a dose-extraction hierarchy: structured table first, inline ingredient doses second, ingredient names without doses last.",
     "If a structured table exists, treat it as the primary source of truth and extract every row with an explicit numeric dose.",
+    hasDedicatedOcr
+      ? "Dedicated OCR text and table rows for the ingredients panel are provided. Treat that OCR output as the PRIMARY source for ingredient names and doses. Do not re-read tiny table text from the image unless you are only resolving an obvious OCR character corruption."
+      : "",
     "If multiple sections exist, merge them without duplicating ingredients and prefer entries with explicit numeric doses over undosed mentions.",
+    "Extract doses only from text visibly present on the label. Never infer, estimate, or substitute common or typical supplement doses.",
+    "A dosage is valid only when the raw evidence text contains both the ingredient name and the dose in the same clearly readable row or inline phrase.",
+    "Never borrow numbers from nearby rows, adjacent columns, headers, footnotes, % NRV, % DV, RI, target ranges, app labels, or surrounding text.",
+    "Ignore % NRV, % DV, RI, and similar reference-intake columns for dosage extraction.",
     "If a label gives a compound/form dose plus an active/equivalent amount, such as 'Creatine monohydrate 3g of which creatine 2.6g', return ONE row only: canonical_name 'Creatine', dosage_value 2.6, dosage_unit 'g', chemical_form 'Creatine monohydrate'. Do not also return Creatine monohydrate 3g as a separate active ingredient.",
     "Apply the same rule to wording like 'providing', 'equivalent to', 'yielding', 'of which', or 'elemental'. Prefer the actual active/equivalent amount for dosage_value.",
     "Rows from structured tables should normally map to active ingredients with dosage_value, dosage_unit, and amount_basis 'per_serving' unless the label clearly states another basis.",
     "Mark excipients, fillers, capsule materials, sweeteners, preservatives, and colors as inactive.",
     "Do not invent missing dosages.",
-    "Preserve the original dosage text.",
+    "For each ingredient, dosage_original_text must contain the exact raw row or phrase used as evidence, not just the dose.",
+    "If a dosage is valid, the dosage_original_text evidence must contain both the ingredient name and the dose.",
+    "If the number or unit is uncertain, or the ingredient name and dose are not clearly readable together, set dosage_value and dosage_unit to null and explain the uncertainty in dosage_original_text using the exact raw row or phrase.",
     "Return broad canonical names such as Vitamin D, Magnesium, Zinc.",
     "Put specific salt or form into chemical_form.",
     "If dosage is ambiguous, set numeric dosage to null.",
@@ -1007,10 +1281,12 @@ function buildUserPrompt({
   scanSessionId,
   barcode,
   currentProduct,
+  ingredientsOcr,
 }: {
   scanSessionId: number;
   barcode: string;
   currentProduct: CurrentProductContext;
+  ingredientsOcr?: AzureIngredientPanelOcr | null;
 }) {
   const scanContext = {
     scanSessionId,
@@ -1041,10 +1317,20 @@ Return:
   - amountBasis ("per_serving", "per_capsule", "per_tablet", etc.)
 
 Dosage rules:
-- Use ONLY values explicitly visible in the supplement facts panel
+- Use ONLY values explicitly visible on the photographed label, especially the supplement facts / ingredients panel
+- Internally reconstruct the visible table row-by-row before filling ingredients_found, then map each ingredient only to the dose shown on that same row
+- If dedicated OCR/table text is provided for the ingredients panel, use that OCR output as the PRIMARY source for ingredient names and doses
+- If dedicated OCR/table text is provided and it conflicts with your guess from the image, prefer the OCR/table text unless there is an obvious OCR character corruption
+- NEVER infer, estimate, or substitute common or typical supplement doses
+- A dosage is valid only if the raw evidence text contains both the ingredient name and the dose in the same clearly readable row or inline phrase
+- NEVER borrow numbers from nearby rows, nearby columns, headers, footnotes, % NRV, % DV, RI, target ranges, app labels, or surrounding text
 - If an ingredient is part of a proprietary blend without a specific dose → set dosageValue = null
 - If only total blend weight is shown → do NOT assign it to individual ingredients
 - If serving size is shown (e.g. "2 capsules"), use that to infer amountBasis
+- If the number or unit is uncertain, or the ingredient name and dose are not clearly readable together → set dosageValue = null and dosageUnit = null
+- For each ingredient, dosage_original_text must contain the exact raw row or phrase used as evidence, not just the dose
+- If dosageValue or dosageUnit is null because of uncertainty, dosage_original_text must include the exact raw row/phrase and briefly explain the uncertainty
+- Ignore % NRV / % DV / RI and similar reference-intake columns for dose extraction
 - Never guess or estimate doses
 
 Dose extraction priority (apply in order):
@@ -1052,9 +1338,11 @@ Dose extraction priority (apply in order):
 1. If a structured table exists (e.g. "Supplement Facts", "Vitamins & Minerals", "Nutrition", "Active Ingredients"):
    - Extract ALL rows with numeric doses
    - Treat this as the PRIMARY source of truth
+   - Only accept a row's dose when the ingredient name and dose are clearly readable on that same row
 
 2. If no structured table exists:
    - Extract doses from inline ingredient listings (e.g. "Magnesium 200mg")
+   - Only accept the dose when the ingredient name and dose are clearly readable in the same phrase
 
 3. If neither exists:
    - Extract ingredient names only and set dosageValue = null
@@ -1064,6 +1352,8 @@ General rules:
 - Multiple sections may exist (e.g. vitamins table + ingredient list) → merge them
 - Do not duplicate ingredients across sections
 - Prefer entries with explicit numeric doses over those without
+- Do not use values from % NRV / % DV columns, nearby rows, headers, footnotes, or surrounding text as ingredient doses
+- Do not output a borrowed or hallucinated dose just because it seems plausible for that ingredient
 
 Naming rules:
 - Extract the brand from the front label (usually top of the packaging)
@@ -1086,6 +1376,16 @@ Hard rules:
 
 Barcode scan context:
 ${JSON.stringify(scanContext)}
+
+${
+  ingredientsOcr
+    ? `
+Dedicated OCR output for image 1 (PRIMARY source for ingredients/doses):
+
+${ingredientsOcr.combinedText}
+`.trim()
+    : ""
+}
 `.trim();
 }
 
@@ -1117,19 +1417,224 @@ async function buildContentHash({
   );
 }
 
+function buildDoseVerificationPrompt(ingredients: NormalizedIngredient[]) {
+  const indexedIngredients = ingredients.map((ingredient, index) => ({
+    index,
+    raw_name: ingredient.raw_name,
+    canonical_name: ingredient.canonical_name,
+    dosage_value: ingredient.dosage_value,
+    dosage_unit: ingredient.dosage_unit,
+    dosage_original_text: ingredient.dosage_original_text,
+  }));
+
+  return `
+You are verifying previously extracted supplement ingredient doses against the attached ingredient-panel image.
+
+You will receive an indexed ingredient list from a first extraction pass.
+Your task is to inspect the image directly and return the best visible dose for each same index.
+
+Rules:
+- Preserve the ingredient list order and indexes exactly as given.
+- Keep ingredient names conceptually unchanged; only verify dose fields for each index.
+- Check each ingredient-dose pair against the visible nutrition table or ingredient row for that ingredient.
+- Use only the visible row containing that ingredient name.
+- Do not use typical supplement doses, prior knowledge, or inferred values.
+- Do not borrow values from neighbouring rows, % NRV, % DV, headers, footnotes, or UI text.
+- Correct likely OCR errors when clearly supported by the visible row, including:
+  - lost decimal point: 0.5mg vs 5mg, 1.5mg vs 15mg
+  - lost zero: 500mg vs 50mg, 50µg vs 5µg
+  - added digit: 30mg vs 130mg
+  - wrong nearby row: 40mg vs 30mg, 10µg vs 50µg
+- If the visible row clearly supports a better dose, return the corrected dosage_value, dosage_unit, and dosage_original_text.
+- If the row is uncertain or unreadable, keep the original extracted dose unchanged rather than returning null.
+
+Return only JSON matching the schema.
+
+Indexed ingredients:
+${JSON.stringify(indexedIngredients)}
+  `.trim();
+}
+
+async function verifyOpenAiExtractedDoses({
+  ingredientsImage,
+  ingredients,
+}: {
+  ingredientsImage: string;
+  ingredients: NormalizedIngredient[];
+}) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: buildOpenAiHeaders(openAiApiKey || ""),
+    body: JSON.stringify({
+      model: openAiModel,
+      temperature: 0,
+      response_format: {
+        type: "json_schema",
+        json_schema: doseVerificationResponseSchema,
+      },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You verify supplement ingredient doses from a single ingredient-panel image. Correct only obvious OCR dose errors supported by the visible row. If uncertain, keep the original extracted dose unchanged.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: buildDoseVerificationPrompt(ingredients),
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: ingredientsImage,
+                detail: "high",
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `OpenAI dose verification failed: ${errorText.slice(0, 500)}`
+    );
+  }
+
+  const completion = await response.json();
+  const content = extractCompletionContent(
+    completion?.choices?.[0]?.message?.content
+  );
+
+  if (!content) {
+    throw new Error("OpenAI returned empty dose verification content.");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error("Could not parse OpenAI dose verification JSON response.");
+  }
+
+  return Array.isArray(parsed?.verified_ingredients)
+    ? parsed.verified_ingredients
+    : [];
+}
+
+function mergeDoseCorrections(
+  ingredients: NormalizedIngredient[],
+  corrections: unknown[]
+) {
+  const correctionsByIndex = new Map<
+    number,
+    {
+      dosage_value: number | null;
+      dosage_unit: string | null;
+      dosage_original_text: string | null;
+    }
+  >();
+
+  corrections.forEach((candidate) => {
+    const row = candidate as Record<string, unknown>;
+    const index =
+      typeof row?.index === "number" && Number.isInteger(row.index)
+        ? row.index
+        : null;
+
+    if (index === null || index < 0 || index >= ingredients.length) {
+      return;
+    }
+
+    correctionsByIndex.set(index, {
+      dosage_value: parseOptionalNumber(row?.dosage_value),
+      dosage_unit: trimString(row?.dosage_unit) || null,
+      dosage_original_text: trimString(row?.dosage_original_text) || null,
+    });
+  });
+
+  return ingredients.map((ingredient, index) => {
+    const correction = correctionsByIndex.get(index);
+    if (!correction) {
+      return ingredient;
+    }
+
+    const nextValue = correction.dosage_value;
+    const nextUnit = correction.dosage_unit;
+    const hasVerifiedDose = Number.isFinite(nextValue) && Boolean(nextUnit);
+    const hasExistingDose =
+      Number.isFinite(ingredient.dosage_value) && Boolean(ingredient.dosage_unit);
+
+    if (!hasVerifiedDose && hasExistingDose) {
+      return ingredient;
+    }
+
+    if (!hasVerifiedDose && !hasExistingDose) {
+      return {
+        ...ingredient,
+        dosage_original_text:
+          correction.dosage_original_text || ingredient.dosage_original_text,
+      };
+    }
+
+    return {
+      ...ingredient,
+      dosage_value: nextValue,
+      dosage_unit: nextUnit,
+      dosage_original_text:
+        correction.dosage_original_text || ingredient.dosage_original_text,
+    };
+  });
+}
+
 async function fetchOpenAiExtraction({
   scanSessionId,
   barcode,
   currentProduct,
   ingredientsImage,
   productImage,
+  ingredientsOcr,
 }: {
   scanSessionId: number;
   barcode: string;
   currentProduct: CurrentProductContext;
   ingredientsImage: string;
   productImage: string;
+  ingredientsOcr: AzureIngredientPanelOcr | null;
 }) {
+  const userContent: Array<Record<string, unknown>> = [
+    {
+      type: "text",
+      text: buildUserPrompt({
+        scanSessionId,
+        barcode,
+        currentProduct,
+        ingredientsOcr,
+      }),
+    },
+  ];
+
+  if (!ingredientsOcr) {
+    userContent.push({
+      type: "image_url",
+      image_url: {
+        url: ingredientsImage,
+        detail: "high",
+      },
+    });
+  }
+
+  userContent.push({
+    type: "image_url",
+    image_url: {
+      url: productImage,
+    },
+  });
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: buildOpenAiHeaders(openAiApiKey || ""),
@@ -1141,31 +1646,15 @@ async function fetchOpenAiExtraction({
         json_schema: photoRescueResponseSchema,
       },
       messages: [
-        { role: "system", content: buildSystemPrompt() },
+        {
+          role: "system",
+          content: buildSystemPrompt({
+            hasDedicatedOcr: Boolean(ingredientsOcr),
+          }),
+        },
         {
           role: "user",
-          content: [
-            {
-              type: "text",
-              text: buildUserPrompt({
-                scanSessionId,
-                barcode,
-                currentProduct,
-              }),
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: ingredientsImage,
-              },
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: productImage,
-              },
-            },
-          ],
+          content: userContent,
         },
       ],
     }),
@@ -1192,7 +1681,36 @@ async function fetchOpenAiExtraction({
     throw new Error("Could not parse OpenAI JSON response.");
   }
 
-  return normalizePhotoRescueOutput(parsed);
+  const initialResult = normalizePhotoRescueOutput(parsed);
+
+  if (ingredientsOcr?.combinedText) {
+    initialResult.productText.ingredient_panel_text =
+      ingredientsOcr.combinedText;
+    initialResult.productText.raw_text = [
+      initialResult.productText.front_label_name,
+      ingredientsOcr.combinedText,
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
+  }
+
+  if (
+    initialResult.classification.is_supplement === true &&
+    initialResult.extraction.ingredients_found.length > 0
+  ) {
+    const corrections = await verifyOpenAiExtractedDoses({
+      ingredientsImage,
+      ingredients: initialResult.extraction.ingredients_found,
+    });
+
+    initialResult.extraction.ingredients_found = mergeDoseCorrections(
+      initialResult.extraction.ingredients_found,
+      corrections
+    );
+  }
+
+  return initialResult;
 }
 
 async function fetchOffProductById(productId: string) {
@@ -2212,12 +2730,16 @@ Deno.serve(async (req) => {
       );
     }
 
+    const ingredientsOcr = await tryFetchAzureIngredientPanelOcr(
+      ingredientsImage
+    );
     const aiResult = await fetchOpenAiExtraction({
       scanSessionId: scanSessionId!,
       barcode,
       currentProduct,
       ingredientsImage,
       productImage,
+      ingredientsOcr,
     });
 
     const rawProductName =

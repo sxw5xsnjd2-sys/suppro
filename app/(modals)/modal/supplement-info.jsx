@@ -1435,6 +1435,8 @@ export default function SupplementInfoModal() {
     data?.catalogType === CATALOG_TYPES.ACTIVE_INGREDIENT && !isScanFailure;
   const isProductNotRecognizedFailure =
     isScanFailure && data?.scanFailureStatus === "not_found";
+  const isNoIngredientsScanFailure =
+    isScanFailure && data?.scanFailureStatus === "no_ingredients";
   const isVerified = Boolean(data?.verified);
   const canAddSupplement = Boolean(
     (!isScanFailure && isLiveScanSource && fallbackName) ||
@@ -2322,6 +2324,8 @@ export default function SupplementInfoModal() {
                   <View
                     style={[
                       styles.scanFailureActions,
+                      isNoIngredientsScanFailure &&
+                        styles.scanFailureActionsCentered,
                       isProductNotRecognizedFailure &&
                         styles.scanFailureActionsStacked,
                     ]}
@@ -2346,6 +2350,15 @@ export default function SupplementInfoModal() {
                           </Text>
                         </View>
                       </AppButton>
+                    ) : isNoIngredientsScanFailure ? (
+                      canImproveScanWithPhotos ? (
+                        <HeaderAction
+                          icon="camera-outline"
+                          label="Improve with photos"
+                          onPress={handleImproveScanWithPhotos}
+                          accent
+                        />
+                      ) : null
                     ) : (
                       <>
                         <AppButton
@@ -3565,6 +3578,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
+  },
+  scanFailureActionsCentered: {
+    justifyContent: "center",
+    alignItems: "center",
   },
   scanFailureActionsStacked: {
     alignItems: "center",

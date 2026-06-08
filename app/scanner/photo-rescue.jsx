@@ -6,6 +6,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -48,15 +49,14 @@ function normalizeIntegerParam(value) {
 
   const parsed = Number.parseInt(
     typeof value === "string" ? value : String(value ?? ""),
-    10
+    10,
   );
 
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 function buildPhotoDataUrl(photo) {
-  const base64 =
-    typeof photo?.base64 === "string" ? photo.base64.trim() : "";
+  const base64 = typeof photo?.base64 === "string" ? photo.base64.trim() : "";
 
   return base64 ? `data:image/jpeg;base64,${base64}` : "";
 }
@@ -107,7 +107,11 @@ function PhotoRescueFallback({
             variant="primary"
             onPress={onPrimaryPress}
           />
-          <AppButton label="Back" variant="ghost" onPress={goBackOrLeaveScanner} />
+          <AppButton
+            label="Back"
+            variant="ghost"
+            onPress={goBackOrLeaveScanner}
+          />
         </View>
       </PrimaryCard>
     </View>
@@ -136,15 +140,16 @@ export default function ScannerPhotoRescueScreen() {
   const flashOpacity = useRef(new Animated.Value(0)).current;
   const flashScale = useRef(new Animated.Value(0.85)).current;
   const buttonScale = useRef(new Animated.Value(1)).current;
+  const { height: windowHeight } = useWindowDimensions();
 
   const currentScanSessionId = useScannerStore((state) => state.scanSessionId);
   const photoRescueStatus = useScannerStore((state) => state.photoRescueStatus);
   const photoRescueError = useScannerStore((state) => state.photoRescueError);
   const enhanceScanWithPhotos = useScannerStore(
-    (state) => state.enhanceScanWithPhotos
+    (state) => state.enhanceScanWithPhotos,
   );
   const resetPhotoRescueState = useScannerStore(
-    (state) => state.resetPhotoRescueState
+    (state) => state.resetPhotoRescueState,
   );
 
   useEffect(() => {
@@ -155,7 +160,7 @@ export default function ScannerPhotoRescueScreen() {
     if (!cameraModuleError) return;
     console.warn(
       "[scanner-photo-rescue] expo-camera native module is unavailable",
-      cameraModuleError
+      cameraModuleError,
     );
   }, []);
 
@@ -168,7 +173,9 @@ export default function ScannerPhotoRescueScreen() {
   }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
 
   const permissionDenied = useMemo(() => {
-    return permission && !permission.granted && permission.status !== "undetermined";
+    return (
+      permission && !permission.granted && permission.status !== "undetermined"
+    );
   }, [permission]);
 
   const effectiveScanSessionId = Number.isFinite(requestedScanSessionId)
@@ -185,31 +192,46 @@ export default function ScannerPhotoRescueScreen() {
       : null;
   const visibleErrorMessage =
     errorPresentation?.message ||
-    (typeof photoRescueError?.message === "string" ? photoRescueError.message : "") ||
+    (typeof photoRescueError?.message === "string"
+      ? photoRescueError.message
+      : "") ||
     captureError;
 
   const stepLabel = step === "ingredients" ? "Step 1 of 2" : "Step 2 of 2";
-  const stepTitle =
-    step === "ingredients" ? "Capture the ingredients panel" : "Capture the product front";
-  const stepDescription =
-    step === "ingredients"
-      ? "Fill the frame with the supplement facts or ingredients panel so we can extract the full stack."
-      : "Now capture the front label or product name so we can identify the supplement correctly.";
-  const captureLabel =
-    step === "ingredients"
-      ? "Capture ingredients photo"
-      : "Capture product photo";
+  const isIngredientsStep = step === "ingredients";
+  const usesCompactIngredientsFrame = windowHeight < 760;
+  const stepTitle = isIngredientsStep
+    ? "Capture the ingredients panel"
+    : "Capture the product front";
+  const stepDescription = isIngredientsStep
+    ? "Fill the frame with the supplement facts or ingredients panel."
+    : "Now capture the front label or product name.";
+  const captureLabel = isIngredientsStep
+    ? "Capture ingredients photo"
+    : "Capture product photo";
 
   const showCaptureFlash = (onDone) => {
     setCaptureFlashVisible(true);
     flashScale.setValue(0.85);
     flashOpacity.setValue(0);
     Animated.parallel([
-      Animated.spring(flashScale, { toValue: 1, friction: 6, useNativeDriver: true }),
-      Animated.timing(flashOpacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+      Animated.spring(flashScale, {
+        toValue: 1,
+        friction: 6,
+        useNativeDriver: true,
+      }),
+      Animated.timing(flashOpacity, {
+        toValue: 1,
+        duration: 150,
+        useNativeDriver: true,
+      }),
     ]).start(() => {
       setTimeout(() => {
-        Animated.timing(flashOpacity, { toValue: 0, duration: 250, useNativeDriver: true }).start(() => {
+        Animated.timing(flashOpacity, {
+          toValue: 0,
+          duration: 250,
+          useNativeDriver: true,
+        }).start(() => {
           setCaptureFlashVisible(false);
           onDone?.();
         });
@@ -220,8 +242,16 @@ export default function ScannerPhotoRescueScreen() {
   const animateCaptureButton = () => {
     buttonScale.setValue(1);
     Animated.sequence([
-      Animated.spring(buttonScale, { toValue: 0.88, friction: 8, useNativeDriver: true }),
-      Animated.spring(buttonScale, { toValue: 1, friction: 5, useNativeDriver: true }),
+      Animated.spring(buttonScale, {
+        toValue: 0.88,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+      Animated.spring(buttonScale, {
+        toValue: 1,
+        friction: 5,
+        useNativeDriver: true,
+      }),
     ]).start();
   };
 
@@ -251,11 +281,23 @@ export default function ScannerPhotoRescueScreen() {
     animateCaptureButton();
 
     try {
+      const captureStep = step === "ingredients" ? "ingredients" : "product";
       const photo = await cameraRef.current?.takePictureAsync({
         base64: true,
-        quality: 0.35,
-        skipProcessing: true,
+        quality: 0.9,
       });
+
+      if (__DEV__) {
+        console.log("[scanner-photo-rescue] captured photo", {
+          step: captureStep,
+          width: photo?.width ?? null,
+          height: photo?.height ?? null,
+          format: photo?.format ?? null,
+          uri: photo?.uri ?? null,
+          base64Length:
+            typeof photo?.base64 === "string" ? photo.base64.length : null,
+        });
+      }
 
       const nextPhoto = buildPhotoDataUrl(photo);
       if (!nextPhoto) {
@@ -311,7 +353,7 @@ export default function ScannerPhotoRescueScreen() {
       setCaptureError(
         typeof error?.message === "string" && error.message.trim()
           ? error.message
-          : "We could not improve that scan with those photos."
+          : "We could not improve that scan with those photos.",
       );
     }
   };
@@ -377,7 +419,11 @@ export default function ScannerPhotoRescueScreen() {
 
   return (
     <View style={styles.screen}>
-      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+      <CameraView
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        facing="back"
+      />
 
       <View style={styles.overlay}>
         <View style={styles.topBar}>
@@ -392,12 +438,31 @@ export default function ScannerPhotoRescueScreen() {
         </View>
 
         <View style={styles.centerContent}>
-          <View style={[styles.stepPill, captureFlashVisible && styles.stepPillSuccess]}>
-            <Text style={[styles.stepPillText, captureFlashVisible && styles.stepPillTextSuccess]}>
+          <View
+            style={[
+              styles.stepPill,
+              captureFlashVisible && styles.stepPillSuccess,
+            ]}
+          >
+            <Text
+              style={[
+                styles.stepPillText,
+                captureFlashVisible && styles.stepPillTextSuccess,
+              ]}
+            >
               {captureFlashVisible ? "✓ Step 1 done" : stepLabel}
             </Text>
           </View>
-          <View style={[styles.captureFrame, captureFlashVisible && styles.captureFrameSuccess]}>
+          <View
+            style={[
+              styles.captureFrame,
+              isIngredientsStep && styles.captureFrameIngredients,
+              isIngredientsStep &&
+                usesCompactIngredientsFrame &&
+                styles.captureFrameIngredientsCompact,
+              captureFlashVisible && styles.captureFrameSuccess,
+            ]}
+          >
             {captureFlashVisible ? (
               <Animated.View
                 style={[
@@ -406,7 +471,9 @@ export default function ScannerPhotoRescueScreen() {
                 ]}
               >
                 <Text style={styles.captureSuccessCheck}>✓</Text>
-                <Text style={styles.captureSuccessLabel}>Ingredients captured</Text>
+                <Text style={styles.captureSuccessLabel}>
+                  Ingredients captured
+                </Text>
               </Animated.View>
             ) : null}
           </View>
@@ -454,8 +521,8 @@ export default function ScannerPhotoRescueScreen() {
             <ActivityIndicator color={appTheme.colors.textStrong} />
             <Text style={styles.feedbackTitle}>Improving scan...</Text>
             <Text style={styles.feedbackBody}>
-              We&apos;re extracting the ingredient panel and product name from your
-              photos now.
+              We&apos;re extracting the ingredient panel and product name from
+              your photos now.
             </Text>
           </PrimaryCard>
         </View>
@@ -540,6 +607,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
+  },
+  captureFrameIngredients: {
+    width: 320,
+    height: 428,
+    borderRadius: 32,
+  },
+  captureFrameIngredientsCompact: {
+    width: 300,
+    height: 392,
+    borderRadius: 30,
   },
   captureFrameSuccess: {
     borderColor: "#4ADE80",

@@ -2270,6 +2270,22 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     if (stepKey === "welcome") {
       return (
         <View style={styles.welcomeContent}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={12}
+            onPress={goBack}
+            style={({ pressed }) => [
+              styles.welcomeBackButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons
+              name="chevron-back"
+              size={24}
+              color={onboardingV6.ink}
+            />
+          </Pressable>
           <QuestionHero
             centered
             title="A few quick questions"
@@ -2950,6 +2966,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 8,
     paddingBottom: 44,
+    position: "relative",
+  },
+  welcomeBackButton: {
+    position: "absolute",
+    top: 8,
+    left: onboardingV6.sidePadding,
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
   },
   landingContent: {
     flex: 1,

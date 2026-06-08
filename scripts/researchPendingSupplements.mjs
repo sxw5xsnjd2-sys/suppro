@@ -10,7 +10,7 @@ const DEFAULT_MODEL = process.env.SUPPLEMENT_RESEARCH_MODEL || "gpt-5.4-mini";
 const DEFAULT_OUTPUT_DIR = path.join(
   PROJECT_ROOT,
   "supabase",
-  "pending_supplement_research"
+  "pending_supplement_research",
 );
 const MANUAL_REVIEW_TABLE = "supplement_research_manual_reviews";
 
@@ -176,7 +176,8 @@ function normalizeDoseUnit(value) {
   if (lowered === "ml/day" || lowered === "mlperday") return "ml";
   if (lowered === "cfu/day" || lowered === "cfuperday") return "CFU";
   if (lowered === "iu/day" || lowered === "iuperday") return "IU";
-  if (lowered === "ug" || lowered === "mcg" || normalized === "μg") return "mcg";
+  if (lowered === "ug" || lowered === "mcg" || normalized === "μg")
+    return "mcg";
   if (lowered === "iu") return "IU";
   if (lowered === "cfu") return "CFU";
   if (lowered === "mg") return "mg";
@@ -236,7 +237,8 @@ function sanitizeResearchProse(research) {
   ];
   const next = { ...research };
   for (const field of textFields) {
-    if (typeof next[field] === "string") next[field] = stripGeneratedSourceLinks(next[field]);
+    if (typeof next[field] === "string")
+      next[field] = stripGeneratedSourceLinks(next[field]);
   }
   if (Array.isArray(next.benefits)) {
     next.benefits = next.benefits.map((benefit) => {
@@ -247,7 +249,11 @@ function sanitizeResearchProse(research) {
           : benefit.evidence;
       return {
         ...benefit,
-        evidence: normalizeBenefitEvidenceStyle(evidenceText, benefit, next.citations),
+        evidence: normalizeBenefitEvidenceStyle(
+          evidenceText,
+          benefit,
+          next.citations,
+        ),
         ranking_reason:
           typeof benefit.ranking_reason === "string"
             ? stripGeneratedSourceLinks(benefit.ranking_reason)
@@ -260,19 +266,25 @@ function sanitizeResearchProse(research) {
 
 function normalizeBenefitEvidenceStyle(evidence, benefit, citations) {
   const evidenceText = stripGeneratedSourceLinks(evidence);
-  if (!evidenceText || (evidenceText.includes(":") && evidenceText.includes('"'))) {
+  if (
+    !evidenceText ||
+    (evidenceText.includes(":") && evidenceText.includes('"'))
+  ) {
     return evidenceText;
   }
 
-  const sourceUrls = Array.isArray(benefit?.source_urls) ? benefit.source_urls : [];
+  const sourceUrls = Array.isArray(benefit?.source_urls)
+    ? benefit.source_urls
+    : [];
   const citation = (Array.isArray(citations) ? citations : []).find((item) =>
-    sourceUrls.includes(item?.url)
+    sourceUrls.includes(item?.url),
   );
   if (!citation) return evidenceText;
 
   const authors = trimString(citation.authors) || "Source authors";
   const year = citation.year ?? "n.d.";
-  const source = trimString(citation.journal) || trimString(citation.domain) || "Source";
+  const source =
+    trimString(citation.journal) || trimString(citation.domain) || "Source";
   const title = trimString(citation.title);
   if (!title) return evidenceText;
 
@@ -281,14 +293,15 @@ function normalizeBenefitEvidenceStyle(evidence, benefit, citations) {
 
 function hasDoseLikeText(value) {
   return /\b\d+(?:[.,]\d+)?(?:\s*(?:-|to)\s*\d+(?:[.,]\d+)?)?\s*(?:mg|g|mcg|ug|μg|iu|cfu|million|billion)\b/i.test(
-    normalizeText(value)
+    normalizeText(value),
   );
 }
 
 function researchHasAvailableDose(result) {
   const dose = result?.recommended_dose_json;
   if (!dose || typeof dose !== "object") return false;
-  if (!["parsed", "ambiguous"].includes(result?.recommended_dose_status)) return false;
+  if (!["parsed", "ambiguous"].includes(result?.recommended_dose_status))
+    return false;
 
   if (hasDoseLikeText(dose.source_text)) return true;
   return [
@@ -338,7 +351,10 @@ function normalizeLookupText(value) {
     .toLowerCase()
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\b(extract|powder|capsules?|tablets?|supplements?|root|leaf|seed|oil)\b/g, " ")
+    .replace(
+      /\b(extract|powder|capsules?|tablets?|supplements?|root|leaf|seed|oil)\b/g,
+      " ",
+    )
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -369,7 +385,9 @@ function scoreLookupMatch(inputName, lookupName) {
   const lookupTokenSet = new Set(lookupTokens(lookup));
   if (!inputTokens.length || !lookupTokenSet.size) return 0;
 
-  const overlap = inputTokens.filter((token) => lookupTokenSet.has(token)).length;
+  const overlap = inputTokens.filter((token) =>
+    lookupTokenSet.has(token),
+  ).length;
   const coverage = overlap / inputTokens.length;
   const reverseCoverage = overlap / lookupTokenSet.size;
   return Math.round(coverage * 70 + reverseCoverage * 20);
@@ -405,7 +423,8 @@ function buildCatalogEntries(supplements, aliases) {
   for (const alias of aliases ?? []) {
     const entry = byId.get(alias?.supplement_id);
     if (!entry) continue;
-    const aliasText = trimString(alias?.alias) || trimString(alias?.alias_normalized);
+    const aliasText =
+      trimString(alias?.alias) || trimString(alias?.alias_normalized);
     if (!aliasText) continue;
     entry.aliases.push(aliasText);
     entry.lookupKeys.push(aliasText);
@@ -431,18 +450,30 @@ function findDuplicateCandidate(candidateName, catalogEntries) {
     }
   }
 
-  scored.sort((left, right) => right.score - left.score || left.name.localeCompare(right.name));
+  scored.sort(
+    (left, right) =>
+      right.score - left.score || left.name.localeCompare(right.name),
+  );
   const best = scored[0] ?? null;
   if (!best) {
     return { action: "create_new", shortlist: [] };
   }
   if (best.score >= 90) {
-    return { action: "alias_existing", match: best, shortlist: scored.slice(0, 5) };
+    return {
+      action: "alias_existing",
+      match: best,
+      shortlist: scored.slice(0, 5),
+    };
   }
   return { action: "needs_alias_review", shortlist: scored.slice(0, 8) };
 }
 
-function buildAliasGuardShortlist({ candidate, research, catalogEntries, limit = 8 }) {
+function buildAliasGuardShortlist({
+  candidate,
+  research,
+  catalogEntries,
+  limit = 8,
+}) {
   const candidateNames = dedupeStrings([
     canonicalCandidateName(candidate),
     candidate?.display_name,
@@ -472,8 +503,17 @@ function buildAliasGuardShortlist({ candidate, research, catalogEntries, limit =
   }
 
   return scored
-    .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+    .sort(
+      (left, right) =>
+        right.score - left.score || left.name.localeCompare(right.name),
+    )
     .slice(0, limit);
+}
+
+function filterApprovedCatalogEntries(catalogEntries) {
+  return (catalogEntries ?? []).filter(
+    (entry) => trimString(entry?.status) === "approved",
+  );
 }
 
 function aliasReviewPayload(shortlist) {
@@ -503,12 +543,22 @@ function aliasReviewAllowsCreateNew(review) {
   ].some((term) => reason.includes(term));
 }
 
+function buildStrictAliasReviewPrompt(candidate, research) {
+  return [
+    `research canonical name: ${normalizeText(research?.canonical_name) || canonicalCandidateName(candidate)}`,
+    `original candidate: ${canonicalCandidateName(candidate)}`,
+    `display name: ${trimString(candidate?.display_name) || "none"}`,
+    `known aliases: ${dedupeStrings(research?.aliases ?? []).join(", ") || "none"}`,
+  ].join("\n");
+}
+
 function buildHeaders(apiKey) {
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
   };
-  if (process.env.OPENAI_PROJECT_ID) headers["OpenAI-Project"] = process.env.OPENAI_PROJECT_ID;
+  if (process.env.OPENAI_PROJECT_ID)
+    headers["OpenAI-Project"] = process.env.OPENAI_PROJECT_ID;
   if (process.env.OPENAI_ORGANIZATION_ID) {
     headers["OpenAI-Organization"] = process.env.OPENAI_ORGANIZATION_ID;
   }
@@ -540,7 +590,10 @@ function extractResponseText(body) {
   const chunks = [];
   for (const item of body?.output ?? []) {
     for (const content of item?.content ?? []) {
-      if (content?.type === "output_text" && typeof content?.text === "string") {
+      if (
+        content?.type === "output_text" &&
+        typeof content?.text === "string"
+      ) {
         chunks.push(content.text);
       }
     }
@@ -548,27 +601,37 @@ function extractResponseText(body) {
   return chunks.join("");
 }
 
-async function requestStructuredResponse({ apiKey, model, instructions, input, schema, tools = [] }) {
-  const response = await openAiFetchWithRetry("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: buildHeaders(apiKey),
-    body: JSON.stringify({
-      model,
-      instructions,
-      input,
-      tools,
-      tool_choice: tools.length ? "auto" : "none",
-      include: tools.length ? ["web_search_call.action.sources"] : undefined,
-      text: {
-        format: {
-          type: "json_schema",
-          name: schema.name,
-          strict: true,
-          schema: schema.schema,
+async function requestStructuredResponse({
+  apiKey,
+  model,
+  instructions,
+  input,
+  schema,
+  tools = [],
+}) {
+  const response = await openAiFetchWithRetry(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
+      headers: buildHeaders(apiKey),
+      body: JSON.stringify({
+        model,
+        instructions,
+        input,
+        tools,
+        tool_choice: tools.length ? "auto" : "none",
+        include: tools.length ? ["web_search_call.action.sources"] : undefined,
+        text: {
+          format: {
+            type: "json_schema",
+            name: schema.name,
+            strict: true,
+            schema: schema.schema,
+          },
         },
-      },
-    }),
-  });
+      }),
+    },
+  );
 
   if (!response.ok) {
     throw new Error(`OpenAI ${response.status}: ${await response.text()}`);
@@ -590,8 +653,13 @@ function aliasReviewSchema() {
       additionalProperties: false,
       required: ["decision", "matched_supplement_id", "confidence", "reason"],
       properties: {
-        decision: { type: "string", enum: ["alias_existing", "create_new", "manual_review"] },
-        matched_supplement_id: { anyOf: [{ type: "string" }, { type: "null" }] },
+        decision: {
+          type: "string",
+          enum: ["alias_existing", "create_new", "manual_review"],
+        },
+        matched_supplement_id: {
+          anyOf: [{ type: "string" }, { type: "null" }],
+        },
         confidence: { type: "number" },
         reason: { type: "string" },
       },
@@ -749,11 +817,18 @@ function researchSchema() {
             ],
             properties: {
               label: { type: "string", enum: BENEFIT_LABELS },
-              evidence_rating: { type: "string", enum: ["gold", "silver", "bronze"] },
+              evidence_rating: {
+                type: "string",
+                enum: ["gold", "silver", "bronze"],
+              },
               score: { type: "integer", minimum: 0, maximum: 100 },
               evidence: { type: "string" },
               ranking_reason: { type: "string" },
-              source_urls: { type: "array", minItems: 1, items: { type: "string" } },
+              source_urls: {
+                type: "array",
+                minItems: 1,
+                items: { type: "string" },
+              },
             },
           },
         },
@@ -774,11 +849,136 @@ async function requestAliasReview({ apiKey, model, candidateName, shortlist }) {
       "Return manual_review when the distinction is medically meaningful or uncertain.",
       "Do not create duplicate supplements. For example, beetroot should be treated as an alias of beetroot juice/dietary nitrates when that is the best existing match.",
     ].join(" "),
-    input: JSON.stringify({ candidate_name: candidateName, existing_supplements: shortlist }, null, 2),
+    input: JSON.stringify(
+      { candidate_name: candidateName, existing_supplements: shortlist },
+      null,
+      2,
+    ),
   });
 }
 
-async function requestResearch({ apiKey, model, candidate, benefitRankings, allowedDomains }) {
+async function requestStrictAliasReview({
+  apiKey,
+  model,
+  candidate,
+  research,
+  shortlist,
+}) {
+  return requestStructuredResponse({
+    apiKey,
+    model,
+    schema: aliasReviewSchema(),
+    instructions: [
+      "You are the final duplicate-prevention gate before creating a brand-new approved canonical supplement.",
+      "Existing rows are approved canonical supplements and their aliases only.",
+      "Choose alias_existing only when the candidate and researched canonical name clearly refer to the same underlying active ingredient as one shortlist item.",
+      "Choose create_new only when the candidate is clearly distinct from every shortlist item.",
+      "Choose manual_review whenever confidence is limited, multiple shortlist items remain plausible, or the distinction is medically meaningful.",
+      "Be conservative. Avoid creating duplicate canonical supplements.",
+    ].join(" "),
+    input: JSON.stringify(
+      {
+        candidate_summary: buildStrictAliasReviewPrompt(candidate, research),
+        existing_approved_supplements: shortlist,
+      },
+      null,
+      2,
+    ),
+  });
+}
+
+async function resolveStrictApprovedAliasReview({
+  apiKey,
+  model,
+  candidate,
+  research,
+  approvedCatalogEntries,
+}) {
+  const shortlist = buildAliasGuardShortlist({
+    candidate,
+    research,
+    catalogEntries: approvedCatalogEntries,
+  });
+  if (!shortlist.length) {
+    return {
+      decision: "create_new",
+      reason:
+        "No plausible approved supplement matches found in strict alias review.",
+      shortlist,
+    };
+  }
+
+  const review = await requestStrictAliasReview({
+    apiKey,
+    model,
+    candidate,
+    research,
+    shortlist: aliasReviewPayload(shortlist),
+  });
+  const confidence = Number(review?.confidence);
+
+  if (review?.decision === "alias_existing") {
+    if (!Number.isFinite(confidence) || confidence < 0.85) {
+      return {
+        decision: "manual_review",
+        reason: `Strict alias confidence too low: ${String(review?.reason ?? "")}`,
+        shortlist,
+        review,
+      };
+    }
+    const match = shortlist.find(
+      (item) => item.id === review?.matched_supplement_id,
+    );
+    if (!match) {
+      return {
+        decision: "manual_review",
+        reason: "Strict alias review returned an unknown supplement id.",
+        shortlist,
+        review,
+      };
+    }
+    return {
+      decision: "alias_existing",
+      reason: String(review?.reason ?? ""),
+      match,
+      shortlist,
+      review,
+    };
+  }
+
+  if (review?.decision === "create_new") {
+    if (!Number.isFinite(confidence) || confidence < 0.85) {
+      return {
+        decision: "manual_review",
+        reason: `Strict create-new confidence too low: ${String(review?.reason ?? "")}`,
+        shortlist,
+        review,
+      };
+    }
+    return {
+      decision: "create_new",
+      reason: String(review?.reason ?? ""),
+      shortlist,
+      review,
+    };
+  }
+
+  return {
+    decision: "manual_review",
+    reason:
+      String(review?.reason ?? "") || "Strict alias review remained ambiguous.",
+    shortlist,
+    review,
+  };
+}
+
+async function requestResearch({
+  apiKey,
+  model,
+  candidate,
+  benefitRankings,
+  allowedDomains,
+}) {
   return requestStructuredResponse({
     apiKey,
     model,
@@ -821,7 +1021,7 @@ async function requestResearch({ apiKey, model, candidate, benefitRankings, allo
         benefit_ranking_examples: benefitRankings,
       },
       null,
-      2
+      2,
     ),
   });
 }
@@ -884,9 +1084,13 @@ function buildCitationUrlSet(citations, allowedDomains) {
 }
 
 function getBenefitSourceUrls(benefit) {
-  const rawUrls = Array.isArray(benefit?.source_urls) ? benefit.source_urls : [];
+  const rawUrls = Array.isArray(benefit?.source_urls)
+    ? benefit.source_urls
+    : [];
   return Array.from(
-    new Set(rawUrls.map((url) => normalizeEvidenceSourceUrl(url)).filter(Boolean))
+    new Set(
+      rawUrls.map((url) => normalizeEvidenceSourceUrl(url)).filter(Boolean),
+    ),
   );
 }
 
@@ -897,7 +1101,7 @@ function evidenceSourcePriority(url) {
   if (host === "doi.org" || host === "dx.doi.org") return 2;
   if (
     OFFICIAL_SOURCE_DOMAINS.some(
-      (domain) => host === domain || host.endsWith(`.${domain}`)
+      (domain) => host === domain || host.endsWith(`.${domain}`),
     )
   ) {
     return 3;
@@ -905,10 +1109,14 @@ function evidenceSourcePriority(url) {
   return 4;
 }
 
-function selectPrimaryBenefitEvidenceSource(benefit, citations, allowedDomains) {
+function selectPrimaryBenefitEvidenceSource(
+  benefit,
+  citations,
+  allowedDomains,
+) {
   const citationUrls = buildCitationUrlSet(citations, allowedDomains);
   const candidates = getBenefitSourceUrls(benefit).filter((url) =>
-    citationUrls.has(url)
+    citationUrls.has(url),
   );
 
   return (
@@ -916,8 +1124,8 @@ function selectPrimaryBenefitEvidenceSource(benefit, citations, allowedDomains) 
       .map((url, index) => ({ url, index }))
       .sort(
         (left, right) =>
-          evidenceSourcePriority(left.url) - evidenceSourcePriority(right.url) ||
-          left.index - right.index
+          evidenceSourcePriority(left.url) -
+            evidenceSourcePriority(right.url) || left.index - right.index,
       )[0]?.url || null
   );
 }
@@ -948,7 +1156,10 @@ function parseBenefitEvidenceLayout(value) {
 function validateResearch(result, allowedDomains) {
   const issues = [];
   if (result?.decision !== "create_new") {
-    return { ok: false, issues: [trimString(result?.manual_review_reason) || "manual_review"] };
+    return {
+      ok: false,
+      issues: [trimString(result?.manual_review_reason) || "manual_review"],
+    };
   }
 
   const citations = Array.isArray(result?.citations) ? result.citations : [];
@@ -959,7 +1170,7 @@ function validateResearch(result, allowedDomains) {
     const url = normalizeEvidenceSourceUrl(citation?.url);
     if (!url || !isAllowedUrl(url, allowedDomains)) {
       issues.push(
-        `Citation URL is not allowlisted: ${trimString(citation?.url) || "(blank)"}`
+        `Citation URL is not allowlisted: ${trimString(citation?.url) || "(blank)"}`,
       );
     } else {
       citationUrls.add(url);
@@ -970,19 +1181,22 @@ function validateResearch(result, allowedDomains) {
     issues.push("Main evidence field must not contain raw URLs.");
   }
 
-  if (researchHasAvailableDose(result) && !hasDoseLikeText(result?.how_to_use)) {
+  if (
+    researchHasAvailableDose(result) &&
+    !hasDoseLikeText(result?.how_to_use)
+  ) {
     issues.push(
-      "How to use must include the recommended, typical, studied, or example dose when dose information is available."
+      "How to use must include the recommended, typical, studied, or example dose when dose information is available.",
     );
   }
   if (mentionsProductExampleDose(result?.how_to_use)) {
     issues.push(
-      "How to use must not mention sample products, provided product examples, product labels, or label-only amounts."
+      "How to use must not mention sample products, provided product examples, product labels, or label-only amounts.",
     );
   }
   if (mentionsMetaSourcePhrasing(result?.risks_and_interactions)) {
     issues.push(
-      "Risks and interactions must be written as direct guidance, not source-attribution prose like 'the review notes' or 'the fact sheet states'."
+      "Risks and interactions must be written as direct guidance, not source-attribution prose like 'the review notes' or 'the fact sheet states'.",
     );
   }
 
@@ -997,13 +1211,17 @@ function validateResearch(result, allowedDomains) {
     const evidenceText = trimString(benefit?.evidence);
     if (!parseBenefitEvidenceLayout(evidenceText)) {
       issues.push(
-        `Benefit evidence must match 'Author (Year), Journal: "Study title." Findings and limitation.' format: ${benefit?.label}`
+        `Benefit evidence must match 'Author (Year), Journal: "Study title." Findings and limitation.' format: ${benefit?.label}`,
       );
     }
     if (/https?:\/\//i.test(evidenceText)) {
-      issues.push(`Benefit evidence must not contain raw URLs: ${benefit?.label}`);
+      issues.push(
+        `Benefit evidence must not contain raw URLs: ${benefit?.label}`,
+      );
     }
-    const sourceUrls = Array.isArray(benefit?.source_urls) ? benefit.source_urls : [];
+    const sourceUrls = Array.isArray(benefit?.source_urls)
+      ? benefit.source_urls
+      : [];
     const normalizedSourceUrls = getBenefitSourceUrls(benefit);
     if (!sourceUrls.length) {
       issues.push(`Benefit has no source URLs: ${benefit?.label}`);
@@ -1015,24 +1233,28 @@ function validateResearch(result, allowedDomains) {
       const normalizedUrl = normalizeEvidenceSourceUrl(url);
       if (!normalizedUrl) {
         issues.push(
-          `Benefit source URL is invalid: ${trimString(url) || "(blank)"} (${benefit?.label})`
+          `Benefit source URL is invalid: ${trimString(url) || "(blank)"} (${benefit?.label})`,
         );
         continue;
       }
       if (!citationUrls.has(normalizedUrl)) {
         issues.push(
-          `Benefit source URL is not present in citations: ${normalizedUrl} (${benefit?.label})`
+          `Benefit source URL is not present in citations: ${normalizedUrl} (${benefit?.label})`,
         );
         continue;
       }
       if (!isAllowedUrl(normalizedUrl, allowedDomains)) {
         issues.push(
-          `Benefit source URL is not allowlisted: ${normalizedUrl} (${benefit?.label})`
+          `Benefit source URL is not allowlisted: ${normalizedUrl} (${benefit?.label})`,
         );
       }
     }
-    if (!selectPrimaryBenefitEvidenceSource(benefit, citations, allowedDomains)) {
-      issues.push(`Benefit missing persistable evidence_source: ${benefit?.label}`);
+    if (
+      !selectPrimaryBenefitEvidenceSource(benefit, citations, allowedDomains)
+    ) {
+      issues.push(
+        `Benefit missing persistable evidence_source: ${benefit?.label}`,
+      );
     }
   }
 
@@ -1073,7 +1295,7 @@ function shouldCreateLowEvidenceSupplement(result) {
 
 function hasCitationValidationIssue(issues) {
   return (issues ?? []).some((issue) =>
-    /citation|source url|source urls|evidence_source|persistable/i.test(issue)
+    /citation|source url|source urls|evidence_source|persistable/i.test(issue),
   );
 }
 
@@ -1099,7 +1321,7 @@ function normalizeEvidenceRating(value) {
 
 function dedupeStrings(items) {
   return Array.from(
-    new Set((items ?? []).map((item) => normalizeText(item)).filter(Boolean))
+    new Set((items ?? []).map((item) => normalizeText(item)).filter(Boolean)),
   );
 }
 
@@ -1125,7 +1347,7 @@ async function fetchCandidates(supabase, flags) {
     const existingCandidates = await fetchAllRows(
       supabase,
       "supplement_catalog_review_candidates",
-      "*"
+      "*",
     );
     const matches = existingCandidates.filter((candidate) => {
       const names = [
@@ -1156,7 +1378,9 @@ async function fetchCandidates(supabase, flags) {
     .order("occurrence_count", { ascending: false })
     .order("last_seen_at", { ascending: false });
 
-  const requestedSuggestedAction = trimString(flags["suggested-action"]).toLowerCase();
+  const requestedSuggestedAction = trimString(
+    flags["suggested-action"],
+  ).toLowerCase();
   if (requestedSuggestedAction) {
     const actionMap = {
       create_new: "create_canonical",
@@ -1167,14 +1391,15 @@ async function fetchCandidates(supabase, flags) {
     const mappedAction = actionMap[requestedSuggestedAction];
     if (!mappedAction) {
       throw new Error(
-        "Invalid --suggested-action. Use create_canonical, create_new, manual_review, or ignore."
+        "Invalid --suggested-action. Use create_canonical, create_new, manual_review, or ignore.",
       );
     }
     query = query.eq("suggested_action", mappedAction);
   }
 
   const { data, error } = await query;
-  if (error) throw new Error(`[supplement_catalog_review_candidates] ${error.message}`);
+  if (error)
+    throw new Error(`[supplement_catalog_review_candidates] ${error.message}`);
   return data ?? [];
 }
 
@@ -1188,7 +1413,9 @@ async function fetchPendingManualReviewNames(supabase) {
     return new Set();
   }
 
-  return new Set((data ?? []).map((row) => trimString(row.normalized_name)).filter(Boolean));
+  return new Set(
+    (data ?? []).map((row) => trimString(row.normalized_name)).filter(Boolean),
+  );
 }
 
 function buildBenefitRankingExamples(supplementRows) {
@@ -1208,7 +1435,9 @@ function buildBenefitRankingExamples(supplementRows) {
 
   return Object.fromEntries(
     Object.entries(grouped).map(([label, rows]) => {
-      const sorted = rows.slice().sort((left, right) => right.benefit_score - left.benefit_score);
+      const sorted = rows
+        .slice()
+        .sort((left, right) => right.benefit_score - left.benefit_score);
       const middleIndex = Math.floor(sorted.length / 2);
       return [
         label,
@@ -1218,26 +1447,33 @@ function buildBenefitRankingExamples(supplementRows) {
           bottom: sorted.slice(-5),
         },
       ];
-    })
+    }),
   );
 }
 
 async function loadContext(supabase) {
   const [supplements, aliases, rankingRows] = await Promise.all([
     fetchAllRows(supabase, "supplements", "id, name, status"),
-    fetchAllRows(supabase, "supplement_aliases", "supplement_id, alias, alias_normalized"),
+    fetchAllRows(
+      supabase,
+      "supplement_aliases",
+      "supplement_id, alias, alias_normalized",
+    ),
     fetchAllRows(
       supabase,
       "supplements",
-      "id, name, status, evidence_score, supplement_benefits(label, score, icon)"
+      "id, name, status, evidence_score, supplement_benefits(label, score, icon)",
     ),
   ]);
   return {
     supplements,
     aliases,
     catalogEntries: buildCatalogEntries(supplements, aliases),
+    approvedCatalogEntries: filterApprovedCatalogEntries(
+      buildCatalogEntries(supplements, aliases),
+    ),
     benefitRankings: buildBenefitRankingExamples(
-      rankingRows.filter((row) => row.status === "approved")
+      rankingRows.filter((row) => row.status === "approved"),
     ),
   };
 }
@@ -1252,7 +1488,8 @@ async function upsertAlias(supabase, supplementId, alias) {
     .eq("alias_normalized", normalized)
     .limit(1);
 
-  if (existingError) throw new Error(`[supplement_aliases] ${existingError.message}`);
+  if (existingError)
+    throw new Error(`[supplement_aliases] ${existingError.message}`);
 
   if (existing?.length) {
     return;
@@ -1284,7 +1521,8 @@ async function relinkIngredients(supabase, supplementId, names) {
         })
         .ilike(column, name)
         .select("id");
-      if (error) throw new Error(`[product_active_ingredients] ${error.message}`);
+      if (error)
+        throw new Error(`[product_active_ingredients] ${error.message}`);
       for (const row of data ?? []) {
         linkedIds.add(row.id);
       }
@@ -1294,18 +1532,61 @@ async function relinkIngredients(supabase, supplementId, names) {
 }
 
 async function markCandidateApplied(supabase, candidate, supplement) {
-  if (!candidate?.normalized_name) return;
-  const { error } = await supabase
+  const normalizedName = String(candidate?.normalized_name ?? "").trim();
+  if (!normalizedName) return;
+
+  const now = new Date().toISOString();
+
+  const { error: candidateError } = await supabase
     .from("supplement_catalog_review_candidates")
     .update({
       review_status: "applied",
       approved_supplement_id: supplement.id,
       approved_supplement_name: supplement.name,
       review_notes: supplement.note ?? null,
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     })
-    .eq("normalized_name", candidate.normalized_name);
-  if (error) throw new Error(`[supplement_catalog_review_candidates] ${error.message}`);
+    .eq("normalized_name", normalizedName);
+
+  if (candidateError)
+    throw new Error(
+      `[supplement_catalog_review_candidates] ${candidateError.message}`,
+    );
+
+  const { error: reviewError } = await supabase
+    .from("supplement_review_queue")
+    .update({
+      status: "resolved",
+      updated_at: now,
+    })
+    .eq("review_type", "alias_unresolved")
+    .eq("status", "pending")
+    .contains("payload", {
+      unresolved_names: [{ normalized_name: normalizedName }],
+    });
+
+  if (reviewError)
+    throw new Error(`[supplement_review_queue] ${reviewError.message}`);
+
+  const { error: occurrenceError } = await supabase
+    .from("supplement_missing_catalog_occurrences")
+    .delete()
+    .eq("normalized_name", normalizedName);
+
+  if (occurrenceError)
+    throw new Error(
+      `[supplement_missing_catalog_occurrences] ${occurrenceError.message}`,
+    );
+
+  const { error: missingCandidateError } = await supabase
+    .from("supplement_missing_catalog_candidates")
+    .delete()
+    .eq("normalized_name", normalizedName);
+
+  if (missingCandidateError)
+    throw new Error(
+      `[supplement_missing_catalog_candidates] ${missingCandidateError.message}`,
+    );
 }
 
 function queueSuggestedActionForDecision(decision) {
@@ -1340,7 +1621,8 @@ function queueReviewNotesForRecord(record) {
 function buildCachedResearchPayload(record) {
   if (record?.research !== undefined) return record.research ?? null;
   if (record?.decision === "alias_existing") return null;
-  if (record?.decision === "manual_review" && !record?.candidate?.research_json) return null;
+  if (record?.decision === "manual_review" && !record?.candidate?.research_json)
+    return null;
   return undefined;
 }
 
@@ -1370,7 +1652,8 @@ async function syncCandidateQueueDecision(supabase, record) {
     .update(payload)
     .eq("normalized_name", normalizedName);
 
-  if (error) throw new Error(`[supplement_catalog_review_candidates] ${error.message}`);
+  if (error)
+    throw new Error(`[supplement_catalog_review_candidates] ${error.message}`);
 }
 
 async function markManualReviewResolved(supabase, candidate, supplement) {
@@ -1436,13 +1719,16 @@ function buildManualReviewRow(record) {
     citations_json: Array.isArray(record?.research?.citations)
       ? record.research.citations
       : [],
-    sample_active_ingredients_json: Array.isArray(candidate.sample_active_ingredients_json)
+    sample_active_ingredients_json: Array.isArray(
+      candidate.sample_active_ingredients_json,
+    )
       ? candidate.sample_active_ingredients_json
       : [],
     sample_products_json: Array.isArray(candidate.sample_products_json)
       ? candidate.sample_products_json
       : [],
-    source_latest_created_at: trimString(candidate.source_latest_created_at) || null,
+    source_latest_created_at:
+      trimString(candidate.source_latest_created_at) || null,
     updated_at: now,
     first_seen_at: trimString(candidate.first_seen_at) || now,
     last_seen_at: now,
@@ -1457,7 +1743,7 @@ async function upsertManualReviewRecord(supabase, record) {
 
   if (error) {
     throw new Error(
-      `[${MANUAL_REVIEW_TABLE}] ${error.message}. Run supabase/supplement_research_manual_reviews.sql once before using --apply.`
+      `[${MANUAL_REVIEW_TABLE}] ${error.message}. Run supabase/supplement_research_manual_reviews.sql once before using --apply.`,
     );
   }
 
@@ -1509,7 +1795,7 @@ function buildBenefitRows(supplement, research, allowedDomains) {
       evidence_source: selectPrimaryBenefitEvidenceSource(
         benefit,
         research.citations,
-        allowedDomains
+        allowedDomains,
       ),
       ranking_reason: normalizeText(benefit.ranking_reason),
     };
@@ -1548,26 +1834,40 @@ async function applyResearchRelations({
   }
 
   const benefitRows = buildBenefitRows(supplement, research, allowedDomains);
-  await supabase.from("supplement_benefits").delete().eq("supplement_id", supplement.id);
+  await supabase
+    .from("supplement_benefits")
+    .delete()
+    .eq("supplement_id", supplement.id);
   if (benefitRows.length) {
     const { error: benefitError } = await supabase
       .from("supplement_benefits")
       .insert(benefitRows);
-    if (benefitError) throw new Error(`[supplement_benefits] ${benefitError.message}`);
+    if (benefitError)
+      throw new Error(`[supplement_benefits] ${benefitError.message}`);
   }
 
   const linked = await relinkIngredients(supabase, supplement.id, aliasNames);
   return { linked, benefitCount: benefitRows.length };
 }
 
-async function applyNewSupplement({ supabase, candidate, research, allowedDomains }) {
+async function applyNewSupplement({
+  supabase,
+  candidate,
+  research,
+  allowedDomains,
+}) {
   const canonicalName = normalizeText(research.canonical_name);
   const [freshSupplements, freshAliases] = await Promise.all([
     fetchAllRows(supabase, "supplements", "id, name, status"),
-    fetchAllRows(supabase, "supplement_aliases", "supplement_id, alias, alias_normalized"),
+    fetchAllRows(
+      supabase,
+      "supplement_aliases",
+      "supplement_id, alias, alias_normalized",
+    ),
   ]);
   const exactExistingSupplement = freshSupplements.find(
-    (row) => normalizeLookupText(row?.name) === normalizeLookupText(canonicalName)
+    (row) =>
+      normalizeLookupText(row?.name) === normalizeLookupText(canonicalName),
   );
 
   if (exactExistingSupplement) {
@@ -1591,13 +1891,15 @@ async function applyNewSupplement({ supabase, candidate, research, allowedDomain
 
   const duplicate = findDuplicateCandidate(
     canonicalName,
-    buildCatalogEntries(freshSupplements, freshAliases)
+    buildCatalogEntries(freshSupplements, freshAliases),
   );
   if (duplicate.action !== "create_new") {
     throw new Error(
       `Refusing to insert possible duplicate supplement: ${canonicalName} -> ${
-        duplicate.match?.name ?? duplicate.shortlist?.[0]?.name ?? "existing row"
-      }`
+        duplicate.match?.name ??
+        duplicate.shortlist?.[0]?.name ??
+        "existing row"
+      }`,
     );
   }
 
@@ -1609,11 +1911,12 @@ async function applyNewSupplement({ supabase, candidate, research, allowedDomain
       why_use_it: normalizeText(research.why_use_it) || null,
       how_does_it_work: normalizeText(research.how_does_it_work) || null,
       side_effects: normalizeText(research.side_effects) || null,
-      risks_and_interactions: normalizeText(research.risks_and_interactions) || null,
+      risks_and_interactions:
+        normalizeText(research.risks_and_interactions) || null,
       who_might_benefit: normalizeText(research.who_might_benefit) || null,
       evidence: normalizeText(research.evidence) || null,
       evidence_score: clampScore(research.evidence_score),
-      status: "pending",
+      status: "approved",
       how_to_use: normalizeText(research.how_to_use) || null,
       recommended_dose_status: research.recommended_dose_status,
       recommended_dose_json: research.recommended_dose_json,
@@ -1634,7 +1937,7 @@ async function applyNewSupplement({ supabase, candidate, research, allowedDomain
   await markCandidateApplied(supabase, candidate, {
     id: supplement.id,
     name: supplement.name,
-    note: "Created pending supplement from AI research.",
+    note: "Created approved supplement from AI research.",
   });
   await markManualReviewResolved(supabase, candidate, supplement);
   return { supplement, ...relations };
@@ -1648,7 +1951,9 @@ async function applyPendingSupplementRefresh({
   allowedDomains,
 }) {
   if (match.status !== "pending") {
-    throw new Error(`Refusing to refresh non-pending supplement: ${match.name}`);
+    throw new Error(
+      `Refusing to refresh non-pending supplement: ${match.name}`,
+    );
   }
 
   const canonicalName = normalizeText(research.canonical_name) || match.name;
@@ -1660,7 +1965,8 @@ async function applyPendingSupplementRefresh({
       why_use_it: normalizeText(research.why_use_it) || null,
       how_does_it_work: normalizeText(research.how_does_it_work) || null,
       side_effects: normalizeText(research.side_effects) || null,
-      risks_and_interactions: normalizeText(research.risks_and_interactions) || null,
+      risks_and_interactions:
+        normalizeText(research.risks_and_interactions) || null,
       who_might_benefit: normalizeText(research.who_might_benefit) || null,
       evidence: normalizeText(research.evidence) || null,
       evidence_score: clampScore(research.evidence_score),
@@ -1695,9 +2001,10 @@ async function applyPendingSupplementRefresh({
 
 function normalizeCachedResearch(candidate) {
   const cached = candidate?.research_json;
-  if (!cached || typeof cached !== "object" || Array.isArray(cached)) return null;
+  if (!cached || typeof cached !== "object" || Array.isArray(cached))
+    return null;
   return coerceLowEvidenceSupplement(
-    sanitizeResearchProse(normalizeJsonDoseUnits({ ...cached }))
+    sanitizeResearchProse(normalizeJsonDoseUnits({ ...cached })),
   );
 }
 
@@ -1706,7 +2013,7 @@ async function writeReports(outputDir, records) {
   await writeFile(
     path.join(outputDir, "pending_supplement_research.json"),
     JSON.stringify(records, null, 2),
-    "utf8"
+    "utf8",
   );
 
   const markdown = [
@@ -1724,24 +2031,37 @@ async function writeReports(outputDir, records) {
       `- Benefits: ${(record.research?.benefits ?? []).map((benefit) => `${benefit.label} ${benefit.score} ${benefit.evidence_rating ?? "unrated"}`).join(", ") || "n/a"}`,
       "",
       ...(record.validation_issues?.length
-        ? ["Validation issues:", ...record.validation_issues.map((issue) => `- ${issue}`), ""]
+        ? [
+            "Validation issues:",
+            ...record.validation_issues.map((issue) => `- ${issue}`),
+            "",
+          ]
         : []),
       ...(record.research?.citations?.length
         ? [
             "Sources:",
-            ...record.research.citations.map((source) => `- ${source.title} (${source.year ?? "n.d."}) - ${source.url}`),
+            ...record.research.citations.map(
+              (source) =>
+                `- ${source.title} (${source.year ?? "n.d."}) - ${source.url}`,
+            ),
             "",
           ]
         : []),
     ]),
   ].join("\n");
 
-  await writeFile(path.join(outputDir, "pending_supplement_research_report.md"), markdown, "utf8");
+  await writeFile(
+    path.join(outputDir, "pending_supplement_research_report.md"),
+    markdown,
+    "utf8",
+  );
 }
 
 function buildSupabaseClient() {
   const url = trimString(process.env.EXPO_PUBLIC_SUPABASE_URL);
-  const key = trimString(process.env.SUPABASE_SERVICE_ROLE_KEY) || trimString(process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
+  const key =
+    trimString(process.env.SUPABASE_SERVICE_ROLE_KEY) ||
+    trimString(process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
   if (!url || !key) {
     throw new Error("Missing EXPO_PUBLIC_SUPABASE_URL or Supabase key in .env");
   }
@@ -1777,11 +2097,14 @@ async function main() {
       : await fetchPendingManualReviewNames(supabase);
   const filteredCandidates = candidates.filter((candidate) => {
     const normalizedName =
-      trimString(candidate.normalized_name) || normalizeLookupText(canonicalCandidateName(candidate));
+      trimString(candidate.normalized_name) ||
+      normalizeLookupText(canonicalCandidateName(candidate));
     return !pendingManualReviewNames.has(normalizedName);
   });
   const limit = parseOptionalInteger(flags.limit);
-  const limitedCandidates = limit ? filteredCandidates.slice(0, limit) : filteredCandidates;
+  const limitedCandidates = limit
+    ? filteredCandidates.slice(0, limit)
+    : filteredCandidates;
   const context = await loadContext(supabase);
   const records = [];
 
@@ -1793,14 +2116,15 @@ async function main() {
         refreshResearch,
         model,
         candidate_count: limitedCandidates.length,
-        skipped_recorded_manual_reviews: candidates.length - filteredCandidates.length,
+        skipped_recorded_manual_reviews:
+          candidates.length - filteredCandidates.length,
         write_reports: writeReportsEnabled,
         ...(writeReportsEnabled ? { outputDir } : {}),
         allowedDomains,
       },
       null,
-      2
-    )
+      2,
+    ),
   );
 
   for (const [index, candidate] of limitedCandidates.entries()) {
@@ -1819,7 +2143,9 @@ async function main() {
     records.push(record);
 
     try {
-      console.log(`[${index + 1}/${limitedCandidates.length}] ${candidateName}`);
+      console.log(
+        `[${index + 1}/${limitedCandidates.length}] ${candidateName}`,
+      );
       if (looksLikeBrandedProduct(candidateName)) {
         record.decision = "manual_review";
         record.reason =
@@ -1829,7 +2155,10 @@ async function main() {
         continue;
       }
 
-      const duplicate = findDuplicateCandidate(candidateName, context.catalogEntries);
+      const duplicate = findDuplicateCandidate(
+        candidateName,
+        context.catalogEntries,
+      );
       if (duplicate.action === "alias_existing") {
         if (refreshPending && duplicate.match.status === "pending") {
           record.match = duplicate.match;
@@ -1859,7 +2188,10 @@ async function main() {
           candidateName,
           shortlist: aliasReviewPayload(duplicate.shortlist),
         });
-        if (aliasReview.decision === "manual_review" && !aliasReviewAllowsCreateNew(aliasReview)) {
+        if (
+          aliasReview.decision === "manual_review" &&
+          !aliasReviewAllowsCreateNew(aliasReview)
+        ) {
           record.decision = "manual_review";
           record.reason = aliasReview.reason;
           await recordManualReviewIfNeeded({ supabase, apply, record });
@@ -1875,7 +2207,7 @@ async function main() {
             continue;
           }
           const match = duplicate.shortlist.find(
-            (item) => item.id === aliasReview.matched_supplement_id
+            (item) => item.id === aliasReview.matched_supplement_id,
           );
           if (!match) {
             record.decision = "manual_review";
@@ -1901,19 +2233,23 @@ async function main() {
         }
       }
 
-      const cachedResearch = refreshResearch ? null : normalizeCachedResearch(candidate);
+      const cachedResearch = refreshResearch
+        ? null
+        : normalizeCachedResearch(candidate);
       const research =
         cachedResearch ??
         coerceLowEvidenceSupplement(
           sanitizeResearchProse(
-            normalizeJsonDoseUnits(await requestResearch({
-              apiKey,
-              model,
-              candidate,
-              benefitRankings: context.benefitRankings,
-              allowedDomains,
-            }))
-          )
+            normalizeJsonDoseUnits(
+              await requestResearch({
+                apiKey,
+                model,
+                candidate,
+                benefitRankings: context.benefitRankings,
+                allowedDomains,
+              }),
+            ),
+          ),
         );
       record.research = research;
       const validation = validateResearch(research, allowedDomains);
@@ -1922,7 +2258,7 @@ async function main() {
         if (hasCitationValidationIssue(validation.issues)) {
           console.warn(
             `[${candidateName}] citation/source validation failed`,
-            validation.issues
+            validation.issues,
           );
         }
         record.decision = "manual_review";
@@ -1932,70 +2268,39 @@ async function main() {
         continue;
       }
 
-      const aliasGuardShortlist = buildAliasGuardShortlist({
+      const strictAliasDecision = await resolveStrictApprovedAliasReview({
+        apiKey,
+        model,
         candidate,
         research,
-        catalogEntries: context.catalogEntries,
+        approvedCatalogEntries: context.approvedCatalogEntries,
       });
-      if (aliasGuardShortlist.length) {
-        const aliasReview = await requestAliasReview({
-          apiKey,
-          model,
-          candidateName: [
-            normalizeText(research.canonical_name) || candidateName,
-            `original candidate: ${candidateName}`,
-            `known aliases: ${dedupeStrings(research.aliases ?? []).join(", ") || "none"}`,
-          ].join("\n"),
-          shortlist: aliasReviewPayload(aliasGuardShortlist),
-        });
-        if (aliasReview.decision === "alias_existing") {
-          if (Number(aliasReview.confidence) < 0.75) {
-            record.decision = "manual_review";
-            record.reason = `Alias guard confidence too low: ${aliasReview.reason}`;
-            await recordManualReviewIfNeeded({ supabase, apply, record });
-            await syncCandidateQueueDecision(supabase, record);
-            continue;
-          }
-          const match = aliasGuardShortlist.find(
-            (item) => item.id === aliasReview.matched_supplement_id
-          );
-          if (!match) {
-            record.decision = "manual_review";
-            record.reason = "Alias guard returned an unknown supplement id.";
-            await recordManualReviewIfNeeded({ supabase, apply, record });
-            await syncCandidateQueueDecision(supabase, record);
-            continue;
-          }
-          record.decision = "alias_existing";
-          record.match = match;
-          record.reason = `Alias guard: ${aliasReview.reason}`;
-          if (apply) {
-            await applyAliasExisting({
-              supabase,
-              candidate,
-              match,
-              aliases: dedupeStrings([
-                candidateName,
-                research.canonical_name,
-                ...(research.aliases ?? []),
-              ]),
-            });
-            record.applied = true;
-          }
-          await syncCandidateQueueDecision(supabase, record);
-          continue;
+      if (strictAliasDecision.decision === "alias_existing") {
+        record.decision = "alias_existing";
+        record.match = strictAliasDecision.match;
+        record.reason = `Strict alias guard: ${strictAliasDecision.reason}`;
+        if (apply) {
+          await applyAliasExisting({
+            supabase,
+            candidate,
+            match: strictAliasDecision.match,
+            aliases: dedupeStrings([
+              candidateName,
+              research.canonical_name,
+              ...(research.aliases ?? []),
+            ]),
+          });
+          record.applied = true;
         }
-        if (
-          aliasReview.decision === "manual_review" &&
-          !aliasReviewAllowsCreateNew(aliasReview) &&
-          Number(aliasReview.confidence) >= 0.85
-        ) {
-          record.decision = "manual_review";
-          record.reason = `Alias guard needs review: ${aliasReview.reason}`;
-          await recordManualReviewIfNeeded({ supabase, apply, record });
-          await syncCandidateQueueDecision(supabase, record);
-          continue;
-        }
+        await syncCandidateQueueDecision(supabase, record);
+        continue;
+      }
+      if (strictAliasDecision.decision === "manual_review") {
+        record.decision = "manual_review";
+        record.reason = `Strict alias guard needs review: ${strictAliasDecision.reason}`;
+        await recordManualReviewIfNeeded({ supabase, apply, record });
+        await syncCandidateQueueDecision(supabase, record);
+        continue;
       }
 
       record.decision = "create_new";
@@ -2029,8 +2334,12 @@ async function main() {
           await upsertManualReviewRecord(supabase, record);
         } catch (reviewError) {
           record.manual_review_record_error =
-            reviewError instanceof Error ? reviewError.message : String(reviewError);
-          console.error(`[${candidateName}] ${record.manual_review_record_error}`);
+            reviewError instanceof Error
+              ? reviewError.message
+              : String(reviewError);
+          console.error(
+            `[${candidateName}] ${record.manual_review_record_error}`,
+          );
         }
       }
       try {
@@ -2054,18 +2363,26 @@ async function main() {
         refreshResearch,
         total: records.length,
         applied: records.filter((record) => record.applied).length,
-        manual_review_recorded: records.filter((record) => record.manual_review_recorded).length,
-        create_new: records.filter((record) => record.decision === "create_new").length,
-        alias_existing: records.filter((record) => record.decision === "alias_existing").length,
-        manual_review: records.filter((record) => record.decision === "manual_review").length,
+        manual_review_recorded: records.filter(
+          (record) => record.manual_review_recorded,
+        ).length,
+        create_new: records.filter((record) => record.decision === "create_new")
+          .length,
+        alias_existing: records.filter(
+          (record) => record.decision === "alias_existing",
+        ).length,
+        manual_review: records.filter(
+          (record) => record.decision === "manual_review",
+        ).length,
         failed: records.filter((record) => record.decision === "failed").length,
-        skipped_recorded_manual_reviews: candidates.length - filteredCandidates.length,
+        skipped_recorded_manual_reviews:
+          candidates.length - filteredCandidates.length,
         write_reports: writeReportsEnabled,
         ...(writeReportsEnabled && outputDir ? { report: outputDir } : {}),
       },
       null,
-      2
-    )
+      2,
+    ),
   );
 }
 

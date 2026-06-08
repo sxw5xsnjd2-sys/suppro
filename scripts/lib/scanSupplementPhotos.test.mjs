@@ -101,6 +101,146 @@ return {
   );
 }
 
+function extractFunctionSource(source, functionName) {
+  const signature = `function ${functionName}`;
+  const start = source.indexOf(signature);
+  if (start === -1) {
+    throw new Error(`Could not find ${functionName} in source`);
+  }
+
+  const bodyStart = source.indexOf("{", start);
+  if (bodyStart === -1) {
+    throw new Error(`Could not find ${functionName} body start`);
+  }
+
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, index + 1);
+      }
+    }
+  }
+
+  throw new Error(`Could not find ${functionName} body end`);
+}
+
+function loadScanSupplementPhotosEdgeHelpers() {
+  const source = readFileSync(
+    new URL("../../supabase/functions/scan-supplement-photos/index.ts", import.meta.url),
+    "utf8"
+  );
+
+  const transformed = [
+    extractFunctionSource(source, "trimString").replace(
+      /function trimString\(value: unknown\): string \{/,
+      "function trimString(value) {"
+    ),
+    extractFunctionSource(source, "normalizeWhitespace").replace(
+      /function normalizeWhitespace\(value: unknown\): string \{/,
+      "function normalizeWhitespace(value) {"
+    ),
+    extractFunctionSource(source, "parseIntegerLike").replace(
+      /function parseIntegerLike\(value: unknown\): number \| null \{/,
+      "function parseIntegerLike(value) {"
+    ),
+    extractFunctionSource(source, "extractBase64PayloadFromDataUrl").replace(
+      /function extractBase64PayloadFromDataUrl\(value: unknown\): string \{/,
+      "function extractBase64PayloadFromDataUrl(value) {"
+    ),
+    extractFunctionSource(source, "parseOptionalNumber").replace(
+      /function parseOptionalNumber\(value: unknown\): number \| null \{/,
+      "function parseOptionalNumber(value) {"
+    ),
+    extractFunctionSource(source, "sanitizeImageDataUrl").replace(
+      /function sanitizeImageDataUrl\(value: unknown\): string \{/,
+      "function sanitizeImageDataUrl(value) {"
+    ),
+    extractFunctionSource(source, "extractAzureTableRows")
+      .replace(
+        /function extractAzureTableRows\(tables: unknown\): string\[\] \{/,
+        "function extractAzureTableRows(tables) {"
+      )
+      .replace(
+        /const rows: string\[\] = \[\];/,
+        "const rows = [];"
+      )
+      .replace(
+        /const cells = Array\.isArray\(\(table as Record<string, unknown>\)\?\.cells\)\s*\? \(\(\(table as Record<string, unknown>\)\.cells as unknown\[\]\) \?\? \[\]\)\s*\: \[\];/,
+        "const cells = Array.isArray(table?.cells) ? (table.cells ?? []) : [];"
+      )
+      .replace(
+        /const rowMap = new Map<number, Map<number, string>>\(\);/,
+        "const rowMap = new Map();"
+      )
+      .replace(
+        /new Map<number, string>\(\)/g,
+        "new Map()"
+      )
+      .replace(
+        /const cell = candidate as Record<string, unknown>;/,
+        "const cell = candidate;"
+      ),
+    extractFunctionSource(source, "normalizeAzureIngredientPanelOcr")
+      .replace(
+        /function normalizeAzureIngredientPanelOcr\(\s*value: unknown\s*\)\s*:\s*AzureIngredientPanelOcr \| null \{/,
+        "function normalizeAzureIngredientPanelOcr(value) {"
+      )
+      .replace(
+        /const row = \(value \?\? \{\}\) as Record<string, unknown>;/,
+        "const row = value ?? {};"
+      )
+      .replace(
+        /row\?\.analyzeResult && typeof row\.analyzeResult === "object"\s*\? \(row\.analyzeResult as Record<string, unknown>\)\s*:\s*row;/,
+        'row?.analyzeResult && typeof row.analyzeResult === "object" ? row.analyzeResult : row;'
+      )
+      .replace(
+        /const pages = Array\.isArray\(analyzeResult\?\.pages\)\s*\? \(analyzeResult\.pages as unknown\[\]\)\s*:\s*\[\];/,
+        "const pages = Array.isArray(analyzeResult?.pages) ? analyzeResult.pages : [];"
+      )
+      .replace(
+        /\(page as Record<string, unknown>\)\?\.lines/g,
+        "page?.lines"
+      )
+      .replace(
+        /\(\(\(page as Record<string, unknown>\)\.lines as unknown\[\]\) \?\? \[\]\)/g,
+        "(page.lines ?? [])"
+      )
+      .replace(
+        /\(line as Record<string, unknown>\)\?\.content/g,
+        "line?.content"
+      ),
+    extractFunctionSource(source, "mergeDoseCorrections")
+      .replace(
+        /function mergeDoseCorrections\(\s*ingredients: NormalizedIngredient\[\],\s*corrections: unknown\[\]\s*\) \{/,
+        "function mergeDoseCorrections(ingredients, corrections) {"
+      )
+      .replace(
+        /const correctionsByIndex = new Map<[\s\S]*?>\(\);/,
+        "const correctionsByIndex = new Map();"
+      )
+      .replace(
+        /const row = candidate as Record<string, unknown>;/,
+        "const row = candidate;"
+      ),
+  ].join("\n\n");
+
+  const factory = new Function(
+    `${transformed}
+return {
+  extractBase64PayloadFromDataUrl,
+  normalizeAzureIngredientPanelOcr,
+  mergeDoseCorrections,
+};`
+  );
+
+  return factory();
+}
+
 async function importLocalJsModule(relativePath) {
   const sourceUrl = new URL(relativePath, import.meta.url);
   const sourceText = readFileSync(sourceUrl, "utf8");
@@ -112,6 +252,11 @@ async function importLocalJsModule(relativePath) {
 }
 
 const { normalizePhotoRescueIngredient } = loadScanSupplementPhotosModule();
+const {
+  extractBase64PayloadFromDataUrl,
+  normalizeAzureIngredientPanelOcr,
+  mergeDoseCorrections,
+} = loadScanSupplementPhotosEdgeHelpers();
 const { scoreMatchedIngredientsForProduct } = await importLocalJsModule(
   "../../features/supplements/recommendedDoseScoring.js"
 );
@@ -185,6 +330,139 @@ test("photo-rescue display-only doses are normalized into structured dose fields
     doseConfidence: "verified",
     doseReviewReason: null,
   });
+});
+
+test("mergeDoseCorrections applies valid corrected doses without changing other indexes", () => {
+  const ingredients = [
+    {
+      raw_name: "Riboflavin (Vitamin B2)",
+      canonical_name: "Riboflavin",
+      ingredient_type: "active",
+      dosage_value: 15,
+      dosage_unit: "mg",
+      dosage_original_text: "Riboflavin (Vitamin B2) 15mg",
+      chemical_form: null,
+      amount_basis: "per_serving",
+    },
+    {
+      raw_name: "Biotin",
+      canonical_name: "Biotin",
+      ingredient_type: "active",
+      dosage_value: 50,
+      dosage_unit: "mcg",
+      dosage_original_text: "Biotin 50µg",
+      chemical_form: null,
+      amount_basis: "per_serving",
+    },
+  ];
+
+  const result = mergeDoseCorrections(ingredients, [
+    {
+      index: 0,
+      dosage_value: 1.5,
+      dosage_unit: "mg",
+      dosage_original_text: "Riboflavin (Vitamin B2) 1.5mg",
+    },
+  ]);
+
+  assert.equal(result.length, 2);
+  assert.equal(result[0].raw_name, ingredients[0].raw_name);
+  assert.equal(result[0].canonical_name, ingredients[0].canonical_name);
+  assert.equal(result[0].dosage_value, 1.5);
+  assert.equal(result[0].dosage_unit, "mg");
+  assert.equal(
+    result[0].dosage_original_text,
+    "Riboflavin (Vitamin B2) 1.5mg"
+  );
+  assert.equal(result[1].raw_name, ingredients[1].raw_name);
+  assert.equal(result[1].canonical_name, ingredients[1].canonical_name);
+  assert.equal(result[1].dosage_value, 50);
+  assert.equal(result[1].dosage_unit, "mcg");
+  assert.equal(result[1].dosage_original_text, "Biotin 50µg");
+});
+
+test("mergeDoseCorrections does not replace an existing finite dose with null", () => {
+  const ingredients = [
+    {
+      raw_name: "N-Acetyl-Cysteine",
+      canonical_name: "N-Acetyl-Cysteine",
+      ingredient_type: "active",
+      dosage_value: 50,
+      dosage_unit: "mg",
+      dosage_original_text: "N-Acetyl-Cysteine 50mg",
+      chemical_form: null,
+      amount_basis: "per_serving",
+    },
+  ];
+
+  const result = mergeDoseCorrections(ingredients, [
+    {
+      index: 0,
+      dosage_value: null,
+      dosage_unit: null,
+      dosage_original_text: "N-Acetyl-Cysteine row unreadable",
+    },
+  ]);
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].raw_name, ingredients[0].raw_name);
+  assert.equal(result[0].canonical_name, ingredients[0].canonical_name);
+  assert.equal(result[0].dosage_value, 50);
+  assert.equal(result[0].dosage_unit, "mg");
+  assert.equal(result[0].dosage_original_text, "N-Acetyl-Cysteine 50mg");
+});
+
+test("extractBase64PayloadFromDataUrl returns the raw base64 payload", () => {
+  const result = extractBase64PayloadFromDataUrl(
+    "data:image/jpeg;base64,QUJDREVGRw=="
+  );
+
+  assert.equal(result, "QUJDREVGRw==");
+});
+
+test("normalizeAzureIngredientPanelOcr flattens table rows and OCR lines into combined text", () => {
+  const result = normalizeAzureIngredientPanelOcr({
+    status: "succeeded",
+    analyzeResult: {
+      content: "Supplement Facts Vitamin C 80 mg Zinc 10 mg",
+      pages: [
+        {
+          lines: [
+            { content: "Supplement Facts" },
+            { content: "Vitamin C 80 mg" },
+            { content: "Zinc 10 mg" },
+          ],
+        },
+      ],
+      tables: [
+        {
+          cells: [
+            { rowIndex: 0, columnIndex: 0, content: "Ingredient" },
+            { rowIndex: 0, columnIndex: 1, content: "Amount" },
+            { rowIndex: 1, columnIndex: 0, content: "Vitamin C" },
+            { rowIndex: 1, columnIndex: 1, content: "80 mg" },
+            { rowIndex: 2, columnIndex: 0, content: "Zinc" },
+            { rowIndex: 2, columnIndex: 1, content: "10 mg" },
+          ],
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(result?.tableRows, [
+    "Ingredient\tAmount",
+    "Vitamin C\t80 mg",
+    "Zinc\t10 mg",
+  ]);
+  assert.deepEqual(result?.lines, [
+    "Supplement Facts",
+    "Vitamin C 80 mg",
+    "Zinc 10 mg",
+  ]);
+  assert.match(result?.combinedText ?? "", /Table rows \(TSV\):/);
+  assert.match(result?.combinedText ?? "", /Vitamin C\t80 mg/);
+  assert.match(result?.combinedText ?? "", /OCR lines:/);
+  assert.match(result?.combinedText ?? "", /Full OCR text:/);
 });
 
 test("photo-rescue normalized doses are not treated as missing_actual_dose downstream", () => {
