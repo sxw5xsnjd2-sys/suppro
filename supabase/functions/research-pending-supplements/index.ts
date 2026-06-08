@@ -538,7 +538,26 @@ function findDuplicateCandidate(
       shortlist: scored.slice(0, 5),
     };
   }
-  return { action: "manual_review" as const, shortlist: scored.slice(0, 8) };
+  const strongMatches = scored.filter((s) => s.score >= 70);
+
+  if (strongMatches.length === 1) {
+    return {
+      action: "alias_existing",
+      shortlist: strongMatches,
+    };
+  }
+
+  if (strongMatches.length === 0) {
+    return {
+      action: "create_new",
+      shortlist: scored.slice(0, 8),
+    };
+  }
+
+  return {
+    action: "manual_review",
+    shortlist: scored.slice(0, 8),
+  };
 }
 
 function dedupeStrings(items: unknown[]) {
@@ -1636,7 +1655,7 @@ function queueSuggestedActionForDecision(decision: unknown) {
   if (decision === "create_new") return "create_canonical";
   if (decision === "manual_review") return "manual_review";
   if (decision === "failed") return "manual_review";
-  if (decision === "alias_existing") return "manual_review";
+  if (decision === "alias_existing") return "alias_existing";
   return null;
 }
 
