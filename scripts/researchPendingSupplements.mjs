@@ -1296,6 +1296,7 @@ function shouldCreateLowEvidenceSupplement(result) {
     "not enough",
     "weak",
     "sparse",
+    "not a single canonical active ingredient",
   ].some((term) => reason.includes(term));
 }
 

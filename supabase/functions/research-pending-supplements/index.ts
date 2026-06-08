@@ -1072,6 +1072,7 @@ function shouldCreateLowEvidenceSupplement(result: Record<string, unknown>) {
     "not enough",
     "weak",
     "sparse",
+    "not a single canonical active ingredient",
     "not a safe canonical active ingredient",
     "cannot be normalized confidently",
     "species- and preparation-specific",
