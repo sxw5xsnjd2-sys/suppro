@@ -2236,7 +2236,7 @@ async function main() {
       const cachedResearch = refreshResearch
         ? null
         : normalizeCachedResearch(candidate);
-      const research =
+      let research =
         cachedResearch ??
         coerceLowEvidenceSupplement(
           sanitizeResearchProse(
@@ -2252,7 +2252,31 @@ async function main() {
           ),
         );
       record.research = research;
-      const validation = validateResearch(research, allowedDomains);
+      let validation = validateResearch(research, allowedDomains);
+
+      if (
+        !validation.ok &&
+        validation.issues.length === 1 &&
+        validation.issues[0] ===
+          "How to use must include dose information when available."
+      ) {
+        research = coerceLowEvidenceSupplement(
+          sanitizeResearchProse(
+            normalizeJsonDoseUnits(
+              await requestResearch({
+                apiKey,
+                model,
+                candidate,
+                benefitRankings: context.benefitRankings,
+                allowedDomains,
+              }),
+            ),
+          ),
+        );
+
+        record.research = research;
+        validation = validateResearch(research, allowedDomains);
+      }
       record.validation_issues = validation.issues;
       if (!validation.ok) {
         if (hasCitationValidationIssue(validation.issues)) {

@@ -2060,7 +2060,7 @@ Deno.serve(async (req) => {
         const cachedResearch = refreshResearch
           ? null
           : normalizeCachedResearch(candidate);
-        const research =
+        let research =
           cachedResearch ??
           coerceLowEvidenceSupplement(
             await requestResearch(candidate, context.benefitRankings),
@@ -2070,7 +2070,20 @@ Deno.serve(async (req) => {
         record.candidate_suggested_supplement_name =
           normalizeText(candidate.suggested_supplement_name) || null;
         record.research = research;
-        const validation = validateResearch(research);
+        let validation = validateResearch(research);
+
+        if (
+          !validation.ok &&
+          validation.issues.length === 1 &&
+          validation.issues[0] ===
+            "How to use must include dose information when available."
+        ) {
+          research = coerceLowEvidenceSupplement(
+            await requestResearch(candidate, context.benefitRankings),
+          );
+          record.research = research;
+          validation = validateResearch(research);
+        }
         if (!validation.ok) {
           if (hasCitationValidationIssue(validation.issues)) {
             console.warn(
