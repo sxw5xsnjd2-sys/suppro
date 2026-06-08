@@ -2095,11 +2095,16 @@ Deno.serve(async (req) => {
             "How to use must not mention sample products, provided product examples, product labels, or label-only amounts.",
           ].includes(validation.issues[0])
         ) {
-          research = coerceLowEvidenceSupplement(
+          const retryResearch = coerceLowEvidenceSupplement(
             await requestResearch(candidate, context.benefitRankings),
           );
-          record.research = research;
-          validation = validateResearch(research);
+          const retryValidation = validateResearch(retryResearch);
+
+          if (retryValidation.ok) {
+            research = retryResearch;
+            validation = retryValidation;
+            record.research = research;
+          }
         }
         if (!validation.ok) {
           if (hasCitationValidationIssue(validation.issues)) {

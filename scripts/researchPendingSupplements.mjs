@@ -2269,7 +2269,7 @@ async function main() {
           "How to use must not mention sample products, provided product examples, product labels, or label-only amounts.",
         ].includes(validation.issues[0])
       ) {
-        research = coerceLowEvidenceSupplement(
+        const retryResearch = coerceLowEvidenceSupplement(
           sanitizeResearchProse(
             normalizeJsonDoseUnits(
               await requestResearch({
@@ -2283,8 +2283,13 @@ async function main() {
           ),
         );
 
-        record.research = research;
-        validation = validateResearch(research, allowedDomains);
+        const retryValidation = validateResearch(retryResearch, allowedDomains);
+
+        if (retryValidation.ok) {
+          research = retryResearch;
+          validation = retryValidation;
+          record.research = research;
+        }
       }
       record.validation_issues = validation.issues;
       if (!validation.ok) {
