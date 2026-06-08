@@ -367,6 +367,9 @@ function hasDoseLikeText(value: unknown): boolean {
 function researchHasAvailableDose(result: Record<string, unknown>): boolean {
   const dose = result.recommended_dose_json as Record<string, unknown> | null;
   if (!dose || typeof dose !== "object") return false;
+  if (Array.isArray(dose.flags) && dose.flags.includes("product_label_only")) {
+    return false;
+  }
   if (
     !["parsed", "ambiguous"].includes(String(result.recommended_dose_status))
   ) {

@@ -300,6 +300,9 @@ function hasDoseLikeText(value) {
 function researchHasAvailableDose(result) {
   const dose = result?.recommended_dose_json;
   if (!dose || typeof dose !== "object") return false;
+  if (Array.isArray(dose.flags) && dose.flags.includes("product_label_only")) {
+    return false;
+  }
   if (!["parsed", "ambiguous"].includes(result?.recommended_dose_status))
     return false;
 
