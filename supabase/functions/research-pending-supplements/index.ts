@@ -938,7 +938,10 @@ function normalizeEvidenceRating(value: unknown) {
 
 function validateResearch(result: Record<string, unknown>) {
   const issues = [];
-  if (result.decision !== "create_new") {
+  if (
+    result.decision !== "create_new" &&
+    result.decision !== "create_precise"
+  ) {
     return {
       ok: false,
       issues: [trimString(result.manual_review_reason) || "manual_review"],
@@ -1120,7 +1123,10 @@ function buildResearchSchema() {
         "citations",
       ],
       properties: {
-        decision: { type: "string", enum: ["create_new", "manual_review"] },
+        decision: {
+          type: "string",
+          enum: ["create_new", "manual_review", "create_precise"],
+        },
         manual_review_reason: nullableString,
         canonical_name: { type: "string" },
         aliases: { type: "array", items: { type: "string" } },
@@ -1387,7 +1393,7 @@ async function requestResearch(
         instructions: [
           "Research a supplement active ingredient and return database-ready JSON for a pending active-ingredient catalog row.",
           "This database table is for canonical active ingredients only, not branded supplements, blends, formulas, product lines, dosage forms, or finished products.",
-          "If the candidate is a branded product, multi-ingredient formula, supplement product name, broad category, or cannot be reduced to one clear active ingredient, return decision manual_review.",
+          "If the candidate is ambiguous but can be safely normalized to a single precise canonical active ingredient, return decision create_precise and set canonical_name to that precise ingredient. Return manual_review only when no safe canonical ingredient can be determined.",
           "Use only the allowed web search sources. Do not invent studies, journals, authors, citations, outcomes, rankings, or doses.",
           "Every evidence claim must be supported by a returned citation URL.",
           "For each benefit, source_urls must contain one or more URLs copied verbatim from citations and ordered best-first because the best valid URL will be stored in supplement_benefits.evidence_source.",
