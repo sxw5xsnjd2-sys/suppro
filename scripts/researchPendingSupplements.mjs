@@ -1557,7 +1557,8 @@ async function markCandidateApplied(supabase, candidate, supplement) {
     .from("supplement_review_queue")
     .update({
       status: "resolved",
-      updated_at: now,
+      reviewed_at: now,
+      supplement_id: supplement.id,
     })
     .eq("review_type", "alias_unresolved")
     .eq("status", "pending")
