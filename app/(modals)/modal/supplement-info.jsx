@@ -5,6 +5,7 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Share,
@@ -2057,7 +2058,7 @@ export default function SupplementInfoModal() {
         contentContainerStyle={[
           styles.scrollContent,
           {
-            paddingTop: 16,
+            paddingTop: Platform.OS === "android" ? 16 + insets.top : 16,
             paddingBottom: Math.max(insets.bottom + 28, 36),
           },
         ]}

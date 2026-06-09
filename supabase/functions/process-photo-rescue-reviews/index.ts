@@ -52,6 +52,10 @@ function trimString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function resolveSuggestedAction(existingRow: Record<string, unknown> | null) {
+  return trimString(existingRow?.suggested_action) || "manual_review";
+}
+
 function normalizeSecretToken(value: unknown) {
   return trimString(value)
     .replace(/^Bearer\s+/i, "")
@@ -585,10 +589,7 @@ Deno.serve(async (req) => {
         occurrence_count: occurrenceCountFromOccurrences,
         sample_active_ingredients_json: sampleActiveIngredients,
         sample_products_json: sampleProducts,
-        suggested_action:
-          trimString(existingRow?.suggested_action) === "ignore"
-            ? "manual_review"
-            : trimString(existingRow?.suggested_action) || "manual_review",
+        suggested_action: resolveSuggestedAction(existingRow),
         suggested_supplement_name:
           trimString(existingRow?.suggested_supplement_name) || null,
         suggestion_confidence:

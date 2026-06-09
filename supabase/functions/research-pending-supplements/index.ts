@@ -14,6 +14,7 @@ const TABLES = {
   candidates: "supplement_catalog_review_candidates",
   manualReviews: "supplement_research_manual_reviews",
   supplements: "supplements",
+  taxonomyPolicies: "supplement_taxonomy_policies",
 };
 
 const BENEFIT_LABELS = [
@@ -101,6 +102,72 @@ const PRODUCT_LIKE_PATTERNS = [
   /\b\d+\s*(mg|mcg|ug|g|ml|iu)\b/i,
   /[®™]/,
 ];
+
+const PROBIOTICS_SUPPLEMENT_ID = "cda42a67-b951-48f7-8941-1221fd9e6117";
+
+const CODE_TAXONOMY_POLICIES = [
+  {
+    normalized_name: "electrolytes",
+    action: "ignore",
+    reason:
+      "Generic hydration bucket, not one canonical supplement ingredient.",
+  },
+  {
+    normalized_name: "digestive enzymes",
+    action: "create_canonical",
+    canonical_name: "Digestive Enzymes",
+    reason:
+      "Stable supplement-market umbrella term users search directly.",
+  },
+  {
+    normalized_name: "live cultures",
+    action: "alias_existing",
+    target_supplement_id: PROBIOTICS_SUPPLEMENT_ID,
+    target_supplement_name: "Probiotics",
+    reason: "Exact consumer synonym for probiotics in supplement labeling.",
+  },
+  {
+    normalized_name: "bioflavonoids",
+    action: "create_canonical",
+    canonical_name: "Bioflavonoids",
+    reason:
+      "Broad marketed supplement label intentionally allowed as its own page.",
+  },
+  {
+    normalized_name: "protease",
+    action: "create_canonical",
+    canonical_name: "Protease",
+    reason:
+      "Single enzyme ingredient used directly as a supplement ingredient name.",
+  },
+  {
+    normalized_name: "lipase",
+    action: "create_canonical",
+    canonical_name: "Lipase",
+    reason:
+      "Single enzyme ingredient used directly as a supplement ingredient name.",
+  },
+  {
+    normalized_name: "lactase",
+    action: "create_canonical",
+    canonical_name: "Lactase",
+    reason:
+      "Single enzyme ingredient used directly as a supplement ingredient name.",
+  },
+  {
+    normalized_name: "cellulase",
+    action: "create_canonical",
+    canonical_name: "Cellulase",
+    reason:
+      "Single enzyme ingredient used directly as a supplement ingredient name.",
+  },
+  {
+    normalized_name: "olive extract",
+    action: "manual_review",
+    reason:
+      "Ambiguous botanical extract lacking plant-part and preparation specificity.",
+  },
+] as const;
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const supabaseServiceRoleKey = normalizeSecretToken(
@@ -214,6 +281,10 @@ function normalizeText(value: unknown): string {
     .trim();
 }
 
+function normalizeExactPolicyName(value: unknown): string {
+  return normalizeText(value).toLowerCase();
+}
+
 function normalizeLookupText(value: unknown): string {
   return normalizeText(value)
     .toLowerCase()
@@ -225,6 +296,17 @@ function normalizeLookupText(value: unknown): string {
     )
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function buildExplicitCandidateLookupVariants(value: unknown): string[] {
+  const raw = normalizeText(value).toLowerCase();
+  if (!raw) return [];
+
+  const spaced = raw.replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  const lookup = normalizeLookupText(raw);
+  const compact = raw.replace(/[^a-z0-9]+/g, "").trim();
+
+  return Array.from(new Set([raw, spaced, lookup, compact].filter(Boolean)));
 }
 
 function normalizeDoseUnit(value: unknown): string | null {
@@ -359,9 +441,18 @@ function normalizeBenefitEvidenceStyle(
 }
 
 function hasDoseLikeText(value: unknown): boolean {
-  return /\b\d+(?:[.,]\d+)?(?:\s*(?:-|to)\s*\d+(?:[.,]\d+)?)?\s*(?:mg|g|mcg|ug|μg|iu|cfu|million|billion)\b/i.test(
+  return /\b\d+(?:[.,]\d+)?(?:\s*(?:-|to)\s*\d+(?:[.,]\d+)?)?\s*(?:mg|g|mcg|ug|μg|iu|cfu|fcc|lipase units|enzyme units|units|million|billion)\b/i.test(
     normalizeText(value),
   );
+}
+
+function hasFiniteDoseNumericValue(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().replace(",", ".");
+  if (!normalized) return false;
+  if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) return false;
+  return Number.isFinite(Number(normalized));
 }
 
 function researchHasAvailableDose(result: Record<string, unknown>): boolean {
@@ -381,7 +472,7 @@ function researchHasAvailableDose(result: Record<string, unknown>): boolean {
     dose.per_intake_max_value,
     dose.frequency_min_per_day,
     dose.frequency_max_per_day,
-  ].some((value) => Number.isFinite(Number(value)));
+  ].some((value) => hasFiniteDoseNumericValue(value));
 }
 
 function mentionsProductExampleDose(value: unknown): boolean {
@@ -465,6 +556,45 @@ function scoreLookupMatch(inputName: unknown, lookupName: unknown) {
   );
 }
 
+const SPECIFIC_FORM_TOKENS = new Set([
+  "acetate",
+  "ascorbate",
+  "bicarbonate",
+  "bitartrate",
+  "bisglycinate",
+  "citrate",
+  "chelate",
+  "chloride",
+  "gluconate",
+  "glycinate",
+  "hydrochloride",
+  "malate",
+  "monohydrate",
+  "nitrate",
+  "orotate",
+  "phosphate",
+  "picolinate",
+  "sulfate",
+  "taurate",
+  "threonate",
+]);
+
+function shouldCreateNewFromSpecificFormMatches(
+  candidateName: string,
+  strongMatches: Array<Record<string, unknown>>,
+) {
+  const candidateTokens = lookupTokens(candidateName);
+  if (candidateTokens.length !== 1 || !strongMatches.length) return false;
+  const [candidateToken] = candidateTokens;
+  return strongMatches.every((item) => {
+    const tokens = lookupTokens(item.matchedKey || item.name);
+    if (tokens.length <= 1 || !tokens.includes(candidateToken)) return false;
+    return tokens.some(
+      (token) => token !== candidateToken && SPECIFIC_FORM_TOKENS.has(token),
+    );
+  });
+}
+
 function buildCatalogEntries(
   supplements: Record<string, unknown>[],
   aliases: Record<string, unknown>[],
@@ -506,6 +636,150 @@ function buildCatalogEntries(
   return Array.from(byId.values());
 }
 
+function buildTaxonomyPolicyMap(policyRows: Record<string, unknown>[]) {
+  const byName = new Map<string, Record<string, unknown>>();
+  for (const row of policyRows) {
+    const normalizedName = normalizeExactPolicyName(row.normalized_name);
+    if (!normalizedName) continue;
+    if (row.active === false) continue;
+    byName.set(normalizedName, {
+      normalized_name: normalizedName,
+      action: trimString(row.action),
+      canonical_name: normalizeText(row.canonical_name) || null,
+      target_supplement_id: trimString(row.target_supplement_id) || null,
+      target_supplement_name: normalizeText(row.target_supplement_name) || null,
+      reason: normalizeText(row.reason) || "",
+    });
+  }
+  return byName;
+}
+
+function buildCodeTaxonomyPolicyMap() {
+  return buildTaxonomyPolicyMap(
+    CODE_TAXONOMY_POLICIES.map((row) => ({ ...row, active: true })),
+  );
+}
+
+function findApprovedCatalogEntryById(
+  supplementId: string,
+  approvedCatalogEntries: ReturnType<typeof buildCatalogEntries>,
+) {
+  return approvedCatalogEntries.find((entry) => entry.id === supplementId) ?? null;
+}
+
+function findExactApprovedCatalogMatch(
+  candidate: Record<string, unknown>,
+  approvedCatalogEntries: ReturnType<typeof buildCatalogEntries>,
+) {
+  const exactInputs = new Set(
+    dedupeStrings([
+      canonicalCandidateName(candidate),
+      candidate.display_name,
+      candidate.normalized_name,
+    ])
+      .map((value) => normalizeExactPolicyName(value))
+      .filter(Boolean),
+  );
+  if (!exactInputs.size) return null;
+
+  for (const entry of approvedCatalogEntries) {
+    if (exactInputs.has(normalizeExactPolicyName(entry.name))) return entry;
+    if (
+      entry.lookupKeys.some((key) =>
+        exactInputs.has(normalizeExactPolicyName(key)),
+      )
+    ) {
+      return entry;
+    }
+  }
+
+  return null;
+}
+
+function resolveTaxonomyPolicy(
+  normalizedName: string,
+  approvedCatalogEntries: ReturnType<typeof buildCatalogEntries>,
+  taxonomyPolicyMap: Map<string, Record<string, unknown>>,
+) {
+  const policy = taxonomyPolicyMap.get(normalizeExactPolicyName(normalizedName));
+  if (!policy) return null;
+
+  if (policy.action === "alias_existing") {
+    const targetId = trimString(policy.target_supplement_id);
+    const match = targetId
+      ? findApprovedCatalogEntryById(targetId, approvedCatalogEntries)
+      : null;
+    if (!match) {
+      return {
+        action: "manual_review",
+        reason:
+          `Taxonomy policy alias target is missing or not approved for "${normalizedName}".`,
+      } as const;
+    }
+
+    return {
+      action: "alias_existing",
+      match,
+      reason:
+        trimString(policy.reason) ||
+        `Taxonomy policy matched existing supplement: ${match.name}`,
+    } as const;
+  }
+
+  if (policy.action === "create_canonical") {
+    return {
+      action: "create_canonical",
+      canonicalName:
+        normalizeText(policy.canonical_name) || normalizeText(normalizedName),
+      reason:
+        trimString(policy.reason) ||
+        "Taxonomy policy approved canonical research generation.",
+    } as const;
+  }
+
+  if (policy.action === "ignore") {
+    return {
+      action: "ignore",
+      reason: trimString(policy.reason) || "Taxonomy policy ignored candidate.",
+    } as const;
+  }
+
+  return {
+    action: "manual_review",
+    reason:
+      trimString(policy.reason) || "Taxonomy policy requires manual review.",
+  } as const;
+}
+
+function findExactCatalogSupplementMatch(
+  candidate: Record<string, unknown>,
+  research: Record<string, unknown>,
+  catalogEntries: ReturnType<typeof buildCatalogEntries>,
+) {
+  const exactInputs = new Set(
+    dedupeStrings([
+      research.canonical_name,
+      canonicalCandidateName(candidate),
+      candidate.display_name,
+      candidate.normalized_name,
+    ])
+      .map((value) => normalizeLookupText(value))
+      .filter(Boolean),
+  );
+  if (!exactInputs.size) return null;
+
+  const exactNameMatch = catalogEntries.find((entry) =>
+    exactInputs.has(normalizeLookupText(entry.name)),
+  );
+  if (exactNameMatch) return exactNameMatch;
+
+  return catalogEntries.find((entry) =>
+    entry.lookupKeys.some((key) =>
+      exactInputs.has(normalizeLookupText(key)),
+    ),
+  );
+}
+
 function findDuplicateCandidate(
   candidateName: string,
   catalogEntries: ReturnType<typeof buildCatalogEntries>,
@@ -531,18 +805,24 @@ function findDuplicateCandidate(
   );
   const best = scored[0] ?? null;
   if (!best) return { action: "create_new" as const, shortlist: [] };
-  if (best.score >= 90) {
+  const strongMatches = scored.filter((s) => s.score >= 70);
+  if (shouldCreateNewFromSpecificFormMatches(candidateName, strongMatches)) {
     return {
-      action: "alias_existing" as const,
-      match: best,
-      shortlist: scored.slice(0, 5),
+      action: "create_new",
+      shortlist: scored.slice(0, 8),
     };
   }
-  const strongMatches = scored.filter((s) => s.score >= 70);
+  if (strongMatches.length > 1) {
+    return {
+      action: "manual_review",
+      shortlist: scored.slice(0, 8),
+    };
+  }
 
   if (strongMatches.length === 1) {
     return {
       action: "alias_existing",
+      match: strongMatches[0],
       shortlist: strongMatches,
     };
   }
@@ -553,11 +833,109 @@ function findDuplicateCandidate(
       shortlist: scored.slice(0, 8),
     };
   }
-
   return {
-    action: "manual_review",
-    shortlist: scored.slice(0, 8),
+    action: "alias_existing" as const,
+    match: best,
+    shortlist: scored.slice(0, 5),
   };
+}
+
+type SupplementDecisionKind =
+  | "pending"
+  | "create_new"
+  | "create_precise"
+  | "alias_existing"
+  | "ignore"
+  | "manual_review"
+  | "failed";
+
+type SupplementDecisionCategory =
+  | "alias_match"
+  | "taxonomy_policy"
+  | "identity_conflict"
+  | "validation_blocked"
+  | "product_like"
+  | "research_ready"
+  | "processing_error";
+
+type SupplementDecision = {
+  kind: SupplementDecisionKind;
+  category: SupplementDecisionCategory;
+  reason: string;
+  match?: Record<string, unknown> | null;
+  research?: Record<string, unknown> | null;
+  validationIssues?: string[];
+};
+
+function createSupplementDecision({
+  kind,
+  category,
+  reason,
+  match = null,
+  research,
+  validationIssues = [],
+}: {
+  kind: SupplementDecisionKind;
+  category: SupplementDecisionCategory;
+  reason: string;
+  match?: Record<string, unknown> | null;
+  research?: Record<string, unknown> | null;
+  validationIssues?: string[];
+}): SupplementDecision {
+  return {
+    kind,
+    category,
+    reason: trimString(reason),
+    match,
+    ...(research !== undefined ? { research } : {}),
+    validationIssues: Array.isArray(validationIssues)
+      ? validationIssues.map((issue) => trimString(issue)).filter(Boolean)
+      : [],
+  };
+}
+
+function decisionAllowsPendingManualReviewEscape(decision: unknown) {
+  return (
+    decision === "create_new" ||
+    decision === "create_precise" ||
+    decision === "alias_existing" ||
+    decision === "ignore"
+  );
+}
+
+function applySupplementDecision(
+  record: Record<string, unknown>,
+  decision: SupplementDecision,
+) {
+  record.supplement_decision = decision;
+  record.decision = decision.kind;
+  record.decision_category = decision.category;
+  record.reason = decision.reason;
+  if ("match" in decision) {
+    record.match = decision.match ?? null;
+    record.match_name = normalizeText(decision.match?.name) || null;
+  }
+  if ("research" in decision) {
+    record.research = decision.research ?? null;
+    record.research_canonical_name =
+      normalizeText(decision.research?.canonical_name) || null;
+  }
+  if ("validationIssues" in decision) {
+    record.validation_issues = decision.validationIssues ?? [];
+  }
+  if (record.has_pending_manual_review) {
+    record.pending_manual_review_outcome =
+      decisionAllowsPendingManualReviewEscape(decision.kind)
+        ? "proceed"
+        : "blocked";
+  }
+}
+
+function aliasWarningSuffix(aliasWarnings: unknown) {
+  const warnings = Array.isArray(aliasWarnings)
+    ? aliasWarnings.map((warning) => trimString(warning)).filter(Boolean)
+    : [];
+  return warnings.length ? ` ${warnings.join(" ")}` : "";
 }
 
 function dedupeStrings(items: unknown[]) {
@@ -745,6 +1123,64 @@ async function resolveStrictApprovedAliasReview(
   research: Record<string, unknown>,
   approvedCatalogEntries: ReturnType<typeof buildCatalogEntries>,
 ) {
+  function maybeReleaseBroadParentFromChildForms(
+    shortlist: ReturnType<typeof buildAliasGuardShortlist>,
+  ) {
+    const normalize = (value: unknown) =>
+      String(value ?? "")
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    const tokenize = (value: unknown) =>
+      normalize(value)
+        .split(" ")
+        .filter((token) => token.length > 1);
+    const candidateName =
+      String(research.canonical_name ?? "").trim() ||
+      String(candidate.suggested_supplement_name ?? "").trim() ||
+      String(candidate.display_name ?? "").trim() ||
+      String(candidate.normalized_name ?? "").trim();
+    const candidateTokens = tokenize(candidateName);
+    if (candidateTokens.length !== 1 || !shortlist.length) return null;
+    const [candidateToken] = candidateTokens;
+    const hasExactBroadMatch = shortlist.some((item) =>
+      [item.matchedKey, item.name].some(
+        (value) => normalize(value) === candidateToken,
+      ),
+    );
+    if (hasExactBroadMatch) return null;
+
+    const escapedCandidateToken = candidateToken.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&",
+    );
+    const parentheticalCandidatePattern = new RegExp(
+      `\\([^)]*\\b${escapedCandidateToken}\\b[^)]*\\)`,
+      "i",
+    );
+    const onlyChildForms = shortlist.every((item) =>
+      [item.matchedKey, item.name].some((value) => {
+        const raw = String(value ?? "").trim();
+        if (!raw) return false;
+        const tokens = tokenize(raw);
+        if (tokens.length <= 1) return false;
+        if (!tokens.includes(candidateToken)) return false;
+        if (tokens[0] === candidateToken) return false;
+        return parentheticalCandidatePattern.test(raw);
+      }),
+    );
+    if (!onlyChildForms) return null;
+
+    return {
+      decision: "create_new",
+      reason:
+        "Broad parent nutrient only overlaps narrower approved child forms in strict alias review.",
+      shortlist,
+    } as const;
+  }
+
   const shortlist = buildAliasGuardShortlist({
     candidate,
     research,
@@ -757,6 +1193,11 @@ async function resolveStrictApprovedAliasReview(
         "No plausible approved supplement matches found in strict alias review.",
       shortlist,
     } as const;
+  }
+  const broadParentShortCircuit =
+    maybeReleaseBroadParentFromChildForms(shortlist);
+  if (broadParentShortCircuit) {
+    return broadParentShortCircuit;
   }
 
   const review = await requestStrictAliasReview(
@@ -929,6 +1370,58 @@ function selectPrimaryBenefitEvidenceSource(
   );
 }
 
+function buildSyncedCitationFromBenefitUrl(
+  url: string,
+  benefit: Record<string, unknown>,
+) {
+  const parsedEvidence = parseBenefitEvidenceLayout(benefit.evidence);
+  const studyMeta = trimString(parsedEvidence?.studyMeta);
+  const authors = studyMeta.replace(/\s*\(\d{4}\).*$/, "").trim();
+  const journalMatch = studyMeta.match(/\)\s*,\s*(.+)$/);
+  const yearMatch = studyMeta.match(/\((\d{4})\)/);
+  const domain = sourceDomain(url);
+
+  return {
+    url,
+    title:
+      trimString(parsedEvidence?.studyTitle) ||
+      trimString(benefit.label) ||
+      domain,
+    authors: authors || null,
+    journal: trimString(journalMatch?.[1]) || null,
+    domain: domain || null,
+    year: yearMatch ? Number(yearMatch[1]) : null,
+    finding: trimString(parsedEvidence?.studyFindings) || null,
+    limitation: null,
+    evidence_type: "benefit_source_url",
+  };
+}
+
+function syncBenefitSourceUrlsIntoCitations(result: Record<string, unknown>) {
+  const citations = Array.isArray(result.citations)
+    ? result.citations.filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item),
+      )
+    : [];
+  const benefits = Array.isArray(result.benefits)
+    ? (result.benefits as Record<string, unknown>[])
+    : [];
+  const citationUrls = buildCitationUrlSet(citations);
+
+  for (const benefit of benefits) {
+    for (const normalizedUrl of getBenefitSourceUrls(benefit)) {
+      if (!isAllowedUrl(normalizedUrl)) continue;
+      if (citationUrls.has(normalizedUrl)) continue;
+      citations.push(buildSyncedCitationFromBenefitUrl(normalizedUrl, benefit));
+      citationUrls.add(normalizedUrl);
+    }
+  }
+
+  result.citations = citations;
+  return citations;
+}
+
 function parseBenefitEvidenceLayout(value: unknown) {
   const text = trimString(value).replace(/[“”]/g, '"');
   if (!text) return null;
@@ -970,9 +1463,7 @@ function validateResearch(result: Record<string, unknown>) {
     };
   }
 
-  const citations = Array.isArray(result.citations)
-    ? (result.citations as Record<string, unknown>[])
-    : [];
+  const citations = syncBenefitSourceUrlsIntoCitations(result);
   if (!citations.length) issues.push("No citations returned.");
 
   const citationUrls = new Set<string>();
@@ -1123,6 +1614,95 @@ function coerceLowEvidenceSupplement(result: Record<string, unknown>) {
       ? Math.min(clampScore(result.evidence_score) ?? 24, 35)
       : Math.min(clampScore(result.evidence_score) ?? 12, 19),
   };
+}
+
+function coerceTaxonomyCreateCanonicalManualReview(
+  result: Record<string, unknown>,
+  forcedCreatePolicy:
+    | {
+        action: "create_canonical";
+        canonicalName: string;
+        reason: string;
+        source: "db" | "code";
+      }
+    | null,
+) {
+  if (!forcedCreatePolicy || forcedCreatePolicy.action !== "create_canonical") {
+    return result;
+  }
+  if (result.decision !== "manual_review") return result;
+
+  const reason = trimString(result.manual_review_reason).toLowerCase();
+  if (!reason) return result;
+
+  const safetyBlockers = [
+    "safety",
+    "unsafe",
+    "tox",
+    "toxic",
+    "contraind",
+    "interaction",
+    "risk",
+    "adverse",
+    "pregnan",
+    "allerg",
+    "safe canonical active ingredient",
+  ];
+  if (safetyBlockers.some((term) => reason.includes(term))) return result;
+
+  const taxonomyAmbiguitySignals = [
+    "umbrella",
+    "class term",
+    "category term",
+    "broad class",
+    "too broad",
+    "ingredient class",
+    "grouping",
+    "heterogeneous",
+    "product-context dependent",
+    "product context dependent",
+    "multi-enzyme blend",
+    "broader enzyme blend",
+    "not a single canonical active ingredient",
+    "cannot be normalized confidently",
+    "identity ambiguity",
+    "ambiguous identity",
+    "multiple distinct",
+    "not a clear standalone",
+    "not one discrete ingredient",
+    "not a discrete ingredient",
+    "not a single ingredient",
+    "not one ingredient",
+    "standalone consumer supplement",
+    "catalog scope is ambiguous",
+    "family of",
+    "group of",
+  ];
+  if (!taxonomyAmbiguitySignals.some((term) => reason.includes(term))) {
+    return result;
+  }
+
+  return {
+    ...result,
+    decision: "create_new",
+    canonical_name:
+      normalizeText(forcedCreatePolicy.canonicalName) ||
+      normalizeText(result.canonical_name),
+    manual_review_reason: null,
+  };
+}
+
+function shouldBypassStrictAliasGuard(
+  forcedCreatePolicy:
+    | {
+        action: "create_canonical";
+        canonicalName: string;
+        reason: string;
+        source: "db" | "code";
+      }
+    | null,
+) {
+  return forcedCreatePolicy?.action === "create_canonical";
 }
 
 function buildResearchSchema() {
@@ -1310,20 +1890,27 @@ async function fetchAllRows(table: string, select: string) {
 }
 
 async function loadContext() {
-  const [supplements, aliases, rankingRows] = await Promise.all([
+  const [supplements, aliases, rankingRows, taxonomyPolicyRows] = await Promise.all([
     fetchAllRows(TABLES.supplements, "id, name, status"),
     fetchAllRows(TABLES.aliases, "supplement_id, alias, alias_normalized"),
     fetchAllRows(
       TABLES.supplements,
       "id, name, status, evidence_score, supplement_benefits(label, score, icon)",
     ),
+    fetchAllRows(
+      TABLES.taxonomyPolicies,
+      "normalized_name, action, canonical_name, target_supplement_id, target_supplement_name, reason, active",
+    ),
   ]);
 
+  const catalogEntries = buildCatalogEntries(supplements, aliases);
+  const approvedCatalogEntries = filterApprovedCatalogEntries(catalogEntries);
+
   return {
-    catalogEntries: buildCatalogEntries(supplements, aliases),
-    approvedCatalogEntries: filterApprovedCatalogEntries(
-      buildCatalogEntries(supplements, aliases),
-    ),
+    catalogEntries,
+    approvedCatalogEntries,
+    taxonomyPolicies: buildTaxonomyPolicyMap(taxonomyPolicyRows),
+    codeTaxonomyPolicies: buildCodeTaxonomyPolicyMap(),
     benefitRankings: buildBenefitRankingExamples(
       rankingRows.filter((row) => row.status === "approved"),
     ),
@@ -1544,13 +2131,19 @@ async function upsertAlias(supplementId: string, alias: unknown) {
 
   const { data: existing, error: existingError } = await adminSupabase!
     .from(TABLES.aliases)
-    .select("id")
-    .eq("supplement_id", supplementId)
+    .select("id, supplement_id")
     .eq("alias_normalized", normalized)
     .limit(1);
   if (existingError)
     throw new Error(`[supabase:${TABLES.aliases}] ${existingError.message}`);
-  if (existing?.length) return;
+  if (existing?.length) {
+    return trimString(existing[0]?.supplement_id) === supplementId
+      ? { status: "existing_same_supplement" }
+      : {
+          status: "conflict_other_supplement",
+          alias: aliasText,
+        };
+  }
 
   const { error } = await adminSupabase!.from(TABLES.aliases).insert({
     supplement_id: supplementId,
@@ -1559,6 +2152,7 @@ async function upsertAlias(supplementId: string, alias: unknown) {
     alias_type: "ai_researched",
   });
   if (error) throw new Error(`[supabase:${TABLES.aliases}] ${error.message}`);
+  return { status: "inserted" };
 }
 
 async function relinkIngredients(supplementId: string, names: unknown[]) {
@@ -1655,13 +2249,15 @@ function queueSuggestedActionForDecision(decision: unknown) {
   if (decision === "create_new") return "create_canonical";
   if (decision === "manual_review") return "manual_review";
   if (decision === "failed") return "manual_review";
-  if (decision === "alias_existing") return "alias_existing";
+  if (decision === "ignore") return "ignore";
+  if (decision === "alias_existing") return "ignore";
   return null;
 }
 
 function queueSuggestedSupplementNameForRecord(
   record: Record<string, unknown>,
 ) {
+  if (record?.decision === "ignore") return null;
   if (record?.decision === "alias_existing") {
     return normalizeText(record?.match_name) || null;
   }
@@ -1675,14 +2271,16 @@ function queueSuggestedSupplementNameForRecord(
 
 function queueReviewNotesForRecord(record: Record<string, unknown>) {
   const decision = trimString(record?.decision) || "pending";
+  const category = trimString(record?.decision_category);
   const matchedName = normalizeText(record?.match_name);
   if (matchedName)
-    return `Latest research decision: ${decision} (${matchedName})`;
-  return `Latest research decision: ${decision}`;
+    return `Latest research decision: ${decision}${category ? ` [${category}]` : ""} (${matchedName})`;
+  return `Latest research decision: ${decision}${category ? ` [${category}]` : ""}`;
 }
 
 function buildCachedResearchPayload(record: Record<string, unknown>) {
   if (record?.research !== undefined) return record.research ?? null;
+  if (record?.decision === "ignore") return null;
   if (record?.decision === "alias_existing") return null;
   if (record?.decision === "manual_review" && !record?.candidate_research_json)
     return null;
@@ -1738,6 +2336,85 @@ async function markManualReviewResolved(
     throw new Error(`[supabase:${TABLES.manualReviews}] ${error.message}`);
 }
 
+async function markManualReviewIgnored(candidate: Record<string, unknown>) {
+  const normalizedName = trimString(candidate.normalized_name);
+  if (!normalizedName) return;
+  const { error } = await adminSupabase!
+    .from(TABLES.manualReviews)
+    .update({
+      review_status: "ignored",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("normalized_name", normalizedName);
+  if (error)
+    throw new Error(`[supabase:${TABLES.manualReviews}] ${error.message}`);
+}
+
+async function markCandidateIgnored(
+  candidate: Record<string, unknown>,
+  note: string,
+) {
+  const normalizedName = trimString(candidate.normalized_name);
+  if (!normalizedName) return;
+
+  const now = new Date().toISOString();
+
+  const { error: candidateError } = await adminSupabase!
+    .from(TABLES.candidates)
+    .update({
+      review_status: "rejected",
+      approved_supplement_id: null,
+      approved_supplement_name: null,
+      review_notes: trimString(note) || "Ignored by taxonomy policy.",
+      updated_at: now,
+    })
+    .eq("normalized_name", normalizedName);
+  if (candidateError)
+    throw new Error(`[supabase:${TABLES.candidates}] ${candidateError.message}`);
+
+  const { error: reviewError } = await adminSupabase!
+    .from("supplement_review_queue")
+    .update({
+      status: "resolved",
+      reviewed_at: now,
+      supplement_id: null,
+    })
+    .eq("review_type", "alias_unresolved")
+    .eq("status", "pending")
+    .contains("payload", {
+      unresolved_names: [{ normalized_name: normalizedName }],
+    });
+  if (reviewError)
+    throw new Error(`[supabase:supplement_review_queue] ${reviewError.message}`);
+
+  const { error: occurrenceError } = await adminSupabase!
+    .from("supplement_missing_catalog_occurrences")
+    .delete()
+    .eq("normalized_name", normalizedName);
+  if (occurrenceError)
+    throw new Error(
+      `[supabase:supplement_missing_catalog_occurrences] ${occurrenceError.message}`,
+    );
+
+  const { error: missingCandidateError } = await adminSupabase!
+    .from("supplement_missing_catalog_candidates")
+    .delete()
+    .eq("normalized_name", normalizedName);
+  if (missingCandidateError)
+    throw new Error(
+      `[supabase:supplement_missing_catalog_candidates] ${missingCandidateError.message}`,
+    );
+}
+
+async function applyIgnoredTaxonomyPolicy(
+  candidate: Record<string, unknown>,
+  reason: string,
+) {
+  await markCandidateIgnored(candidate, reason);
+  await markManualReviewIgnored(candidate);
+  return { outcome: "ignored" };
+}
+
 async function applyAliasExisting(
   candidate: Record<string, unknown>,
   match: { id: string; name: string },
@@ -1749,7 +2426,15 @@ async function applyAliasExisting(
     candidate.normalized_name,
     ...extraAliases,
   ];
-  for (const name of names) await upsertAlias(match.id, name);
+  const aliasWarnings = [];
+  for (const name of names) {
+    const aliasResult = await upsertAlias(match.id, name);
+    if (aliasResult?.status === "conflict_other_supplement") {
+      aliasWarnings.push(
+        `Skipped duplicate alias "${aliasResult.alias}" because it already belongs to another supplement.`,
+      );
+    }
+  }
   const linked = await relinkIngredients(match.id, names);
   await markCandidateApplied(candidate, {
     id: match.id,
@@ -1757,7 +2442,7 @@ async function applyAliasExisting(
     note: `Linked as alias of existing supplement: ${match.name}`,
   });
   await markManualReviewResolved(candidate, match);
-  return { linked };
+  return { outcome: "alias_existing", match, linked, aliasWarnings };
 }
 
 function buildBenefitRows(
@@ -1795,7 +2480,15 @@ async function applyResearchRelations(
     candidate.normalized_name,
     ...aliases,
   ];
-  for (const name of names) await upsertAlias(supplement.id, name);
+  const aliasWarnings = [];
+  for (const name of names) {
+    const aliasResult = await upsertAlias(supplement.id, name);
+    if (aliasResult?.status === "conflict_other_supplement") {
+      aliasWarnings.push(
+        `Skipped duplicate alias "${aliasResult.alias}" because it already belongs to another supplement.`,
+      );
+    }
+  }
 
   const benefitRows = buildBenefitRows(supplement, research);
   await adminSupabase!
@@ -1811,7 +2504,7 @@ async function applyResearchRelations(
   }
 
   const linked = await relinkIngredients(supplement.id, names);
-  return { linked, benefitCount: benefitRows.length };
+  return { linked, benefitCount: benefitRows.length, aliasWarnings };
 }
 
 async function createPendingSupplement(
@@ -1819,6 +2512,22 @@ async function createPendingSupplement(
   research: Record<string, unknown>,
 ) {
   const canonicalName = normalizeText(research.canonical_name);
+  const [freshSupplements, freshAliases] = await Promise.all([
+    fetchAllRows(TABLES.supplements, "id, name, status"),
+    fetchAllRows(TABLES.aliases, "supplement_id, alias, alias_normalized"),
+  ]);
+  const exactExistingSupplement = findExactCatalogSupplementMatch(
+    candidate,
+    research,
+    buildCatalogEntries(freshSupplements, freshAliases),
+  );
+  if (exactExistingSupplement) {
+    return applyAliasExisting(candidate, exactExistingSupplement, [
+      research.canonical_name,
+      ...(Array.isArray(research.aliases) ? research.aliases : []),
+    ]);
+  }
+
   const { data: supplement, error } = await adminSupabase!
     .from(TABLES.supplements)
     .insert({
@@ -1854,7 +2563,7 @@ async function createPendingSupplement(
     note: "Created approved supplement from automatic scan research.",
   });
   await markManualReviewResolved(candidate, supplement);
-  return { supplement, ...relations };
+  return { outcome: "create_new", supplement, ...relations };
 }
 
 function normalizeCachedResearch(candidate: Record<string, unknown>) {
@@ -1949,7 +2658,9 @@ Deno.serve(async (req) => {
     const normalizedNames = Array.isArray(body?.normalizedNames)
       ? Array.from(
           new Set(
-            body.normalizedNames.map(normalizeLookupText).filter(Boolean),
+            body.normalizedNames
+              .flatMap(buildExplicitCandidateLookupVariants)
+              .filter(Boolean),
           ),
         )
       : [];
@@ -1996,7 +2707,7 @@ Deno.serve(async (req) => {
         candidateName;
       const normalizedName =
         trimString(candidate.normalized_name) ||
-        normalizeLookupText(candidateName);
+        normalizeExactPolicyName(candidateName);
       const record: Record<string, unknown> = {
         candidate_name: candidateName,
         decision: "pending",
@@ -2006,10 +2717,7 @@ Deno.serve(async (req) => {
       records.push(record);
 
       try {
-        if (manualReviewNames.has(normalizedName)) {
-          record.decision = "skipped_manual_review";
-          continue;
-        }
+        record.has_pending_manual_review = manualReviewNames.has(normalizedName);
         if (looksLikeProduct(candidateName)) {
           await upsertManualReview(
             candidate,
@@ -2017,84 +2725,292 @@ Deno.serve(async (req) => {
             null,
             [],
           );
-          record.decision = "manual_review";
-          record.reason =
-            "Candidate looks like a product, formula, or dosage form.";
+          applySupplementDecision(
+            record,
+            createSupplementDecision({
+              kind: "manual_review",
+              category: "product_like",
+              reason: "Candidate looks like a product, formula, or dosage form.",
+            }),
+          );
           await syncCandidateQueueDecision(candidate, record);
           continue;
         }
 
-        const duplicate = findDuplicateCandidate(
-          lookupName,
-          context.catalogEntries,
+        let forcedCreatePolicy: {
+          action: "create_canonical";
+          canonicalName: string;
+          reason: string;
+          source: "db" | "code";
+        } | null = null;
+
+        const dbTaxonomyPolicy = resolveTaxonomyPolicy(
+          normalizedName,
+          context.approvedCatalogEntries,
+          context.taxonomyPolicies,
         );
-        if (duplicate.action === "alias_existing" && duplicate.match) {
-          const result = await applyAliasExisting(candidate, duplicate.match);
-          record.decision = "alias_existing";
-          record.reason = `Local alias match: ${duplicate.match.name}`;
-          record.match_name = duplicate.match.name;
-          record.applied = true;
-          record.result = result;
-          await syncCandidateQueueDecision(candidate, record);
-          continue;
-        }
-        if (duplicate.action === "manual_review") {
-          const aliasReview = await requestAliasReview(
-            candidateName,
-            aliasReviewPayload(duplicate.shortlist),
-          );
-          if (aliasReview.decision === "alias_existing") {
-            if (Number(aliasReview.confidence) < 0.75) {
-              await upsertManualReview(
-                candidate,
-                `Alias review confidence too low: ${aliasReview.reason}`,
-                null,
-                [],
-              );
-              record.decision = "manual_review";
-              record.reason = `Alias review confidence too low: ${aliasReview.reason}`;
-              await syncCandidateQueueDecision(candidate, record);
-              continue;
-            }
-            const match = duplicate.shortlist.find(
-              (item) => item.id === aliasReview.matched_supplement_id,
+        if (dbTaxonomyPolicy) {
+          if (dbTaxonomyPolicy.action === "create_canonical") {
+            forcedCreatePolicy = {
+              ...dbTaxonomyPolicy,
+              source: "db",
+            };
+            candidate.suggested_supplement_name = dbTaxonomyPolicy.canonicalName;
+            record.reason = `Taxonomy DB override: ${dbTaxonomyPolicy.reason}`;
+            record.candidate_suggested_supplement_name =
+              dbTaxonomyPolicy.canonicalName;
+          } else if (dbTaxonomyPolicy.action === "alias_existing") {
+            const result = await applyAliasExisting(
+              candidate,
+              dbTaxonomyPolicy.match,
             );
-            if (!match) {
-              await upsertManualReview(
-                candidate,
-                "Alias review returned an unknown supplement id.",
-                null,
-                [],
-              );
-              record.decision = "manual_review";
-              record.reason = "Alias review returned an unknown supplement id.";
-              await syncCandidateQueueDecision(candidate, record);
-              continue;
-            }
-            const result = await applyAliasExisting(candidate, match);
-            record.decision = "alias_existing";
-            record.reason = String(aliasReview.reason ?? "");
-            record.match_name = match.name;
+            applySupplementDecision(
+              record,
+              createSupplementDecision({
+                kind: "alias_existing",
+                category: "taxonomy_policy",
+                reason: `Taxonomy DB override: ${dbTaxonomyPolicy.reason}`,
+                match: dbTaxonomyPolicy.match,
+              }),
+            );
+            record.applied = true;
+            record.result = result;
+            await syncCandidateQueueDecision(candidate, record);
+            continue;
+          } else if (dbTaxonomyPolicy.action === "ignore") {
+            const result = await applyIgnoredTaxonomyPolicy(
+              candidate,
+              dbTaxonomyPolicy.reason,
+            );
+            applySupplementDecision(
+              record,
+              createSupplementDecision({
+                kind: "ignore",
+                category: "taxonomy_policy",
+                reason: `Taxonomy DB override: ${dbTaxonomyPolicy.reason}`,
+              }),
+            );
+            record.applied = true;
+            record.result = result;
+            await syncCandidateQueueDecision(candidate, record);
+            continue;
+          } else {
+            await upsertManualReview(
+              candidate,
+              `Taxonomy DB override: ${dbTaxonomyPolicy.reason}`,
+              null,
+              [],
+            );
+            applySupplementDecision(
+              record,
+              createSupplementDecision({
+                kind: "manual_review",
+                category: "taxonomy_policy",
+                reason: `Taxonomy DB override: ${dbTaxonomyPolicy.reason}`,
+              }),
+            );
+            await syncCandidateQueueDecision(candidate, record);
+            continue;
+          }
+        }
+
+        if (!forcedCreatePolicy) {
+          const exactApprovedMatch = findExactApprovedCatalogMatch(
+            candidate,
+            context.approvedCatalogEntries,
+          );
+          if (exactApprovedMatch) {
+            const result = await applyAliasExisting(candidate, exactApprovedMatch);
+            applySupplementDecision(
+              record,
+              createSupplementDecision({
+                kind: "alias_existing",
+                category: "alias_match",
+                reason: `Exact approved supplement match: ${exactApprovedMatch.name}`,
+                match: exactApprovedMatch,
+              }),
+            );
             record.applied = true;
             record.result = result;
             await syncCandidateQueueDecision(candidate, record);
             continue;
           }
-          if (
-            aliasReview.decision === "manual_review" &&
-            !aliasReviewAllowsCreateNew(aliasReview) &&
-            Number(aliasReview.confidence) >= 0.85
-          ) {
-            await upsertManualReview(
-              candidate,
-              String(aliasReview.reason),
-              null,
-              [],
+
+          const codeTaxonomyPolicy = resolveTaxonomyPolicy(
+            normalizedName,
+            context.approvedCatalogEntries,
+            context.codeTaxonomyPolicies,
+          );
+          if (codeTaxonomyPolicy) {
+            if (codeTaxonomyPolicy.action === "create_canonical") {
+              forcedCreatePolicy = {
+                ...codeTaxonomyPolicy,
+                source: "code",
+              };
+              candidate.suggested_supplement_name =
+                codeTaxonomyPolicy.canonicalName;
+              record.reason = `Taxonomy code rule: ${codeTaxonomyPolicy.reason}`;
+              record.candidate_suggested_supplement_name =
+                codeTaxonomyPolicy.canonicalName;
+            } else if (codeTaxonomyPolicy.action === "alias_existing") {
+              const result = await applyAliasExisting(
+                candidate,
+                codeTaxonomyPolicy.match,
+              );
+              applySupplementDecision(
+                record,
+                createSupplementDecision({
+                  kind: "alias_existing",
+                  category: "taxonomy_policy",
+                  reason: `Taxonomy code rule: ${codeTaxonomyPolicy.reason}`,
+                  match: codeTaxonomyPolicy.match,
+                }),
+              );
+              record.applied = true;
+              record.result = result;
+              await syncCandidateQueueDecision(candidate, record);
+              continue;
+            } else if (codeTaxonomyPolicy.action === "ignore") {
+              const result = await applyIgnoredTaxonomyPolicy(
+                candidate,
+                codeTaxonomyPolicy.reason,
+              );
+              applySupplementDecision(
+                record,
+                createSupplementDecision({
+                  kind: "ignore",
+                  category: "taxonomy_policy",
+                  reason: `Taxonomy code rule: ${codeTaxonomyPolicy.reason}`,
+                }),
+              );
+              record.applied = true;
+              record.result = result;
+              await syncCandidateQueueDecision(candidate, record);
+              continue;
+            } else {
+              await upsertManualReview(
+                candidate,
+                `Taxonomy code rule: ${codeTaxonomyPolicy.reason}`,
+                null,
+                [],
+              );
+              applySupplementDecision(
+                record,
+                createSupplementDecision({
+                  kind: "manual_review",
+                  category: "taxonomy_policy",
+                  reason: `Taxonomy code rule: ${codeTaxonomyPolicy.reason}`,
+                }),
+              );
+              await syncCandidateQueueDecision(candidate, record);
+              continue;
+            }
+          }
+        }
+
+        if (!forcedCreatePolicy) {
+          const duplicate = findDuplicateCandidate(
+            lookupName,
+            context.catalogEntries,
+          );
+          if (duplicate.action === "alias_existing" && duplicate.match) {
+            const result = await applyAliasExisting(candidate, duplicate.match);
+            applySupplementDecision(
+              record,
+              createSupplementDecision({
+                kind: "alias_existing",
+                category: "alias_match",
+                reason: `Local alias match: ${duplicate.match.name}`,
+                match: duplicate.match,
+              }),
             );
-            record.decision = "manual_review";
-            record.reason = String(aliasReview.reason ?? "");
+            record.applied = true;
+            record.result = result;
             await syncCandidateQueueDecision(candidate, record);
             continue;
+          }
+          if (duplicate.action === "manual_review") {
+            const aliasReview = await requestAliasReview(
+              candidateName,
+              aliasReviewPayload(duplicate.shortlist),
+            );
+            if (aliasReview.decision === "alias_existing") {
+              if (Number(aliasReview.confidence) < 0.75) {
+                await upsertManualReview(
+                  candidate,
+                  `Alias review confidence too low: ${aliasReview.reason}`,
+                  null,
+                  [],
+                );
+                applySupplementDecision(
+                  record,
+                  createSupplementDecision({
+                    kind: "manual_review",
+                    category: "identity_conflict",
+                    reason: `Alias review confidence too low: ${aliasReview.reason}`,
+                  }),
+                );
+                await syncCandidateQueueDecision(candidate, record);
+                continue;
+              }
+              const match = duplicate.shortlist.find(
+                (item) => item.id === aliasReview.matched_supplement_id,
+              );
+              if (!match) {
+                await upsertManualReview(
+                  candidate,
+                  "Alias review returned an unknown supplement id.",
+                  null,
+                  [],
+                );
+                applySupplementDecision(
+                  record,
+                  createSupplementDecision({
+                    kind: "manual_review",
+                    category: "identity_conflict",
+                    reason: "Alias review returned an unknown supplement id.",
+                  }),
+                );
+                await syncCandidateQueueDecision(candidate, record);
+                continue;
+              }
+              const result = await applyAliasExisting(candidate, match);
+              applySupplementDecision(
+                record,
+                createSupplementDecision({
+                  kind: "alias_existing",
+                  category: "alias_match",
+                  reason: String(aliasReview.reason ?? ""),
+                  match,
+                }),
+              );
+              record.applied = true;
+              record.result = result;
+              await syncCandidateQueueDecision(candidate, record);
+              continue;
+            }
+            if (
+              aliasReview.decision === "manual_review" &&
+              !aliasReviewAllowsCreateNew(aliasReview) &&
+              Number(aliasReview.confidence) >= 0.85
+            ) {
+              await upsertManualReview(
+                candidate,
+                String(aliasReview.reason),
+                null,
+                [],
+              );
+              applySupplementDecision(
+                record,
+                createSupplementDecision({
+                  kind: "manual_review",
+                  category: "identity_conflict",
+                  reason: String(aliasReview.reason ?? ""),
+                }),
+              );
+              await syncCandidateQueueDecision(candidate, record);
+              continue;
+            }
           }
         }
 
@@ -2102,14 +3018,17 @@ Deno.serve(async (req) => {
           ? null
           : normalizeCachedResearch(candidate);
         let research =
-          cachedResearch ??
-          coerceLowEvidenceSupplement(
-            await requestResearch(candidate, context.benefitRankings),
+          coerceTaxonomyCreateCanonicalManualReview(
+            cachedResearch ??
+              coerceLowEvidenceSupplement(
+                await requestResearch(candidate, context.benefitRankings),
+              ),
+            forcedCreatePolicy,
           );
-        record.research_canonical_name =
-          normalizeText(research.canonical_name) || null;
         record.candidate_suggested_supplement_name =
           normalizeText(candidate.suggested_supplement_name) || null;
+        record.research_canonical_name =
+          normalizeText(research.canonical_name) || null;
         record.research = research;
         let validation = validateResearch(research);
 
@@ -2121,8 +3040,11 @@ Deno.serve(async (req) => {
             "How to use must not mention sample products, provided product examples, product labels, or label-only amounts.",
           ].includes(validation.issues[0])
         ) {
-          const retryResearch = coerceLowEvidenceSupplement(
-            await requestResearch(candidate, context.benefitRankings),
+          const retryResearch = coerceTaxonomyCreateCanonicalManualReview(
+            coerceLowEvidenceSupplement(
+              await requestResearch(candidate, context.benefitRankings),
+            ),
+            forcedCreatePolicy,
           );
           const retryValidation = validateResearch(retryResearch);
 
@@ -2130,6 +3052,8 @@ Deno.serve(async (req) => {
             research = retryResearch;
             validation = retryValidation;
             record.research = research;
+            record.research_canonical_name =
+              normalizeText(research.canonical_name) || null;
           }
         }
         if (!validation.ok) {
@@ -2148,54 +3072,101 @@ Deno.serve(async (req) => {
             research,
             validation.issues,
           );
-          record.decision = "manual_review";
-          record.reason = validation.issues.join("; ");
-          record.validation_issues = validation.issues;
+          applySupplementDecision(
+            record,
+            createSupplementDecision({
+              kind: "manual_review",
+              category: "validation_blocked",
+              reason: validation.issues.join("; "),
+              research,
+              validationIssues: validation.issues,
+            }),
+          );
           await syncCandidateQueueDecision(candidate, record);
           continue;
         }
 
-        const strictAliasDecision = await resolveStrictApprovedAliasReview(
-          candidate,
-          research,
-          context.approvedCatalogEntries,
-        );
-        if (
-          strictAliasDecision.decision === "alias_existing" &&
-          strictAliasDecision.match
-        ) {
-          const aliases = Array.isArray(research.aliases)
-            ? research.aliases
-            : [];
-          const result = await applyAliasExisting(
+        if (!shouldBypassStrictAliasGuard(forcedCreatePolicy)) {
+          const strictAliasDecision = await resolveStrictApprovedAliasReview(
             candidate,
-            strictAliasDecision.match,
-            [research.canonical_name, ...aliases],
-          );
-          record.decision = "alias_existing";
-          record.reason = `Strict alias guard: ${strictAliasDecision.reason}`;
-          record.match_name = strictAliasDecision.match.name;
-          record.applied = true;
-          record.result = result;
-          await syncCandidateQueueDecision(candidate, record);
-          continue;
-        }
-        if (strictAliasDecision.decision === "manual_review") {
-          await upsertManualReview(
-            candidate,
-            `Strict alias guard needs review: ${strictAliasDecision.reason}`,
             research,
-            [],
+            context.approvedCatalogEntries,
           );
-          record.decision = "manual_review";
-          record.reason = `Strict alias guard needs review: ${strictAliasDecision.reason}`;
-          await syncCandidateQueueDecision(candidate, record);
-          continue;
+          if (
+            strictAliasDecision.decision === "alias_existing" &&
+            strictAliasDecision.match
+          ) {
+            const aliases = Array.isArray(research.aliases)
+              ? research.aliases
+              : [];
+            const result = await applyAliasExisting(
+              candidate,
+              strictAliasDecision.match,
+              [research.canonical_name, ...aliases],
+            );
+            applySupplementDecision(
+              record,
+              createSupplementDecision({
+                kind: "alias_existing",
+                category: "alias_match",
+                reason: `Strict alias guard: ${strictAliasDecision.reason}`,
+                match: strictAliasDecision.match,
+                research,
+              }),
+            );
+            record.applied = true;
+            record.result = result;
+            await syncCandidateQueueDecision(candidate, record);
+            continue;
+          }
+          if (strictAliasDecision.decision === "manual_review") {
+            await upsertManualReview(
+              candidate,
+              `Strict alias guard needs review: ${strictAliasDecision.reason}`,
+              research,
+              [],
+            );
+            applySupplementDecision(
+              record,
+              createSupplementDecision({
+                kind: "manual_review",
+                category: "identity_conflict",
+                reason: `Strict alias guard needs review: ${strictAliasDecision.reason}`,
+                research,
+              }),
+            );
+            await syncCandidateQueueDecision(candidate, record);
+            continue;
+          }
         }
 
         const result = await createPendingSupplement(candidate, research);
-        record.decision = "create_new";
-        record.reason = "Source-backed research passed validation.";
+        if (result?.outcome === "alias_existing" && result?.match) {
+          applySupplementDecision(
+            record,
+            createSupplementDecision({
+              kind: "alias_existing",
+              category: "alias_match",
+              reason:
+                `Exact existing supplement match: ${result.match.name}` +
+                aliasWarningSuffix(result.aliasWarnings),
+              match: result.match,
+              research,
+            }),
+          );
+        } else {
+          applySupplementDecision(
+            record,
+            createSupplementDecision({
+              kind: "create_new",
+              category: "research_ready",
+              reason:
+                "Source-backed research passed validation." +
+                aliasWarningSuffix(result?.aliasWarnings),
+              research,
+            }),
+          );
+        }
         record.applied = true;
         record.result = result;
         await syncCandidateQueueDecision(candidate, record);
@@ -2206,8 +3177,14 @@ Deno.serve(async (req) => {
             console.error("Failed to record manual review", reviewError);
           },
         );
-        record.decision = "failed";
-        record.reason = reason;
+        applySupplementDecision(
+          record,
+          createSupplementDecision({
+            kind: "failed",
+            category: "processing_error",
+            reason,
+          }),
+        );
         await syncCandidateQueueDecision(candidate, record).catch(
           (syncError) => {
             console.error("Failed to sync candidate queue decision", syncError);

@@ -347,9 +347,9 @@ export default function SupplementModal() {
     "08:00";
   const headerTopInsetOffset =
     Platform.OS === "android"
-      ? typeof appTheme.header.topInsetOffset === "number"
-        ? appTheme.header.topInsetOffset
-        : Math.max(insets.top, 24)
+      ? (typeof appTheme.header.topInsetOffset === "number"
+          ? appTheme.header.topInsetOffset
+          : 0) + insets.top
       : undefined;
 
   const toggleDay = (day) => {
