@@ -20,6 +20,7 @@ import { useSupplementsStore } from "@/features/supplements/store";
 import { useHealthStore } from "@/features/health/store";
 import { getEffectiveEntries } from "@/features/health/selectors";
 import { getTrackedSupplementEvidenceScores } from "@/features/supplements/getTrackedSupplementEvidenceScores";
+import { isCustomTrackedSupplement } from "@/features/supplements/isCustomTrackedSupplement";
 import { openTrackedSupplementInfo } from "@/features/supplements/openTrackedSupplementInfo";
 import { isSupplementScheduledOnDate } from "@/features/supplements/schedule";
 import {
@@ -407,6 +408,7 @@ function SupplementRow({
   onEditPress,
 }) {
   const evidence = getEvidenceDisplay(score);
+  const isCustomSupplement = isCustomTrackedSupplement(supplement);
   const dueTime = formatDueTime(supplement);
   const metaLabel =
     taken && takenAt ? `Taken ${takenAt}` : dueTime ? `Due ${dueTime}` : "";
@@ -419,7 +421,14 @@ function SupplementRow({
       pressedStyle={!taken ? styles.supplementCardPressed : null}
     >
       <View style={styles.supplementCardTopRow}>
-        {evidence.badgeLabel ? (
+        {isCustomSupplement ? (
+          <StatusPill
+            label="CUSTOM"
+            tone="neutral"
+            style={styles.customEvidenceBadge}
+            textStyle={styles.customEvidenceBadgeText}
+          />
+        ) : evidence.badgeLabel ? (
           <StatusPill
             label={evidence.badgeLabel}
             tone={evidence.badgeTone}
@@ -1270,6 +1279,14 @@ const styles = StyleSheet.create({
   },
   evidenceBadge: {
     alignSelf: "flex-start",
+  },
+  customEvidenceBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "#17151B",
+  },
+  customEvidenceBadgeText: {
+    color: "#FFFFFF",
+    letterSpacing: 0,
   },
   supplementRow: {
     flexDirection: "row",
