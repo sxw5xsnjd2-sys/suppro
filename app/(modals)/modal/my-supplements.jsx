@@ -11,6 +11,8 @@ import {
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { appTheme, spacing, typography } from "@/theme";
+import { StatusPill } from "@/components/common/ui/StatusPill";
+import { isCustomTrackedSupplement } from "@/features/supplements/isCustomTrackedSupplement";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { Icon } from "@/features/supplements/icons/Icon";
 import { getSupplementScheduleLabel } from "@/features/supplements/schedule";
@@ -21,6 +23,7 @@ function SupplementRow({
   requireSubscriptionAccess,
 }) {
   const scheduleLabel = getSupplementScheduleLabel(supplement);
+  const isCustomSupplement = isCustomTrackedSupplement(supplement);
 
   const meta = [supplement.time, supplement.dose?.trim()]
     .filter(Boolean)
@@ -51,6 +54,14 @@ function SupplementRow({
       </View>
 
       <View style={styles.rowCopy}>
+        {isCustomSupplement ? (
+          <StatusPill
+            label="Custom supplement"
+            tone="neutral"
+            style={styles.customSupplementPill}
+            textStyle={styles.customSupplementPillText}
+          />
+        ) : null}
         <Text style={styles.rowName} numberOfLines={1}>
           {supplement.name}
         </Text>
@@ -199,6 +210,19 @@ const styles = StyleSheet.create({
   rowCopy: {
     flex: 1,
     minWidth: 0,
+  },
+  customSupplementPill: {
+    minHeight: 20,
+    paddingHorizontal: 7,
+    marginBottom: 6,
+    backgroundColor: appTheme.colors.surfaceMuted,
+  },
+  customSupplementPillText: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    letterSpacing: 0,
+    color: appTheme.colors.textSecondary,
   },
   rowName: {
     fontSize: 16,

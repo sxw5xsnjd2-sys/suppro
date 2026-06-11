@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -590,355 +591,367 @@ export default function SupplementModal() {
 
   return (
     <>
-      <BackdropScreen
-        bottomInsetOffset={72}
-        minBottomPadding={96}
-        nestedScrollEnabled={Platform.OS === "android"}
-        header={
-          <AppHeader
-            insetPreset="modal"
-            topInsetOffset={headerTopInsetOffset}
-            bottomPadding={8}
-            leftSlot={
-              <AppButton
-                onPress={() => router.back()}
-                variant="overlay"
-                size="icon"
-                accessibilityLabel="Close supplement editor"
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <BackdropScreen
+          bottomInsetOffset={72}
+          minBottomPadding={96}
+          nestedScrollEnabled={Platform.OS === "android"}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={
+            Platform.OS === "ios" ? "interactive" : "on-drag"
+          }
+          header={
+            <AppHeader
+              insetPreset="modal"
+              topInsetOffset={headerTopInsetOffset}
+              bottomPadding={8}
+              leftSlot={
+                <AppButton
+                  onPress={() => router.back()}
+                  variant="overlay"
+                  size="icon"
+                  accessibilityLabel="Close supplement editor"
+                >
+                  <Ionicons
+                    name="close"
+                    size={20}
+                    color={appTheme.colors.textStrong}
+                  />
+                </AppButton>
+              }
+              rightSlot={
+                <AppButton
+                  label={saving ? "Saving..." : "Save"}
+                  onPress={handleSave}
+                  disabled={!canSave || saving}
+                  variant="primary"
+                  size="sm"
+                  style={[
+                    styles.headerSaveButton,
+                    (!canSave || saving) && styles.headerSaveButtonDisabled,
+                  ]}
+                  textStyle={styles.headerSaveText}
+                  accessibilityLabel={
+                    saving ? "Saving supplement" : "Save supplement"
+                  }
+                />
+              }
+              title={isEdit ? "EDIT SUPPLEMENT" : "ADD SUPPLEMENT"}
+              titleStyle={styles.headerTitle}
+              bottomSlot={
+                <Text style={styles.headerSubtitle}>
+                  {isEdit
+                    ? "Update timing, dates, type, and dose."
+                    : "Build a supplement routine that fits your stack."}
+                </Text>
+              }
+              bottomSlotStyle={styles.headerBottom}
+            />
+          }
+        >
+          <AppSectionCard
+            title="Details"
+            subtitle="Name and dose"
+            style={styles.sectionCard}
+            titleStyle={styles.sectionTitle}
+            subtitleStyle={styles.sectionSubtitle}
+          >
+            <AppFormField label="Supplement name">
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: "/supplement-search",
+                    params: {
+                      mode: "picker",
+                      initialQuery: name.trim(),
+                    },
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.searchField,
+                  pressed && styles.pressedField,
+                ]}
               >
                 <Ionicons
-                  name="close"
+                  name="search"
                   size={20}
-                  color={appTheme.colors.textStrong}
+                  color={appTheme.input.icon}
+                  style={styles.searchFieldIcon}
                 />
-              </AppButton>
-            }
-            rightSlot={
-              <AppButton
-                label={saving ? "Saving..." : "Save"}
-                onPress={handleSave}
-                disabled={!canSave || saving}
-                variant="primary"
-                size="sm"
-                style={[
-                  styles.headerSaveButton,
-                  (!canSave || saving) && styles.headerSaveButtonDisabled,
-                ]}
-                textStyle={styles.headerSaveText}
-                accessibilityLabel={
-                  saving ? "Saving supplement" : "Save supplement"
-                }
-              />
-            }
-            title={isEdit ? "EDIT SUPPLEMENT" : "ADD SUPPLEMENT"}
-            titleStyle={styles.headerTitle}
-            bottomSlot={
-              <Text style={styles.headerSubtitle}>
-                {isEdit
-                  ? "Update timing, dates, type, and dose."
-                  : "Build a supplement routine that fits your stack."}
-              </Text>
-            }
-            bottomSlotStyle={styles.headerBottom}
-          />
-        }
-      >
-        <AppSectionCard
-          title="Details"
-          subtitle="Name and dose"
-          style={styles.sectionCard}
-          titleStyle={styles.sectionTitle}
-          subtitleStyle={styles.sectionSubtitle}
-        >
-          <AppFormField label="Supplement name">
-            <Pressable
-              onPress={() =>
-                router.push({
-                  pathname: "/supplement-search",
-                  params: {
-                    mode: "picker",
-                    initialQuery: name.trim(),
-                  },
-                })
-              }
-              style={({ pressed }) => [
-                styles.searchField,
-                pressed && styles.pressedField,
-              ]}
-            >
-              <Ionicons
-                name="search"
-                size={20}
-                color={appTheme.input.icon}
-                style={styles.searchFieldIcon}
-              />
-              <Text
-                style={[
-                  styles.searchFieldText,
-                  !name.trim() && styles.searchFieldPlaceholder,
-                ]}
-              >
-                {name.trim() || "Search supplement catalog"}
-              </Text>
-            </Pressable>
-          </AppFormField>
-
-          <AppFormField label="Dose">
-            <TextInput
-              value={dose}
-              onChangeText={setDose}
-              placeholder="e.g. 1 capsule, 2000 IU"
-              placeholderTextColor={appTheme.input.placeholder}
-              style={styles.textInput}
-            />
-          </AppFormField>
-        </AppSectionCard>
-
-        <AppSectionCard
-          title="Type"
-          subtitle="Choose how you take it"
-          style={styles.sectionCard}
-          titleStyle={styles.sectionTitle}
-          subtitleStyle={styles.sectionSubtitle}
-        >
-          <View style={styles.routeRow}>
-            {SUPPLEMENT_ROUTES.map((option) => (
-              <Pressable
-                key={option.key}
-                onPress={() => setRoute(option.key)}
-                style={({ pressed }) => [
-                  styles.routeOption,
-                  route === option.key && styles.routeOptionActive,
-                  pressed && styles.pressedOption,
-                ]}
-              >
-                {route === option.key ? (
-                  <LinearGradient
-                    pointerEvents="none"
-                    colors={appTheme.tabBar.fabGradient}
-                    start={{ x: 0.5, y: 0 }}
-                    end={{ x: 0.5, y: 1 }}
-                    style={styles.routeOptionGradient}
-                  />
-                ) : null}
-                <View
-                  style={[
-                    styles.routeIconWrap,
-                    route === option.key && styles.routeIconWrapActive,
-                  ]}
-                >
-                  <Icon route={option.key} size={18} />
-                </View>
                 <Text
                   style={[
-                    styles.routeLabel,
-                    route === option.key && styles.routeLabelActive,
+                    styles.searchFieldText,
+                    !name.trim() && styles.searchFieldPlaceholder,
                   ]}
                 >
-                  {option.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </AppSectionCard>
-
-        <AppSectionCard
-          title="Schedule"
-          subtitle="Dates, days, and time"
-          style={styles.sectionCard}
-          titleStyle={styles.sectionTitle}
-          subtitleStyle={styles.sectionSubtitle}
-        >
-          <View style={styles.dateRow}>
-            <AppFormField
-              label="Start date"
-              style={styles.dateFieldBlock}
-              errorText={
-                !startDateValid || !chronologicalValid
-                  ? dateValidationMessage
-                  : null
-              }
-            >
-              <Pressable
-                onPress={() => setActiveDatePicker("start")}
-                style={({ pressed }) => [
-                  styles.surfaceField,
-                  styles.dateField,
-                  (!startDateValid || !chronologicalValid) &&
-                    styles.surfaceFieldError,
-                  pressed && styles.pressedField,
-                ]}
-              >
-                <Text style={styles.dateFieldText}>
-                  {formatDisplayDate(startDate)}
+                  {name.trim() || "Search supplement catalog"}
                 </Text>
               </Pressable>
             </AppFormField>
 
-            <AppFormField
-              label="End date"
-              style={styles.dateFieldBlock}
-              helperText={endDate ? "Tap below to set ongoing." : "Optional"}
-              errorText={
-                !endDateValid || !chronologicalValid
-                  ? dateValidationMessage
-                  : null
-              }
-            >
-              <Pressable
-                onPress={() => setActiveDatePicker("end")}
-                style={({ pressed }) => [
-                  styles.surfaceField,
-                  styles.dateField,
-                  (!endDateValid || !chronologicalValid) &&
-                    styles.surfaceFieldError,
-                  pressed && styles.pressedField,
-                ]}
-              >
-                <Text style={styles.dateFieldText}>
-                  {endDate ? formatDisplayDate(endDate) : "Ongoing"}
-                </Text>
-              </Pressable>
-
-              {endDate ? (
-                <AppButton
-                  label="Set to ongoing"
-                  onPress={() => setEndDate(null)}
-                  variant="ghost"
-                  size="sm"
-                  style={styles.clearEndDate}
-                  textStyle={styles.clearEndDateText}
-                />
-              ) : null}
+            <AppFormField label="Dose">
+              <TextInput
+                value={dose}
+                onChangeText={setDose}
+                placeholder="e.g. 1 capsule, 2000 IU"
+                placeholderTextColor={appTheme.input.placeholder}
+                style={styles.textInput}
+              />
             </AppFormField>
-          </View>
+          </AppSectionCard>
 
-          {scheduleType === "interval" ? (
-            <AppFormField
-              label="Schedule"
-              helperText="Interval schedules are preserved from onboarding."
-            >
-              <View style={styles.scheduleSummary}>
-                <Ionicons
-                  name="repeat-outline"
-                  size={18}
-                  color={appTheme.colors.textSecondary}
-                />
-                <Text style={styles.scheduleSummaryText}>
-                  {getSupplementScheduleLabel({
-                    scheduleType,
-                    intervalDays,
-                    scheduleAnchorDate,
-                    frequency,
-                    frequencyLabel,
+          <AppSectionCard
+            title="Type"
+            subtitle="Choose how you take it"
+            style={styles.sectionCard}
+            titleStyle={styles.sectionTitle}
+            subtitleStyle={styles.sectionSubtitle}
+          >
+            <View style={styles.routeRow}>
+              {SUPPLEMENT_ROUTES.map((option) => (
+                <Pressable
+                  key={option.key}
+                  onPress={() => setRoute(option.key)}
+                  style={({ pressed }) => [
+                    styles.routeOption,
+                    route === option.key && styles.routeOptionActive,
+                    pressed && styles.pressedOption,
+                  ]}
+                >
+                  {route === option.key ? (
+                    <LinearGradient
+                      pointerEvents="none"
+                      colors={appTheme.tabBar.fabGradient}
+                      start={{ x: 0.5, y: 0 }}
+                      end={{ x: 0.5, y: 1 }}
+                      style={styles.routeOptionGradient}
+                    />
+                  ) : null}
+                  <View
+                    style={[
+                      styles.routeIconWrap,
+                      route === option.key && styles.routeIconWrapActive,
+                    ]}
+                  >
+                    <Icon route={option.key} size={18} />
+                  </View>
+                  <Text
+                    style={[
+                      styles.routeLabel,
+                      route === option.key && styles.routeLabelActive,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </AppSectionCard>
+
+          <AppSectionCard
+            title="Schedule"
+            subtitle="Dates, days, and time"
+            style={styles.sectionCard}
+            titleStyle={styles.sectionTitle}
+            subtitleStyle={styles.sectionSubtitle}
+          >
+            <View style={styles.dateRow}>
+              <AppFormField
+                label="Start date"
+                style={styles.dateFieldBlock}
+                errorText={
+                  !startDateValid || !chronologicalValid
+                    ? dateValidationMessage
+                    : null
+                }
+              >
+                <Pressable
+                  onPress={() => setActiveDatePicker("start")}
+                  style={({ pressed }) => [
+                    styles.surfaceField,
+                    styles.dateField,
+                    (!startDateValid || !chronologicalValid) &&
+                      styles.surfaceFieldError,
+                    pressed && styles.pressedField,
+                  ]}
+                >
+                  <Text style={styles.dateFieldText}>
+                    {formatDisplayDate(startDate)}
+                  </Text>
+                </Pressable>
+              </AppFormField>
+
+              <AppFormField
+                label="End date"
+                style={styles.dateFieldBlock}
+                helperText={endDate ? "Tap below to set ongoing." : "Optional"}
+                errorText={
+                  !endDateValid || !chronologicalValid
+                    ? dateValidationMessage
+                    : null
+                }
+              >
+                <Pressable
+                  onPress={() => setActiveDatePicker("end")}
+                  style={({ pressed }) => [
+                    styles.surfaceField,
+                    styles.dateField,
+                    (!endDateValid || !chronologicalValid) &&
+                      styles.surfaceFieldError,
+                    pressed && styles.pressedField,
+                  ]}
+                >
+                  <Text style={styles.dateFieldText}>
+                    {endDate ? formatDisplayDate(endDate) : "Ongoing"}
+                  </Text>
+                </Pressable>
+
+                {endDate ? (
+                  <AppButton
+                    label="Set to ongoing"
+                    onPress={() => setEndDate(null)}
+                    variant="ghost"
+                    size="sm"
+                    style={styles.clearEndDate}
+                    textStyle={styles.clearEndDateText}
+                  />
+                ) : null}
+              </AppFormField>
+            </View>
+
+            {scheduleType === "interval" ? (
+              <AppFormField
+                label="Schedule"
+                helperText="Interval schedules are preserved from onboarding."
+              >
+                <View style={styles.scheduleSummary}>
+                  <Ionicons
+                    name="repeat-outline"
+                    size={18}
+                    color={appTheme.colors.textSecondary}
+                  />
+                  <Text style={styles.scheduleSummaryText}>
+                    {getSupplementScheduleLabel({
+                      scheduleType,
+                      intervalDays,
+                      scheduleAnchorDate,
+                      frequency,
+                      frequencyLabel,
+                    })}
+                  </Text>
+                </View>
+              </AppFormField>
+            ) : (
+              <AppFormField label="Days">
+                <View style={styles.daysRow}>
+                  {DAYS.map((day) => {
+                    const active = daysOfWeek.includes(day.value);
+
+                    return (
+                      <Pressable
+                        key={day.value}
+                        accessibilityRole="button"
+                        accessibilityState={active ? { selected: true } : {}}
+                        onPress={() => toggleDay(day.value)}
+                        style={({ pressed }) => [
+                          styles.dayPill,
+                          active && styles.dayPillActive,
+                          pressed && styles.pressedOption,
+                        ]}
+                      >
+                        {active ? (
+                          <LinearGradient
+                            pointerEvents="none"
+                            colors={appTheme.tabBar.fabGradient}
+                            start={{ x: 0.5, y: 0 }}
+                            end={{ x: 0.5, y: 1 }}
+                            style={styles.dayPillGradient}
+                          />
+                        ) : null}
+                        <Text
+                          style={[
+                            styles.dayText,
+                            active && styles.dayTextActive,
+                          ]}
+                        >
+                          {day.label}
+                        </Text>
+
+                        {!active ? <View style={styles.diagonalStrike} /> : null}
+                      </Pressable>
+                    );
                   })}
-                </Text>
-              </View>
-            </AppFormField>
-          ) : (
-            <AppFormField label="Days">
-              <View style={styles.daysRow}>
-                {DAYS.map((day) => {
-                  const active = daysOfWeek.includes(day.value);
+                </View>
+              </AppFormField>
+            )}
 
-                  return (
+            <AppFormField label="Time">
+              <View style={styles.timePicker}>
+                <ScrollView
+                  ref={timeScrollRef}
+                  showsVerticalScrollIndicator={false}
+                  nestedScrollEnabled={Platform.OS === "android"}
+                  keyboardShouldPersistTaps="handled"
+                  snapToInterval={TIME_ITEM_HEIGHT}
+                  decelerationRate="fast"
+                  contentOffset={{ x: 0, y: initialTimeOffset }}
+                >
+                  {TIME_OPTIONS.map((option) => (
                     <Pressable
-                      key={day.value}
-                      accessibilityRole="button"
-                      accessibilityState={active ? { selected: true } : {}}
-                      onPress={() => toggleDay(day.value)}
+                      key={option.minutes}
+                      onPress={() => setTimeMinutes(option.minutes)}
                       style={({ pressed }) => [
-                        styles.dayPill,
-                        active && styles.dayPillActive,
+                        styles.timeOption,
+                        option.minutes === timeMinutes && styles.timeOptionActive,
                         pressed && styles.pressedOption,
                       ]}
                     >
-                      {active ? (
+                      {option.minutes === timeMinutes ? (
                         <LinearGradient
                           pointerEvents="none"
                           colors={appTheme.tabBar.fabGradient}
                           start={{ x: 0.5, y: 0 }}
                           end={{ x: 0.5, y: 1 }}
-                          style={styles.dayPillGradient}
+                          style={styles.timeOptionGradient}
                         />
                       ) : null}
                       <Text
-                        style={[styles.dayText, active && styles.dayTextActive]}
+                        style={[
+                          styles.timeText,
+                          option.minutes === timeMinutes && styles.timeTextActive,
+                        ]}
                       >
-                        {day.label}
+                        {option.label}
                       </Text>
-
-                      {!active ? <View style={styles.diagonalStrike} /> : null}
                     </Pressable>
-                  );
-                })}
+                  ))}
+                </ScrollView>
               </View>
             </AppFormField>
-          )}
-
-          <AppFormField label="Time">
-            <View style={styles.timePicker}>
-              <ScrollView
-                ref={timeScrollRef}
-                showsVerticalScrollIndicator={false}
-                nestedScrollEnabled={Platform.OS === "android"}
-                keyboardShouldPersistTaps="handled"
-                snapToInterval={TIME_ITEM_HEIGHT}
-                decelerationRate="fast"
-                contentOffset={{ x: 0, y: initialTimeOffset }}
-              >
-                {TIME_OPTIONS.map((option) => (
-                  <Pressable
-                    key={option.minutes}
-                    onPress={() => setTimeMinutes(option.minutes)}
-                    style={({ pressed }) => [
-                      styles.timeOption,
-                      option.minutes === timeMinutes && styles.timeOptionActive,
-                      pressed && styles.pressedOption,
-                    ]}
-                  >
-                    {option.minutes === timeMinutes ? (
-                      <LinearGradient
-                        pointerEvents="none"
-                        colors={appTheme.tabBar.fabGradient}
-                        start={{ x: 0.5, y: 0 }}
-                        end={{ x: 0.5, y: 1 }}
-                        style={styles.timeOptionGradient}
-                      />
-                    ) : null}
-                    <Text
-                      style={[
-                        styles.timeText,
-                        option.minutes === timeMinutes && styles.timeTextActive,
-                      ]}
-                    >
-                      {option.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            </View>
-          </AppFormField>
-        </AppSectionCard>
-
-        {isEdit ? (
-          <AppSectionCard
-            title="Delete"
-            subtitle="This action cannot be undone."
-            style={styles.sectionCard}
-            titleStyle={styles.sectionTitle}
-            subtitleStyle={styles.sectionSubtitle}
-          >
-            <AppButton
-              label="Delete supplement"
-              onPress={handleDelete}
-              variant="danger"
-              size="md"
-              textStyle={styles.deleteText}
-            />
           </AppSectionCard>
-        ) : null}
-      </BackdropScreen>
+
+          {isEdit ? (
+            <AppSectionCard
+              title="Delete"
+              subtitle="This action cannot be undone."
+              style={styles.sectionCard}
+              titleStyle={styles.sectionTitle}
+              subtitleStyle={styles.sectionSubtitle}
+            >
+              <AppButton
+                label="Delete supplement"
+                onPress={handleDelete}
+                variant="danger"
+                size="md"
+                textStyle={styles.deleteText}
+              />
+            </AppSectionCard>
+          ) : null}
+        </BackdropScreen>
+      </KeyboardAvoidingView>
 
       <DatePickerModal
         visible={activeDatePicker === "start"}
@@ -965,6 +978,9 @@ export default function SupplementModal() {
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
   headerTitle: {
     color: appTheme.colors.textPrimary,
   },

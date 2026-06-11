@@ -2,9 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
+  ScrollView,
   SectionList,
   StyleSheet,
   Text,
@@ -33,7 +36,7 @@ const RECENT_SUPPLEMENT_SEARCHES_KEY = "recent-supplement-searches";
 const MAX_RECENT_SEARCHES = 5;
 
 function asString(value) {
-  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
 
 function getRecentSearchKey(item) {
@@ -42,7 +45,9 @@ function getRecentSearchKey(item) {
 
 function getResultMeta(item) {
   if (item.source === "custom" || item.catalogType === CATALOG_TYPES.CUSTOM) {
-    return item.brand ? `${item.brand} • Custom supplement` : "Custom supplement";
+    return item.brand
+      ? `${item.brand} • Custom supplement`
+      : "Custom supplement";
   }
 
   return item.catalogType === CATALOG_TYPES.ACTIVE_INGREDIENT
@@ -51,7 +56,8 @@ function getResultMeta(item) {
 }
 
 function SearchResultCard({ item, onPress }) {
-  const isCustom = item.source === "custom" || item.catalogType === CATALOG_TYPES.CUSTOM;
+  const isCustom =
+    item.source === "custom" || item.catalogType === CATALOG_TYPES.CUSTOM;
 
   return (
     <PrimaryCard
@@ -86,7 +92,8 @@ function RecentSearches({ items, onPress }) {
       <View style={styles.recentList}>
         {items.map((item, index) => {
           const isCustom =
-            item.source === "custom" || item.catalogType === CATALOG_TYPES.CUSTOM;
+            item.source === "custom" ||
+            item.catalogType === CATALOG_TYPES.CUSTOM;
 
           return (
             <AppButton
@@ -154,91 +161,115 @@ function AddCustomSupplementModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.customModalBackdrop}>
-        <PrimaryCard style={styles.customModalCard}>
-          <View style={styles.customModalHeader}>
-            <View style={styles.customModalCopy}>
-              <Text style={styles.customModalTitle}>Add custom supplement</Text>
-              <Text style={styles.customModalBody}>
-                Save this only to your private supplement list.
-              </Text>
-            </View>
-            <AppButton
-              onPress={onClose}
-              variant="overlay"
-              size="icon"
-              accessibilityLabel="Close custom supplement form"
-            >
-              <Ionicons
-                name="close"
-                size={18}
-                color={appTheme.colors.textStrong}
-              />
-            </AppButton>
-          </View>
+      <KeyboardAvoidingView
+        style={styles.customModalBackdrop}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
+      >
+        <Pressable
+          style={styles.customModalDismissLayer}
+          onPress={Keyboard.dismiss}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss keyboard"
+        />
 
-          <View style={styles.customForm}>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="Name"
-              placeholderTextColor="#8B8595"
-              style={styles.customInput}
-              autoCapitalize="words"
-              autoFocus
-            />
-            <TextInput
-              value={brand}
-              onChangeText={setBrand}
-              placeholder="Brand (optional)"
-              placeholderTextColor="#8B8595"
-              style={styles.customInput}
-              autoCapitalize="words"
-            />
-            <TextInput
-              value={servingSize}
-              onChangeText={setServingSize}
-              placeholder="Serving size (optional)"
-              placeholderTextColor="#8B8595"
-              style={styles.customInput}
-            />
-            <TextInput
-              value={notes}
-              onChangeText={setNotes}
-              placeholder="Notes (optional)"
-              placeholderTextColor="#8B8595"
-              style={[styles.customInput, styles.customNotesInput]}
-              multiline
-              textAlignVertical="top"
-            />
-          </View>
-
-          <View style={styles.customModalActions}>
-            <AppButton
-              label="Cancel"
-              onPress={onClose}
-              variant="ghost"
-              size="md"
-              style={styles.customModalButton}
-            />
-            <AppButton
-              label={saving ? "Saving..." : "Save"}
-              onPress={() =>
-                onSave({
-                  name,
-                  brand,
-                  servingSize,
-                  notes,
-                })
+        <View style={styles.customModalContent}>
+          <PrimaryCard style={styles.customModalCard}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={
+                Platform.OS === "ios" ? "interactive" : "on-drag"
               }
-              disabled={!canSave}
-              variant="primary"
-              size="md"
-              style={styles.customModalButton}
-            />
-          </View>
-        </PrimaryCard>
-      </View>
+              contentContainerStyle={styles.customModalScrollContent}
+            >
+              <View style={styles.customModalHeader}>
+                <View style={styles.customModalCopy}>
+                  <Text style={styles.customModalTitle}>
+                    Add custom supplement
+                  </Text>
+                  <Text style={styles.customModalBody}>
+                    Add this to your personal supplement list.
+                  </Text>
+                </View>
+                <AppButton
+                  onPress={onClose}
+                  variant="overlay"
+                  size="icon"
+                  accessibilityLabel="Close custom supplement form"
+                >
+                  <Ionicons
+                    name="close"
+                    size={18}
+                    color={appTheme.colors.textStrong}
+                  />
+                </AppButton>
+              </View>
+
+              <View style={styles.customForm}>
+                <TextInput
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Name"
+                  placeholderTextColor="#8B8595"
+                  style={styles.customInput}
+                  autoCapitalize="words"
+                  autoFocus
+                />
+                <TextInput
+                  value={brand}
+                  onChangeText={setBrand}
+                  placeholder="Brand (optional)"
+                  placeholderTextColor="#8B8595"
+                  style={styles.customInput}
+                  autoCapitalize="words"
+                />
+                <TextInput
+                  value={servingSize}
+                  onChangeText={setServingSize}
+                  placeholder="Serving size (optional)"
+                  placeholderTextColor="#8B8595"
+                  style={styles.customInput}
+                />
+                <TextInput
+                  value={notes}
+                  onChangeText={setNotes}
+                  placeholder="Notes (optional)"
+                  placeholderTextColor="#8B8595"
+                  style={[styles.customInput, styles.customNotesInput]}
+                  multiline
+                  textAlignVertical="top"
+                />
+              </View>
+
+              <View style={styles.customModalActions}>
+                <AppButton
+                  label="Cancel"
+                  onPress={onClose}
+                  variant="ghost"
+                  size="md"
+                  style={styles.customModalButton}
+                />
+                <AppButton
+                  label={saving ? "Saving..." : "Save"}
+                  onPress={() =>
+                    onSave({
+                      name,
+                      brand,
+                      servingSize,
+                      notes,
+                    })
+                  }
+                  disabled={!canSave}
+                  variant="primary"
+                  size="md"
+                  style={styles.customModalButton}
+                />
+              </View>
+            </ScrollView>
+          </PrimaryCard>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -282,7 +313,7 @@ export default function SupplementSearchScreen() {
         canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
         fallbackHref: "/",
       }),
-    []
+    [],
   );
 
   useEffect(() => {
@@ -347,8 +378,8 @@ export default function SupplementSearchScreen() {
               typeof item === "object" &&
               typeof item.id === "string" &&
               typeof item.name === "string" &&
-              typeof item.catalogType === "string"
-          )
+              typeof item.catalogType === "string",
+          ),
         );
       })
       .catch((error) => {
@@ -364,7 +395,7 @@ export default function SupplementSearchScreen() {
     setRecentSearches(nextItems);
     AsyncStorage.setItem(
       RECENT_SUPPLEMENT_SEARCHES_KEY,
-      JSON.stringify(nextItems)
+      JSON.stringify(nextItems),
     ).catch((error) => {
       console.error("Failed to save recent supplement searches", error);
     });
@@ -382,7 +413,8 @@ export default function SupplementSearchScreen() {
     const nextItems = [
       recentItem,
       ...recentSearches.filter(
-        (existing) => getRecentSearchKey(existing) !== getRecentSearchKey(recentItem)
+        (existing) =>
+          getRecentSearchKey(existing) !== getRecentSearchKey(recentItem),
       ),
     ].slice(0, MAX_RECENT_SEARCHES);
 
@@ -436,7 +468,7 @@ export default function SupplementSearchScreen() {
       console.error("Failed to create custom supplement", error);
       Alert.alert(
         "Could not add custom supplement",
-        error?.message || "Please sign in and try again."
+        error?.message || "Please sign in and try again.",
       );
     } finally {
       setSavingCustom(false);
@@ -446,9 +478,7 @@ export default function SupplementSearchScreen() {
   const renderEmptyState = () => {
     if (!trimmedQuery) {
       if (recentSearches.length > 0) {
-        return (
-          <RecentSearches items={recentSearches} onPress={handleSelect} />
-        );
+        return <RecentSearches items={recentSearches} onPress={handleSelect} />;
       }
 
       return (
@@ -520,7 +550,9 @@ export default function SupplementSearchScreen() {
             }
             title="SEARCH SUPPLEMENTS"
             titleStyle={styles.headerTitle}
-            bottomSlot={<Text style={styles.headerSubtitle}>{headerSubtitle}</Text>}
+            bottomSlot={
+              <Text style={styles.headerSubtitle}>{headerSubtitle}</Text>
+            }
             bottomSlotStyle={styles.headerBottom}
           />
         }
@@ -537,7 +569,10 @@ export default function SupplementSearchScreen() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.resultsContent}
             renderItem={({ item }) => (
-              <SearchResultCard item={item} onPress={() => handleSelect(item)} />
+              <SearchResultCard
+                item={item}
+                onPress={() => handleSelect(item)}
+              />
             )}
             ListHeaderComponent={
               <View style={styles.headerContent}>
@@ -767,9 +802,23 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     backgroundColor: "rgba(18,16,22,0.42)",
   },
+  customModalDismissLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  customModalContent: {
+    width: "100%",
+    maxWidth: 520,
+    alignSelf: "center",
+    marginTop: spacing.xl,
+  },
   customModalCard: {
+    minHeight: 435,
+    maxHeight: "90%",
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.lg,
+  },
+  customModalScrollContent: {
+    flexGrow: 1,
   },
   customModalHeader: {
     flexDirection: "row",
