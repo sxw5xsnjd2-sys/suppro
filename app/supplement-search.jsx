@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import {
   AppButton,
@@ -138,6 +139,7 @@ function AddCustomSupplementModal({
   onClose,
   onSave,
 }) {
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState(initialName);
   const [brand, setBrand] = useState("");
   const [servingSize, setServingSize] = useState("");
@@ -159,10 +161,17 @@ function AddCustomSupplementModal({
       visible={visible}
       transparent
       animationType="fade"
+      statusBarTranslucent={Platform.OS === "android"}
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        style={styles.customModalBackdrop}
+        style={[
+          styles.customModalBackdrop,
+          {
+            paddingTop: Math.max(insets.top + spacing.lg, spacing.xl + spacing.sm),
+            paddingBottom: Math.max(insets.bottom + spacing.lg, spacing.lg),
+          },
+        ]}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
       >
@@ -173,7 +182,14 @@ function AddCustomSupplementModal({
           accessibilityLabel="Dismiss keyboard"
         />
 
-        <View style={styles.customModalContent}>
+        <View
+          style={[
+            styles.customModalContent,
+            Platform.OS === "android" && {
+              marginTop: spacing.md + Math.max(insets.top - spacing.sm, 0),
+            },
+          ]}
+        >
           <PrimaryCard style={styles.customModalCard}>
             <ScrollView
               showsVerticalScrollIndicator={false}
