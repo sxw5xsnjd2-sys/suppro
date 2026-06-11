@@ -60,6 +60,7 @@ module.exports = ({ config }) => {
 
   return {
     ...config,
+    newArchEnabled: true,
     ios: {
       ...config.ios,
       usesAppleSignIn: true,

@@ -492,7 +492,10 @@ async function getSupplementProductById(catalogId, fallbackName) {
 
 export async function getSupplementById(supplementId, fallbackName) {
   const catalogType = getCatalogType(supplementId);
-  if (catalogType === CATALOG_TYPES.LEGACY_CUSTOM) {
+  if (
+    catalogType === CATALOG_TYPES.CUSTOM ||
+    catalogType === CATALOG_TYPES.LEGACY_CUSTOM
+  ) {
     return null;
   }
 

@@ -20,6 +20,10 @@ export function openTrackedSupplementInfo(
   const catalogType =
     supplement.catalogType ?? getCatalogType(supplement.catalogId);
 
+  if (catalogType === CATALOG_TYPES.CUSTOM) {
+    return;
+  }
+
   if (
     catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT &&
     supplement.catalogId

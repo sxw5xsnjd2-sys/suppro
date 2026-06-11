@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
+  Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   SectionList,
   StyleSheet,
@@ -22,7 +24,10 @@ import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionA
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { CATALOG_TYPES } from "@/features/supplements/catalog";
 import { appTheme, spacing, typography } from "@/theme";
-import { searchSupplementCatalog } from "@src/data/searchSupplementCatalog";
+import {
+  createUserCustomSupplement,
+  searchSupplementCatalog,
+} from "@src/data/searchSupplementCatalog";
 
 const RECENT_SUPPLEMENT_SEARCHES_KEY = "recent-supplement-searches";
 const MAX_RECENT_SEARCHES = 5;
@@ -35,8 +40,18 @@ function getRecentSearchKey(item) {
   return `${item.catalogType}-${item.id}`;
 }
 
+function getResultMeta(item) {
+  if (item.source === "custom" || item.catalogType === CATALOG_TYPES.CUSTOM) {
+    return item.brand ? `${item.brand} • Custom supplement` : "Custom supplement";
+  }
+
+  return item.catalogType === CATALOG_TYPES.ACTIVE_INGREDIENT
+    ? "Active ingredient"
+    : "Supplement product";
+}
+
 function SearchResultCard({ item, onPress }) {
-  const isActiveIngredient = item.catalogType === CATALOG_TYPES.ACTIVE_INGREDIENT;
+  const isCustom = item.source === "custom" || item.catalogType === CATALOG_TYPES.CUSTOM;
 
   return (
     <PrimaryCard
@@ -46,10 +61,15 @@ function SearchResultCard({ item, onPress }) {
     >
       <View style={styles.resultRow}>
         <View style={styles.resultCopy}>
-          <Text style={styles.resultName}>{item.name}</Text>
-          <Text style={styles.resultMeta}>
-            {isActiveIngredient ? "Active ingredient" : "Supplement product"}
-          </Text>
+          <View style={styles.resultTitleRow}>
+            <Text style={styles.resultName}>{item.name}</Text>
+            {isCustom ? (
+              <View style={styles.customBadge}>
+                <Text style={styles.customBadgeText}>Custom</Text>
+              </View>
+            ) : null}
+          </View>
+          <Text style={styles.resultMeta}>{getResultMeta(item)}</Text>
         </View>
       </View>
     </PrimaryCard>
@@ -65,8 +85,8 @@ function RecentSearches({ items, onPress }) {
 
       <View style={styles.recentList}>
         {items.map((item, index) => {
-          const isActiveIngredient =
-            item.catalogType === CATALOG_TYPES.ACTIVE_INGREDIENT;
+          const isCustom =
+            item.source === "custom" || item.catalogType === CATALOG_TYPES.CUSTOM;
 
           return (
             <AppButton
@@ -81,10 +101,15 @@ function RecentSearches({ items, onPress }) {
               contentStyle={styles.recentRowContent}
             >
               <View style={styles.resultCopy}>
-                <Text style={styles.resultName}>{item.name}</Text>
-                <Text style={styles.resultMeta}>
-                  {isActiveIngredient ? "Active ingredient" : "Supplement product"}
-                </Text>
+                <View style={styles.resultTitleRow}>
+                  <Text style={styles.resultName}>{item.name}</Text>
+                  {isCustom ? (
+                    <View style={styles.customBadge}>
+                      <Text style={styles.customBadgeText}>Custom</Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={styles.resultMeta}>{getResultMeta(item)}</Text>
               </View>
               <Ionicons
                 name="chevron-forward"
@@ -96,6 +121,125 @@ function RecentSearches({ items, onPress }) {
         })}
       </View>
     </View>
+  );
+}
+
+function AddCustomSupplementModal({
+  visible,
+  initialName,
+  saving,
+  onClose,
+  onSave,
+}) {
+  const [name, setName] = useState(initialName);
+  const [brand, setBrand] = useState("");
+  const [servingSize, setServingSize] = useState("");
+  const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    if (visible) {
+      setName(initialName);
+      setBrand("");
+      setServingSize("");
+      setNotes("");
+    }
+  }, [initialName, visible]);
+
+  const canSave = name.trim().length > 0 && !saving;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.customModalBackdrop}>
+        <PrimaryCard style={styles.customModalCard}>
+          <View style={styles.customModalHeader}>
+            <View style={styles.customModalCopy}>
+              <Text style={styles.customModalTitle}>Add custom supplement</Text>
+              <Text style={styles.customModalBody}>
+                Save this only to your private supplement list.
+              </Text>
+            </View>
+            <AppButton
+              onPress={onClose}
+              variant="overlay"
+              size="icon"
+              accessibilityLabel="Close custom supplement form"
+            >
+              <Ionicons
+                name="close"
+                size={18}
+                color={appTheme.colors.textStrong}
+              />
+            </AppButton>
+          </View>
+
+          <View style={styles.customForm}>
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="Name"
+              placeholderTextColor="#8B8595"
+              style={styles.customInput}
+              autoCapitalize="words"
+              autoFocus
+            />
+            <TextInput
+              value={brand}
+              onChangeText={setBrand}
+              placeholder="Brand (optional)"
+              placeholderTextColor="#8B8595"
+              style={styles.customInput}
+              autoCapitalize="words"
+            />
+            <TextInput
+              value={servingSize}
+              onChangeText={setServingSize}
+              placeholder="Serving size (optional)"
+              placeholderTextColor="#8B8595"
+              style={styles.customInput}
+            />
+            <TextInput
+              value={notes}
+              onChangeText={setNotes}
+              placeholder="Notes (optional)"
+              placeholderTextColor="#8B8595"
+              style={[styles.customInput, styles.customNotesInput]}
+              multiline
+              textAlignVertical="top"
+            />
+          </View>
+
+          <View style={styles.customModalActions}>
+            <AppButton
+              label="Cancel"
+              onPress={onClose}
+              variant="ghost"
+              size="md"
+              style={styles.customModalButton}
+            />
+            <AppButton
+              label={saving ? "Saving..." : "Save"}
+              onPress={() =>
+                onSave({
+                  name,
+                  brand,
+                  servingSize,
+                  notes,
+                })
+              }
+              disabled={!canSave}
+              variant="primary"
+              size="md"
+              style={styles.customModalButton}
+            />
+          </View>
+        </PrimaryCard>
+      </View>
+    </Modal>
   );
 }
 
@@ -124,12 +268,14 @@ export default function SupplementSearchScreen() {
   const [sections, setSections] = useState([]);
   const [loading, setLoading] = useState(false);
   const [recentSearches, setRecentSearches] = useState([]);
+  const [customModalVisible, setCustomModalVisible] = useState(false);
+  const [savingCustom, setSavingCustom] = useState(false);
 
   const trimmedQuery = useMemo(() => query.trim(), [query]);
   const headerSubtitle =
     mode === "picker"
-      ? "Pick an active ingredient or supplement product."
-      : "Browse active ingredients and supplement products.";
+      ? "Pick an active ingredient, product, or custom supplement."
+      : "Browse active ingredients, products, and custom supplements.";
   const safeBackAction = useMemo(
     () =>
       resolveBackNavigationAction({
@@ -229,6 +375,9 @@ export default function SupplementSearchScreen() {
       id: item.id,
       name: item.name,
       catalogType: item.catalogType,
+      customSupplementId: item.customSupplementId,
+      brand: item.brand,
+      source: item.source,
     };
     const nextItems = [
       recentItem,
@@ -247,13 +396,14 @@ export default function SupplementSearchScreen() {
 
     saveRecentSearch(item);
 
-    if (mode === "picker") {
+    if (mode === "picker" || item.catalogType === CATALOG_TYPES.CUSTOM) {
       router.navigate({
         pathname: "/(modals)/modal/supplement",
         params: {
           newCatalogId: item.id,
           newCatalogName: item.name,
           newCatalogType: item.catalogType,
+          newCustomSupplementId: item.customSupplementId ?? "",
         },
       });
       return;
@@ -268,6 +418,31 @@ export default function SupplementSearchScreen() {
     });
   };
 
+  const handleOpenCustomModal = () => {
+    setCustomModalVisible(true);
+  };
+
+  const handleSaveCustomSupplement = async (values) => {
+    if (savingCustom) {
+      return;
+    }
+
+    setSavingCustom(true);
+    try {
+      const created = await createUserCustomSupplement(values);
+      setCustomModalVisible(false);
+      handleSelect(created);
+    } catch (error) {
+      console.error("Failed to create custom supplement", error);
+      Alert.alert(
+        "Could not add custom supplement",
+        error?.message || "Please sign in and try again."
+      );
+    } finally {
+      setSavingCustom(false);
+    }
+  };
+
   const renderEmptyState = () => {
     if (!trimmedQuery) {
       if (recentSearches.length > 0) {
@@ -279,7 +454,7 @@ export default function SupplementSearchScreen() {
       return (
         <EmptyStateCard
           title="Start typing to search"
-          description="Search active ingredients and supplement products in one place."
+          description="Search active ingredients, supplement products, and your custom supplements in one place."
           style={styles.stateCard}
         />
       );
@@ -290,11 +465,20 @@ export default function SupplementSearchScreen() {
     }
 
     return (
-      <EmptyStateCard
-        title="No matches yet"
-        description="Try a different ingredient or product name."
-        style={styles.stateCard}
-      />
+      <View>
+        <EmptyStateCard
+          title="No matches yet"
+          description="Try a different ingredient or product name."
+          style={styles.stateCard}
+        />
+        <AppButton
+          label="Add custom supplement"
+          onPress={handleOpenCustomModal}
+          variant="primary"
+          size="md"
+          style={styles.addCustomButton}
+        />
+      </View>
     );
   };
 
@@ -303,96 +487,105 @@ export default function SupplementSearchScreen() {
   }
 
   return (
-    <BackdropScreen
-      scrollable={false}
-      bottomInsetOffset={24}
-      minBottomPadding={32}
-      contentStyle={styles.screenContent}
-      header={
-        <AppHeader
-          insetPreset="screen"
-          bottomPadding={8}
-          leftSlot={
-            <AppButton
-              onPress={() => {
-                if (safeBackAction.type === "back") {
-                  router.back();
-                  return;
-                }
+    <>
+      <BackdropScreen
+        scrollable={false}
+        bottomInsetOffset={24}
+        minBottomPadding={32}
+        contentStyle={styles.screenContent}
+        header={
+          <AppHeader
+            insetPreset="screen"
+            bottomPadding={8}
+            leftSlot={
+              <AppButton
+                onPress={() => {
+                  if (safeBackAction.type === "back") {
+                    router.back();
+                    return;
+                  }
 
-                router.replace(safeBackAction.href);
-              }}
-              variant="overlay"
-              size="icon"
-              accessibilityLabel="Close supplement search"
-            >
-              <Ionicons
-                name="close"
-                size={20}
-                color={appTheme.colors.textStrong}
-              />
-            </AppButton>
-          }
-          title="SEARCH SUPPLEMENTS"
-          titleStyle={styles.headerTitle}
-          bottomSlot={<Text style={styles.headerSubtitle}>{headerSubtitle}</Text>}
-          bottomSlotStyle={styles.headerBottom}
-        />
-      }
-    >
-      <KeyboardAvoidingView
-        style={styles.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 48 : 0}
-      >
-        <SectionList
-          sections={trimmedQuery ? sections : []}
-          keyExtractor={(item) => `${item.catalogType}-${item.id}`}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.resultsContent}
-          renderItem={({ item }) => (
-            <SearchResultCard item={item} onPress={() => handleSelect(item)} />
-          )}
-          ListHeaderComponent={
-            <View style={styles.headerContent}>
-              <View style={styles.searchField}>
+                  router.replace(safeBackAction.href);
+                }}
+                variant="overlay"
+                size="icon"
+                accessibilityLabel="Close supplement search"
+              >
                 <Ionicons
-                  name="search"
-                  size={18}
-                  color="#8B8595"
-                  style={styles.searchFieldIcon}
+                  name="close"
+                  size={20}
+                  color={appTheme.colors.textStrong}
                 />
-                <TextInput
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Search ingredients and supplements"
-                  placeholderTextColor="#8B8595"
-                  selectionColor="#A6685B"
-                  style={styles.searchInput}
-                  clearButtonMode="while-editing"
-                  autoFocus
-                  autoCapitalize="words"
-                  accessibilityLabel="Search ingredients and supplements"
-                />
-              </View>
-
-              {trimmedQuery ? (
-                <View style={styles.resultsSummaryRow}>
-                  <Text style={styles.resultsSummaryTitle}>Results</Text>
+              </AppButton>
+            }
+            title="SEARCH SUPPLEMENTS"
+            titleStyle={styles.headerTitle}
+            bottomSlot={<Text style={styles.headerSubtitle}>{headerSubtitle}</Text>}
+            bottomSlotStyle={styles.headerBottom}
+          />
+        }
+      >
+        <KeyboardAvoidingView
+          style={styles.keyboard}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 48 : 0}
+        >
+          <SectionList
+            sections={trimmedQuery ? sections : []}
+            keyExtractor={(item) => `${item.catalogType}-${item.id}`}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.resultsContent}
+            renderItem={({ item }) => (
+              <SearchResultCard item={item} onPress={() => handleSelect(item)} />
+            )}
+            ListHeaderComponent={
+              <View style={styles.headerContent}>
+                <View style={styles.searchField}>
+                  <Ionicons
+                    name="search"
+                    size={18}
+                    color="#8B8595"
+                    style={styles.searchFieldIcon}
+                  />
+                  <TextInput
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder="Search ingredients and supplements"
+                    placeholderTextColor="#8B8595"
+                    selectionColor="#A6685B"
+                    style={styles.searchInput}
+                    clearButtonMode="while-editing"
+                    autoFocus
+                    autoCapitalize="words"
+                    accessibilityLabel="Search ingredients and supplements"
+                  />
                 </View>
-              ) : null}
-            </View>
-          }
-          renderSectionHeader={({ section }) =>
-            section.data.length > 0 ? (
-              <Text style={styles.sectionHeader}>{section.title}</Text>
-            ) : null
-          }
-          ListEmptyComponent={renderEmptyState}
-        />
-      </KeyboardAvoidingView>
-    </BackdropScreen>
+
+                {trimmedQuery ? (
+                  <View style={styles.resultsSummaryRow}>
+                    <Text style={styles.resultsSummaryTitle}>Results</Text>
+                  </View>
+                ) : null}
+              </View>
+            }
+            renderSectionHeader={({ section }) =>
+              section.data.length > 0 ? (
+                <Text style={styles.sectionHeader}>{section.title}</Text>
+              ) : null
+            }
+            ListEmptyComponent={renderEmptyState}
+          />
+        </KeyboardAvoidingView>
+      </BackdropScreen>
+      <AddCustomSupplementModal
+        visible={customModalVisible}
+        initialName={trimmedQuery}
+        saving={savingCustom}
+        onClose={() => setCustomModalVisible(false)}
+        onSave={handleSaveCustomSupplement}
+      />
+    </>
   );
 }
 
@@ -489,6 +682,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.md,
   },
+  addCustomButton: {
+    alignSelf: "center",
+    minWidth: 220,
+  },
   stateTitle: {
     fontSize: 18,
     fontFamily: typography.fontFamily.headingSemiBold,
@@ -536,12 +733,92 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontFamily: typography.fontFamily.bodySemiBold,
     color: appTheme.colors.textPrimary,
+    flexShrink: 1,
+  },
+  resultTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     marginBottom: 4,
+  },
+  customBadge: {
+    borderRadius: 999,
+    backgroundColor: "rgba(166,104,91,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(166,104,91,0.22)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  customBadgeText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: "#8D5246",
   },
   resultMeta: {
     fontSize: 13,
     lineHeight: 18,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textSecondary,
+  },
+  customModalBackdrop: {
+    flex: 1,
+    justifyContent: "center",
+    padding: spacing.lg,
+    backgroundColor: "rgba(18,16,22,0.42)",
+  },
+  customModalCard: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  customModalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  customModalCopy: {
+    flex: 1,
+  },
+  customModalTitle: {
+    fontSize: 20,
+    lineHeight: 25,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textHeading,
+    marginBottom: 4,
+  },
+  customModalBody: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  customForm: {
+    gap: spacing.sm,
+  },
+  customInput: {
+    minHeight: 48,
+    borderRadius: appTheme.input.radius,
+    backgroundColor: appTheme.input.background,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontSize: 15,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.input.text,
+  },
+  customNotesInput: {
+    minHeight: 92,
+  },
+  customModalActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  customModalButton: {
+    flex: 1,
   },
 });

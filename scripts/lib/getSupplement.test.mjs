@@ -23,21 +23,36 @@ function loadGetSupplementHelpers() {
     `${transformed}
 return {
   dedupeProductIngredientsForDisplay,
+  getSupplementById,
 };`
   );
 
+  const catalogTypes = {
+    ACTIVE_INGREDIENT: "active_ingredient",
+    CUSTOM: "custom",
+    LEGACY_CUSTOM: "legacy_custom",
+    SUPPLEMENT_PRODUCT: "supplement_product",
+  };
+
   return factory(
-    {},
+    catalogTypes,
     () => null,
     () => null,
-    () => null,
+    (value) => (String(value ?? "").startsWith("custom:") ? catalogTypes.CUSTOM : null),
     {},
     () => null,
     () => []
   );
 }
 
-const { dedupeProductIngredientsForDisplay } = loadGetSupplementHelpers();
+const { dedupeProductIngredientsForDisplay, getSupplementById } =
+  loadGetSupplementHelpers();
+
+test("custom supplement ids do not fall through to master supplement lookup", async () => {
+  const supplement = await getSupplementById("custom:user-row-id");
+
+  assert.equal(supplement, null);
+});
 
 test("display dedupe preserves EPA and DHA rows sharing one omega-3 catalog id", () => {
   const rows = dedupeProductIngredientsForDisplay([

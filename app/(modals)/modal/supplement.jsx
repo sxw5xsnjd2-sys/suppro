@@ -36,7 +36,11 @@ import {
   getSupplementLinkedIngredients,
   hasTrackedScanContext,
 } from "@/features/supplements/trackedScanContext";
-import { getCatalogType, CATALOG_TYPES } from "@/features/supplements/catalog";
+import {
+  getCatalogEntityId,
+  getCatalogType,
+  CATALOG_TYPES,
+} from "@/features/supplements/catalog";
 import { getSupplementProductLinkedIngredients } from "@src/data/getSupplement";
 import { useToastStore } from "@/features/toast/toastStore";
 
@@ -268,6 +272,7 @@ export default function SupplementModal() {
     newCatalogId,
     newCatalogName,
     newCatalogType,
+    newCustomSupplementId,
     initialName,
     id,
     scanSessionId,
@@ -310,6 +315,9 @@ export default function SupplementModal() {
   const [catalogId, setCatalogId] = useState(supplement?.catalogId ?? null);
   const [catalogType, setCatalogType] = useState(
     supplement?.catalogType ?? getCatalogType(supplement?.catalogId)
+  );
+  const [customSupplementId, setCustomSupplementId] = useState(
+    supplement?.customSupplementId ?? supplement?.custom_supplement_id ?? null
   );
   const [saving, setSaving] = useState(false);
   const [dose, setDose] = useState(supplement?.dose ?? "");
@@ -369,6 +377,11 @@ export default function SupplementModal() {
           ? newCatalogType
           : getCatalogType(newCatalogId)
       );
+      setCustomSupplementId(
+        newCatalogType === CATALOG_TYPES.CUSTOM && typeof newCustomSupplementId === "string"
+          ? newCustomSupplementId
+          : null
+      );
       return;
     }
 
@@ -383,6 +396,7 @@ export default function SupplementModal() {
     newCatalogId,
     newCatalogName,
     newCatalogType,
+    newCustomSupplementId,
   ]);
 
   const handleSave = async () => {
@@ -394,6 +408,10 @@ export default function SupplementModal() {
       const resolvedCatalogId = catalogId;
       const resolvedCatalogType =
         catalogType ?? getCatalogType(resolvedCatalogId);
+      const resolvedCustomSupplementId =
+        resolvedCatalogType === CATALOG_TYPES.CUSTOM
+          ? trimString(customSupplementId) || getCatalogEntityId(resolvedCatalogId)
+          : null;
 
       if (!resolvedCatalogId || !resolvedCatalogType) {
         Alert.alert(
@@ -431,6 +449,8 @@ export default function SupplementModal() {
         name: trimmedName,
         catalogId: resolvedCatalogId,
         catalogType: resolvedCatalogType,
+        customSupplementId: resolvedCustomSupplementId,
+        custom_supplement_id: resolvedCustomSupplementId,
         dose: dose.trim() || undefined,
         route,
         time: timeLabel,
@@ -473,6 +493,8 @@ export default function SupplementModal() {
         linkedIngredients = getTrackedScanMatchedIngredients(supplement);
         resolvedServingSizeText =
           trimString(supplement?.servingSizeText) || null;
+      } else if (resolvedCatalogType === CATALOG_TYPES.CUSTOM) {
+        payload.scanSource = null;
       } else if (resolvedCatalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT) {
         const productLinkedIngredients =
           await getSupplementProductLinkedIngredients(resolvedCatalogId);
