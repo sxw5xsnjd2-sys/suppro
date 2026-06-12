@@ -7,6 +7,10 @@ import {
   COMPACT_TITLE_HEADER_TRIGGER_OFFSET,
   CompactTitleHeader,
 } from "../ui/CompactTitleHeader";
+import {
+  normalizeKeyboardDismissMode,
+  normalizeKeyboardShouldPersistTaps,
+} from "./scrollViewProps";
 
 export function BackdropScreen({
   children,
@@ -35,6 +39,10 @@ export function BackdropScreen({
   const [headerHeight, setHeaderHeight] = useState(0);
   const collapsedHeaderAnimation = useRef(new Animated.Value(0)).current;
   const isCollapsedRef = useRef(false);
+  const normalizedKeyboardShouldPersistTaps =
+    normalizeKeyboardShouldPersistTaps(keyboardShouldPersistTaps);
+  const normalizedKeyboardDismissMode =
+    normalizeKeyboardDismissMode(keyboardDismissMode);
   const bottomPadding = Math.max(
     insets.bottom + bottomInsetOffset,
     minBottomPadding
@@ -98,8 +106,8 @@ export function BackdropScreen({
           ref={scrollViewRef}
           showsVerticalScrollIndicator={showsVerticalScrollIndicator}
           nestedScrollEnabled={nestedScrollEnabled}
-          keyboardShouldPersistTaps={keyboardShouldPersistTaps}
-          keyboardDismissMode={keyboardDismissMode}
+          keyboardShouldPersistTaps={normalizedKeyboardShouldPersistTaps}
+          keyboardDismissMode={normalizedKeyboardDismissMode}
           onScroll={isCollapsibleHeader ? handleScroll : undefined}
           scrollEventThrottle={isCollapsibleHeader ? 16 : undefined}
           contentContainerStyle={[

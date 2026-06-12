@@ -161,7 +161,6 @@ function AddCustomSupplementModal({
       visible={visible}
       transparent
       animationType="fade"
-      statusBarTranslucent={Platform.OS === "android"}
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
