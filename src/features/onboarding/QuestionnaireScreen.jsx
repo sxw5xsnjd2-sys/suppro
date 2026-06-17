@@ -12,7 +12,6 @@ import {
   BackHandler,
   KeyboardAvoidingView,
   Modal,
-  PanResponder,
   Platform,
   Pressable,
   Image,
@@ -76,13 +75,10 @@ import {
 const STEP_KEYS = [
   "landing",
   "welcome",
-  "name",
-  "dob",
+  "ageRange",
   "sex",
-  "height",
-  "weight",
+  "dosageCheckFrequency",
   "goals",
-  "success",
   "confidence",
   "insightStacks",
   "metrics",
@@ -94,7 +90,6 @@ const STEP_KEYS = [
   "evidence",
   "priorities",
   "caution",
-  "routine",
   "consent",
 ];
 
@@ -102,52 +97,53 @@ const BUILDING_STEP_KEY = "building";
 const ALL_STEP_KEYS = [...STEP_KEYS, BUILDING_STEP_KEY];
 const AUTO_ADVANCE_DELAY_MS = 220;
 const AUTO_ADVANCE_STEP_KEYS = [
+  "ageRange",
   "sex",
+  "dosageCheckFrequency",
   "confidence",
   "lifeStage",
   "evidence",
   "priorities",
   "caution",
-  "routine",
 ];
 
 const LEGACY_STEP_INDEX_TO_KEY = [
   "welcome",
-  "name",
-  "dob",
+  "ageRange",
+  "ageRange",
   "sex",
-  "height",
+  "dosageCheckFrequency",
   "goals",
-  "success",
+  "confidence",
   "confidence",
   "metrics",
   "stack",
   "meds",
   "evidence",
-  "routine",
   "consent",
   "building",
 ];
 
-const MONTH_OPTIONS = [
-  { label: "Jan", value: 0 },
-  { label: "Feb", value: 1 },
-  { label: "Mar", value: 2 },
-  { label: "Apr", value: 3 },
-  { label: "May", value: 4 },
-  { label: "Jun", value: 5 },
-  { label: "Jul", value: 6 },
-  { label: "Aug", value: 7 },
-  { label: "Sep", value: 8 },
-  { label: "Oct", value: 9 },
-  { label: "Nov", value: 10 },
-  { label: "Dec", value: 11 },
+const AGE_RANGE_OPTIONS = [
+  { value: "18-24", label: "18-24" },
+  { value: "25-34", label: "25-34" },
+  { value: "35-44", label: "35-44" },
+  { value: "45-54", label: "45-54" },
+  { value: "55-64", label: "55-64" },
+  { value: "65+", label: "65+" },
 ];
 
 const SEX_OPTIONS = [
   { value: "female", label: "Female" },
   { value: "male", label: "Male" },
   { value: "prefer_not_to_say", label: "Prefer not to say" },
+];
+
+const DOSAGE_CHECK_FREQUENCY_OPTIONS = [
+  { value: "always", label: "Always" },
+  { value: "sometimes", label: "Sometimes" },
+  { value: "rarely", label: "Rarely" },
+  { value: "never", label: "Never" },
 ];
 
 const GOAL_OPTIONS = [
@@ -248,13 +244,6 @@ const CAUTION_OPTIONS = [
     description: "Open to promising options with less research.",
     cautionLevel: "results_optimised",
   },
-];
-
-const TIMING_OPTIONS = [
-  { value: "breakfast", label: "With breakfast" },
-  { value: "dinner", label: "With dinner" },
-  { value: "morning_night", label: "Morning + night" },
-  { value: "whenever", label: "Whenever I remember" },
 ];
 
 const LOADER_LINES = [
@@ -387,42 +376,13 @@ function getLocalizedAnnualWasteLabel() {
   }
 }
 
-function defaultBirthDate() {
-  const date = new Date();
-  date.setFullYear(date.getFullYear() - 30);
-  date.setHours(12, 0, 0, 0);
-  return date;
-}
-
-function parseLocalISODate(value) {
-  if (!value || typeof value !== "string") return null;
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return null;
-
-  const parsed = new Date(year, month - 1, day, 12, 0, 0, 0);
-  if (Number.isNaN(parsed.getTime())) return null;
-  if (
-    parsed.getFullYear() !== year ||
-    parsed.getMonth() !== month - 1 ||
-    parsed.getDate() !== day
-  ) {
-    return null;
-  }
-
-  return parsed;
-}
-
 function toISODate(value) {
-  const date = value instanceof Date ? value : parseLocalISODate(value);
+  const date = value instanceof Date ? value : null;
   if (!date || Number.isNaN(date.getTime())) return "";
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function daysInMonth(year, monthIndex) {
-  return new Date(year, monthIndex + 1, 0).getDate();
 }
 
 function clamp(value, min, max) {
@@ -433,15 +393,6 @@ function easeInOutCubic(value) {
   return value < 0.5
     ? 4 * value * value * value
     : 1 - Math.pow(-2 * value + 2, 3) / 2;
-}
-
-function range(min, max) {
-  return Array.from({ length: max - min + 1 }, (_, index) => min + index);
-}
-
-function normalizePositiveNumber(value) {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : null;
 }
 
 function createSupplementRow() {
@@ -475,17 +426,10 @@ function normalizeSupplementRows(value) {
 
 function createInitialAnswers() {
   return {
-    name: "",
-    dateOfBirth: "",
+    ageRange: "",
     sexAtBirth: "",
-    heightUnit: "cm",
-    heightCm: "172",
-    heightFeet: "5",
-    heightInches: "8",
-    weightUnit: "kg",
-    weightValue: "68",
+    dosageCheckFrequency: "",
     goals: [],
-    success90Days: "",
     confidence: "",
     trackMetrics: [],
     metricInitialValues: {},
@@ -505,8 +449,6 @@ function createInitialAnswers() {
     priorityFactors: ["clinical_evidence", "safety_profile"],
     mixedEvidence: "low_risk_only",
     cautionLevel: "balanced",
-    supplementTiming: "",
-    adherencePlan: "",
     consentAccepted: false,
     consentPersonalise: true,
     consentBriefings: true,
@@ -543,29 +485,38 @@ function normalizeCautionPreference(answers) {
 function mergeStoredAnswers(base, stored) {
   if (!stored || typeof stored !== "object") return base;
 
+  const {
+    name: _name,
+    dateOfBirth: _dateOfBirth,
+    height: _height,
+    heightUnit: _heightUnit,
+    heightCm: _heightCm,
+    heightFeet: _heightFeet,
+    heightInches: _heightInches,
+    weight: _weight,
+    weightUnit: _weightUnit,
+    weightValue: _weightValue,
+    success90Days: _success90Days,
+    ...storedAnswers
+  } = stored;
+
   const merged = {
     ...base,
-    ...stored,
-    goals: normalizeArray(stored.goals),
-    trackMetrics: normalizeArray(stored.trackMetrics),
+    ...storedAnswers,
+    goals: normalizeArray(storedAnswers.goals),
+    trackMetrics: normalizeArray(storedAnswers.trackMetrics),
     metricInitialValues:
-      stored.metricInitialValues &&
-      typeof stored.metricInitialValues === "object"
-        ? stored.metricInitialValues
+      storedAnswers.metricInitialValues &&
+      typeof storedAnswers.metricInitialValues === "object"
+        ? storedAnswers.metricInitialValues
         : {},
-    supplementRows: normalizeSupplementRows(stored.supplementRows),
+    supplementRows: normalizeSupplementRows(storedAnswers.supplementRows),
     medications: [],
     conditions: [],
     conditionsText: "",
-    dietary: normalizeArray(stored.dietary),
+    dietary: normalizeArray(storedAnswers.dietary),
   };
 
-  if (!["cm", "ft_in"].includes(merged.heightUnit)) {
-    merged.heightUnit = "cm";
-  }
-  if (!["kg", "lb"].includes(merged.weightUnit)) {
-    merged.weightUnit = "kg";
-  }
   if (merged.lifeStage === "none" && !merged.pregnancyStatus) {
     merged.lifeStage = "";
   }
@@ -585,6 +536,16 @@ function mergeStoredAnswers(base, stored) {
   )
     ? merged.confidence
     : "";
+  merged.ageRange = AGE_RANGE_OPTIONS.some(
+    (option) => option.value === merged.ageRange,
+  )
+    ? merged.ageRange
+    : "";
+  merged.dosageCheckFrequency = DOSAGE_CHECK_FREQUENCY_OPTIONS.some(
+    (option) => option.value === merged.dosageCheckFrequency,
+  )
+    ? merged.dosageCheckFrequency
+    : "";
   merged.evidencePreference = normalizeEvidencePreference(merged);
   merged.priorityPreference = PRIORITY_OPTIONS.some(
     (option) => option.value === merged.priorityPreference,
@@ -592,14 +553,7 @@ function mergeStoredAnswers(base, stored) {
     ? merged.priorityPreference
     : "";
   merged.cautionPreference = normalizeCautionPreference(merged);
-  merged.supplementTiming = TIMING_OPTIONS.some(
-    (option) => option.value === merged.supplementTiming,
-  )
-    ? merged.supplementTiming
-    : TIMING_OPTIONS.some((option) => option.value === merged.adherencePlan)
-      ? merged.adherencePlan
-      : "";
-  merged.consentAnalytics = Boolean(stored.consentAnalytics);
+  merged.consentAnalytics = Boolean(storedAnswers.consentAnalytics);
 
   return merged;
 }
@@ -736,17 +690,20 @@ function buildQuestionnairePayload(answers) {
     (row) => row.name.trim(),
   );
   const recommendationFields = getRecommendationFields(answers);
-  const heightCm = String(answers.heightCm || "172").trim();
-  const heightFeet = String(answers.heightFeet || "5").trim();
-  const heightInches = String(answers.heightInches || "8").trim();
-  const weightValue = String(answers.weightValue || "68").trim();
-  const heightSummary =
-    answers.heightUnit === "ft_in"
-      ? `${heightFeet}'${heightInches}"`
-      : `${heightCm} cm`;
-  const weightSummary = `${weightValue} ${
-    answers.weightUnit === "kg" ? "kg" : "lb"
-  }`;
+  const {
+    name: _name,
+    dateOfBirth: _dateOfBirth,
+    height: _height,
+    heightUnit: _heightUnit,
+    heightCm: _heightCm,
+    heightFeet: _heightFeet,
+    heightInches: _heightInches,
+    weight: _weight,
+    weightUnit: _weightUnit,
+    weightValue: _weightValue,
+    success90Days: _success90Days,
+    ...currentAnswers
+  } = answers;
 
   const supplementsDetails = supplementRows
     .map((row) => {
@@ -757,22 +714,14 @@ function buildQuestionnairePayload(answers) {
     .join("\n");
 
   return {
-    ...answers,
+    ...currentAnswers,
     ...recommendationFields,
-    dateOfBirth: answers.dateOfBirth || toISODate(defaultBirthDate()),
-    heightCm,
-    heightFeet,
-    heightInches,
-    weightValue,
-    height: heightSummary,
-    weight: weightSummary,
     supplementRows,
     supplementsDetails,
     takingSupplements: supplementRows.length ? "yes" : "no",
     medications: [],
     conditions: [],
     conditionsText: "",
-    adherencePlan: answers.supplementTiming,
     pregnancyStatus: shouldAskPregnancyQuestion(answers.sexAtBirth)
       ? answers.lifeStage === "none"
         ? "no"
@@ -790,407 +739,6 @@ function triggerSuccess() {
   void Haptics.notificationAsync(
     Haptics.NotificationFeedbackType.Success,
   ).catch(() => {});
-}
-
-function UnitToggle({ options, value, onChange }) {
-  return (
-    <View style={styles.unitToggle}>
-      {options.map((option) => {
-        const selected = option.value === value;
-        return (
-          <Pressable
-            key={option.value}
-            accessibilityRole="button"
-            accessibilityState={{ selected }}
-            onPress={() => onChange(option.value)}
-            style={({ pressed }) => [
-              styles.unitToggleOption,
-              selected && styles.unitToggleOptionSelected,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text
-              style={[
-                styles.unitToggleText,
-                selected && styles.unitToggleTextSelected,
-              ]}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-function InlineSlider({
-  value,
-  minimumValue,
-  maximumValue,
-  step = 1,
-  accessibilityLabel,
-  onChange,
-  onChangeEnd,
-}) {
-  const [trackWidth, setTrackWidth] = useState(0);
-  const safeValue = clamp(value, minimumValue, maximumValue);
-  const progress =
-    trackWidth > 0
-      ? (safeValue - minimumValue) / (maximumValue - minimumValue)
-      : 0;
-
-  const updateFromLocation = useCallback(
-    (locationX) => {
-      if (!trackWidth) return safeValue;
-
-      const ratio = clamp(locationX / trackWidth, 0, 1);
-      const rawValue = minimumValue + ratio * (maximumValue - minimumValue);
-      const steppedValue =
-        Math.round((rawValue - minimumValue) / step) * step + minimumValue;
-      const nextValue = clamp(steppedValue, minimumValue, maximumValue);
-      onChange(nextValue);
-      return nextValue;
-    },
-    [maximumValue, minimumValue, onChange, safeValue, step, trackWidth],
-  );
-
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onStartShouldSetPanResponderCapture: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponderCapture: () => true,
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderGrant: (event) => {
-          updateFromLocation(event.nativeEvent.locationX);
-        },
-        onPanResponderMove: (event) => {
-          updateFromLocation(event.nativeEvent.locationX);
-        },
-        onPanResponderRelease: (event) => {
-          onChangeEnd(updateFromLocation(event.nativeEvent.locationX));
-        },
-        onPanResponderTerminate: () => {
-          onChangeEnd(safeValue);
-        },
-        onShouldBlockNativeResponder: () => true,
-      }),
-    [onChangeEnd, safeValue, updateFromLocation],
-  );
-
-  return (
-    <View
-      accessibilityRole="adjustable"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityValue={{
-        min: minimumValue,
-        max: maximumValue,
-        now: safeValue,
-      }}
-      style={styles.measurementSlider}
-      onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
-      {...panResponder.panHandlers}
-    >
-      <View style={styles.measurementSliderTrack}>
-        <View
-          style={[
-            styles.measurementSliderFill,
-            { width: `${clamp(progress, 0, 1) * 100}%` },
-          ]}
-        />
-      </View>
-      <View
-        pointerEvents="none"
-        style={[
-          styles.measurementSliderThumb,
-          { left: `${clamp(progress, 0, 1) * 100}%` },
-        ]}
-      />
-    </View>
-  );
-}
-
-function HeightScreen({
-  unit,
-  heightCm,
-  heightFeet,
-  heightInches,
-  onUnitChange,
-  onCmChange,
-  onFeetChange,
-  onInchesChange,
-}) {
-  const storedCmValue = clamp(Math.round(Number(heightCm) || 172), 120, 230);
-  const [draftCmValue, setDraftCmValue] = useState(storedCmValue);
-  const feetValue = String(heightFeet ?? "");
-  const inchesValue = String(heightInches ?? "");
-  const totalInches =
-    (Number(heightFeet) || 5) * 12 + (Number(heightInches) || 8);
-  const cmValue = unit === "cm" ? draftCmValue : storedCmValue;
-  const displayValue = unit === "cm" ? cmValue : totalInches;
-
-  useEffect(() => {
-    setDraftCmValue(storedCmValue);
-  }, [storedCmValue]);
-
-  return (
-    <>
-      <QuestionHero title="How tall are you?" />
-      <View style={styles.measurementContent}>
-        <UnitToggle
-          options={[
-            { value: "cm", label: "cm" },
-            { value: "ft_in", label: "ft / in" },
-          ]}
-          value={unit}
-          onChange={onUnitChange}
-        />
-
-        {unit === "cm" ? (
-          <>
-            <View style={styles.measurementValueRow}>
-              <Text style={styles.measurementValue}>{cmValue}</Text>
-              <Text style={styles.measurementUnit}>cm</Text>
-            </View>
-            <InlineSlider
-              value={cmValue}
-              minimumValue={120}
-              maximumValue={230}
-              step={1}
-              accessibilityLabel="Height in centimeters"
-              onChange={(value) => setDraftCmValue(Math.round(value))}
-              onChangeEnd={(value) => onCmChange(String(Math.round(value)))}
-            />
-          </>
-        ) : (
-          <>
-            <View style={styles.measurementValueRow}>
-              <Text style={styles.measurementValue}>{displayValue}</Text>
-              <Text style={styles.measurementUnit}>in</Text>
-            </View>
-            <View style={styles.heightInputRow}>
-              <View style={styles.heightInputGroup}>
-                <Text style={styles.heightInputLabel}>Feet</Text>
-                <TextInput
-                  value={feetValue}
-                  onChangeText={onFeetChange}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  placeholder="5"
-                  placeholderTextColor={onboardingV6.faint}
-                  style={styles.heightInput}
-                  accessibilityLabel="Height in feet"
-                />
-              </View>
-              <View style={styles.heightInputGroup}>
-                <Text style={styles.heightInputLabel}>Inches</Text>
-                <TextInput
-                  value={inchesValue}
-                  onChangeText={onInchesChange}
-                  keyboardType="number-pad"
-                  maxLength={2}
-                  placeholder="8"
-                  placeholderTextColor={onboardingV6.faint}
-                  style={styles.heightInput}
-                  accessibilityLabel="Height in inches"
-                />
-              </View>
-            </View>
-          </>
-        )}
-      </View>
-    </>
-  );
-}
-
-function WeightScreen({ unit, value, onUnitChange, onValueChange }) {
-  const fallbackValue = unit === "kg" ? 68 : 150;
-  const minValue = unit === "kg" ? 35 : 75;
-  const maxValue = unit === "kg" ? 200 : 440;
-  const storedValue = clamp(
-    Math.round(Number(value) || fallbackValue),
-    minValue,
-    maxValue,
-  );
-  const [draftValue, setDraftValue] = useState(storedValue);
-
-  useEffect(() => {
-    setDraftValue(storedValue);
-  }, [storedValue, unit]);
-
-  return (
-    <>
-      <QuestionHero title="What's your weight?" />
-      <View style={styles.measurementContent}>
-        <UnitToggle
-          options={[
-            { value: "kg", label: "kg" },
-            { value: "lb", label: "lbs" },
-          ]}
-          value={unit}
-          onChange={onUnitChange}
-        />
-
-        <View style={styles.measurementValueRow}>
-          <Text style={styles.measurementValue}>{draftValue}</Text>
-          <Text style={styles.measurementUnit}>
-            {unit === "kg" ? "kg" : "lb"}
-          </Text>
-        </View>
-        <InlineSlider
-          value={draftValue}
-          minimumValue={minValue}
-          maximumValue={maxValue}
-          step={1}
-          accessibilityLabel={`Weight in ${
-            unit === "kg" ? "kilograms" : "pounds"
-          }`}
-          onChange={(nextValue) => setDraftValue(Math.round(nextValue))}
-          onChangeEnd={(nextValue) =>
-            onValueChange(unit, String(Math.round(nextValue)))
-          }
-        />
-      </View>
-    </>
-  );
-}
-
-function DatePickerCards({ value, onChangePart }) {
-  const [activePart, setActivePart] = useState("day");
-  const scrollRef = useRef(null);
-  const date = parseLocalISODate(value) ?? defaultBirthDate();
-  const monthIndex = date.getMonth();
-  const month = MONTH_OPTIONS[monthIndex]?.label ?? "Jun";
-  const day = date.getDate();
-  const year = date.getFullYear();
-  const currentYear = new Date().getFullYear();
-  const activeOptions = useMemo(() => {
-    if (activePart === "month") {
-      return MONTH_OPTIONS;
-    }
-
-    if (activePart === "year") {
-      return range(currentYear - 90, currentYear - 13)
-        .reverse()
-        .map((itemYear) => ({
-          value: itemYear,
-          label: String(itemYear),
-        }));
-    }
-
-    return range(1, daysInMonth(year, monthIndex)).map((itemDay) => ({
-      value: itemDay,
-      label: String(itemDay),
-    }));
-  }, [activePart, currentYear, monthIndex, year]);
-  const activeValue =
-    activePart === "month" ? monthIndex : activePart === "year" ? year : day;
-
-  useEffect(() => {
-    const activeIndex = Math.max(
-      0,
-      activeOptions.findIndex((option) => option.value === activeValue),
-    );
-    const id = setTimeout(() => {
-      scrollRef.current?.scrollTo({
-        y: activeIndex * 48,
-        animated: true,
-      });
-    }, 40);
-
-    return () => clearTimeout(id);
-  }, [activeOptions, activeValue]);
-
-  const handleWheelScrollEnd = (event) => {
-    const nextIndex = clamp(
-      Math.round(event.nativeEvent.contentOffset.y / 48),
-      0,
-      activeOptions.length - 1,
-    );
-    const nextOption = activeOptions[nextIndex];
-    if (nextOption && nextOption.value !== activeValue) {
-      onChangePart(activePart, nextOption.value);
-    }
-  };
-
-  const handleWheelDragEnd = (event) => {
-    const velocityY = Math.abs(event.nativeEvent.velocity?.y ?? 0);
-    if (velocityY < 0.15) {
-      handleWheelScrollEnd(event);
-    }
-  };
-
-  return (
-    <View style={styles.dateBlock}>
-      <View style={styles.dateCards}>
-        {[
-          { key: "day", label: "Day", value: day, flex: 0.85 },
-          { key: "month", label: "Month", value: month, flex: 1.1 },
-          { key: "year", label: "Year", value: year, flex: 1.1 },
-        ].map((card) => (
-          <Pressable
-            key={card.key}
-            accessibilityRole="button"
-            accessibilityState={{ selected: activePart === card.key }}
-            accessibilityLabel={`Select ${card.label}`}
-            onPress={() => setActivePart(card.key)}
-            style={({ pressed }) => [
-              styles.dateCard,
-              activePart === card.key && styles.dateCardActive,
-              { flex: card.flex },
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={styles.dateCardLabel}>{card.label}</Text>
-            <Text style={styles.dateCardValue}>{card.value}</Text>
-          </Pressable>
-        ))}
-      </View>
-      <View style={styles.dateWheelFrame}>
-        <View pointerEvents="none" style={styles.dateWheelHighlight} />
-        <ScrollView
-          ref={scrollRef}
-          style={styles.dateWheel}
-          contentContainerStyle={styles.dateWheelContent}
-          showsVerticalScrollIndicator={false}
-          snapToInterval={48}
-          snapToAlignment="start"
-          decelerationRate="normal"
-          nestedScrollEnabled
-          onMomentumScrollEnd={handleWheelScrollEnd}
-          onScrollEndDrag={handleWheelDragEnd}
-        >
-          {activeOptions.map((option) => {
-            const selected = option.value === activeValue;
-            return (
-              <Pressable
-                key={`${activePart}-${option.value}`}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => onChangePart(activePart, option.value)}
-                style={({ pressed }) => [
-                  styles.dateWheelOption,
-                  selected && styles.dateWheelOptionSelected,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.dateWheelText,
-                    selected && styles.dateWheelTextSelected,
-                  ]}
-                >
-                  {option.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-    </View>
-  );
 }
 
 function SupplementManualSheet({ visible, rows, onAdd, onRemove, onClose }) {
@@ -1781,8 +1329,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
   const [submitting, setSubmitting] = useState(false);
   const [manualSheetOpen, setManualSheetOpen] = useState(false);
   const autoAdvanceTimeoutRef = useRef(null);
-  const nameInputRef = useRef(null);
-  const successInputRef = useRef(null);
   const signupCompletedRef = useRef(false);
   const [{ stepKey, answers }, dispatch] = useReducer(answersReducer, {
     stepKey: "welcome",
@@ -1866,18 +1412,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     }
   }, [hydrated, stepKey, visibleStepKeys]);
 
-  useEffect(() => {
-    if (stepKey === "name") {
-      const id = setTimeout(() => nameInputRef.current?.focus(), 80);
-      return () => clearTimeout(id);
-    }
-    if (stepKey === "success") {
-      const id = setTimeout(() => successInputRef.current?.focus(), 120);
-      return () => clearTimeout(id);
-    }
-    return undefined;
-  }, [stepKey]);
-
   const setField = useCallback((field, value) => {
     dispatch({ type: "setField", field, value });
   }, []);
@@ -1920,14 +1454,11 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
   }, [goBack]);
 
   const canContinue = useMemo(() => {
-    if (stepKey === "name") {
-      return Boolean(answers.name.trim());
-    }
     if (stepKey === "lifeStage") {
       return Boolean(answers.lifeStage);
     }
     return true;
-  }, [answers.lifeStage, answers.name, stepKey]);
+  }, [answers.lifeStage, stepKey]);
 
   const continueLabel = useMemo(() => {
     if (stepKey === "landing") return "Begin";
@@ -2071,24 +1602,8 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
   const handleContinue = useCallback(() => {
     if (!canContinue || submitting) return;
 
-    if (stepKey === "dob" && !answers.dateOfBirth) {
-      setField("dateOfBirth", toISODate(defaultBirthDate()));
-    }
-
     if (stepKey === "sex" && answers.sexAtBirth === "male") {
       setFields({ lifeStage: "none", pregnancyStatus: "not_applicable" });
-    }
-
-    if (stepKey === "height") {
-      setFields({
-        heightCm: answers.heightCm || "172",
-        heightFeet: answers.heightFeet || "5",
-        heightInches: answers.heightInches || "8",
-      });
-    }
-
-    if (stepKey === "weight") {
-      setField("weightValue", answers.weightValue || "68");
     }
 
     if (stepKey === "consent") {
@@ -2100,12 +1615,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     triggerImpact();
     moveToNextStep();
   }, [
-    answers.dateOfBirth,
-    answers.heightCm,
-    answers.heightFeet,
-    answers.heightInches,
     answers.sexAtBirth,
-    answers.weightValue,
     canContinue,
     completeQuestionnaire,
     moveToNextStep,
@@ -2114,23 +1624,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     stepKey,
     submitting,
   ]);
-
-  const updateDatePart = useCallback(
-    (part, value) => {
-      const current =
-        parseLocalISODate(answers.dateOfBirth) ?? defaultBirthDate();
-      const year = part === "year" ? value : current.getFullYear();
-      const month = part === "month" ? value : current.getMonth();
-      const maxDay = daysInMonth(year, month);
-      const day = part === "day" ? value : clamp(current.getDate(), 1, maxDay);
-      setField(
-        "dateOfBirth",
-        toISODate(new Date(year, month, day, 12, 0, 0, 0)),
-      );
-      triggerImpact();
-    },
-    [answers.dateOfBirth, setField],
-  );
 
   const toggleGoal = (value) => {
     if (answers.goals.includes(value)) {
@@ -2141,93 +1634,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     if (answers.goals.length >= 3) return;
     dispatch({ type: "toggleArray", field: "goals", value });
     triggerImpact();
-  };
-
-  const convertHeightUnit = (unit) => {
-    if (unit === answers.heightUnit) return;
-
-    if (unit === "ft_in") {
-      const cm = normalizePositiveNumber(answers.heightCm);
-      if (!cm) {
-        setField("heightUnit", "ft_in");
-        return;
-      }
-      const totalInches = Math.round(cm / 2.54);
-      setFields({
-        heightUnit: "ft_in",
-        heightFeet: String(Math.floor(totalInches / 12)),
-        heightInches: String(totalInches % 12),
-      });
-      return;
-    }
-
-    const feet = normalizePositiveNumber(answers.heightFeet) || 0;
-    const inches = normalizePositiveNumber(answers.heightInches) || 0;
-    const totalInches = feet * 12 + inches;
-    setFields({
-      heightUnit: "cm",
-      heightCm: totalInches ? String(Math.round(totalInches * 2.54)) : "172",
-    });
-  };
-
-  const setHeightCmValue = (value) => {
-    const cm = clamp(Math.round(Number(value) || 172), 120, 230);
-    setFields({ heightUnit: "cm", heightCm: String(cm) });
-  };
-
-  const setHeightFeetValue = (value) => {
-    const digits = String(value).replace(/\D/g, "");
-    if (!digits) {
-      setFields({ heightUnit: "ft_in", heightFeet: "" });
-      return;
-    }
-
-    setFields({
-      heightUnit: "ft_in",
-      heightFeet: String(clamp(Number(digits), 3, 8)),
-    });
-  };
-
-  const setHeightInchesValue = (value) => {
-    const digits = String(value).replace(/\D/g, "");
-    if (!digits) {
-      setFields({ heightUnit: "ft_in", heightInches: "" });
-      return;
-    }
-
-    setFields({
-      heightUnit: "ft_in",
-      heightInches: String(clamp(Number(digits), 0, 11)),
-    });
-  };
-
-  const convertWeightUnit = (unit) => {
-    if (unit === answers.weightUnit) return;
-
-    const value = normalizePositiveNumber(answers.weightValue);
-    if (!value) {
-      setField("weightUnit", unit);
-      return;
-    }
-
-    setFields({
-      weightUnit: unit,
-      weightValue:
-        unit === "lb"
-          ? String(Math.round(value * 2.20462262))
-          : String(Math.round(value * 0.45359237)),
-    });
-  };
-
-  const setWeightValue = (unit, value) => {
-    const rangeBounds =
-      unit === "kg" ? { min: 35, max: 200 } : { min: 75, max: 440 };
-    const normalized = clamp(
-      Math.round(Number(value) || (unit === "kg" ? 68 : 150)),
-      rangeBounds.min,
-      rangeBounds.max,
-    );
-    setFields({ weightUnit: unit, weightValue: String(normalized) });
   };
 
   const renderStepContent = () => {
@@ -2280,11 +1686,7 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
               pressed && styles.pressed,
             ]}
           >
-            <Ionicons
-              name="chevron-back"
-              size={24}
-              color={onboardingV6.ink}
-            />
+            <Ionicons name="chevron-back" size={24} color={onboardingV6.ink} />
           </Pressable>
           <QuestionHero
             centered
@@ -2297,35 +1699,27 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       );
     }
 
-    if (stepKey === "name") {
+    if (stepKey === "ageRange") {
       return (
         <>
-          <QuestionHero title="What should we call you?" />
-          <View style={styles.contentBlock}>
-            <TextInput
-              ref={nameInputRef}
-              value={answers.name}
-              onChangeText={(value) => setField("name", value)}
-              onSubmitEditing={handleContinue}
-              autoFocus
-              returnKeyType="done"
-              placeholder="Your name"
-              placeholderTextColor={onboardingV6.faint}
-              style={styles.textInput}
-            />
+          <QuestionHero title="What age range are you in?" />
+          <View style={styles.optionStack}>
+            {AGE_RANGE_OPTIONS.map((option) => (
+              <OptionRow
+                key={option.value}
+                label={option.label}
+                selected={answers.ageRange === option.value}
+                onPress={() => {
+                  const nextAnswers = {
+                    ...answers,
+                    ageRange: option.value,
+                  };
+                  setField("ageRange", option.value);
+                  autoAdvanceSingleSelectStep("ageRange", nextAnswers);
+                }}
+              />
+            ))}
           </View>
-        </>
-      );
-    }
-
-    if (stepKey === "dob") {
-      return (
-        <>
-          <QuestionHero title="When were you born?" />
-          <DatePickerCards
-            value={answers.dateOfBirth}
-            onChangePart={updateDatePart}
-          />
         </>
       );
     }
@@ -2364,29 +1758,31 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       );
     }
 
-    if (stepKey === "height") {
+    if (stepKey === "dosageCheckFrequency") {
       return (
-        <HeightScreen
-          unit={answers.heightUnit}
-          heightCm={answers.heightCm}
-          heightFeet={answers.heightFeet}
-          heightInches={answers.heightInches}
-          onUnitChange={convertHeightUnit}
-          onCmChange={setHeightCmValue}
-          onFeetChange={setHeightFeetValue}
-          onInchesChange={setHeightInchesValue}
-        />
-      );
-    }
-
-    if (stepKey === "weight") {
-      return (
-        <WeightScreen
-          unit={answers.weightUnit}
-          value={answers.weightValue}
-          onUnitChange={convertWeightUnit}
-          onValueChange={setWeightValue}
-        />
+        <>
+          <QuestionHero title="How often do you check active ingredient dosages before buying supplements?" />
+          <View style={styles.optionStack}>
+            {DOSAGE_CHECK_FREQUENCY_OPTIONS.map((option) => (
+              <OptionRow
+                key={option.value}
+                label={option.label}
+                selected={answers.dosageCheckFrequency === option.value}
+                onPress={() => {
+                  const nextAnswers = {
+                    ...answers,
+                    dosageCheckFrequency: option.value,
+                  };
+                  setField("dosageCheckFrequency", option.value);
+                  autoAdvanceSingleSelectStep(
+                    "dosageCheckFrequency",
+                    nextAnswers,
+                  );
+                }}
+              />
+            ))}
+          </View>
+        </>
       );
     }
 
@@ -2411,27 +1807,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
                 />
               );
             })}
-          </View>
-        </>
-      );
-    }
-
-    if (stepKey === "success") {
-      return (
-        <>
-          <QuestionHero title={"What does 'better' look like in 90 days?"} />
-          <View style={styles.contentBlock}>
-            <TextInput
-              ref={successInputRef}
-              value={answers.success90Days}
-              onChangeText={(value) => setField("success90Days", value)}
-              autoFocus
-              multiline
-              textAlignVertical="top"
-              placeholder="e.g. Sleep through the night, wake up clear-headed, and not crash at 3pm."
-              placeholderTextColor={onboardingV6.faint}
-              style={[styles.textInput, styles.textareaInput]}
-            />
           </View>
         </>
       );
@@ -2695,37 +2070,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       );
     }
 
-    if (stepKey === "routine") {
-      return (
-        <>
-          <QuestionHero title="How do you prefer to take your supplements?" />
-          <View style={styles.contentBlock}>
-            <View style={styles.inlineOptionStack}>
-              {TIMING_OPTIONS.map((option) => (
-                <OptionRow
-                  key={option.value}
-                  label={option.label}
-                  selected={answers.supplementTiming === option.value}
-                  onPress={() => {
-                    const nextAnswers = {
-                      ...answers,
-                      supplementTiming: option.value,
-                      adherencePlan: option.value,
-                    };
-                    setFields({
-                      supplementTiming: option.value,
-                      adherencePlan: option.value,
-                    });
-                    autoAdvanceSingleSelectStep("routine", nextAnswers);
-                  }}
-                />
-              ))}
-            </View>
-          </View>
-        </>
-      );
-    }
-
     if (stepKey === "consent") {
       return (
         <View style={styles.consentContent}>
@@ -2869,31 +2213,13 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
     "consent",
   ].includes(stepKey);
   const shouldAutoAdvance = AUTO_ADVANCE_STEP_KEYS.includes(stepKey);
-  const footer =
-    stepKey === "success" ? (
-      <View style={styles.splitFooter}>
-        <GhostButton
-          label="Skip"
-          onPress={() => {
-            setField("success90Days", "");
-            moveToNextStep();
-          }}
-          style={styles.skipButton}
-        />
-        <OnboardingCTA
-          label={continueLabel}
-          onPress={handleContinue}
-          disabled={!canContinue || submitting}
-          style={styles.splitFooterCta}
-        />
-      </View>
-    ) : shouldAutoAdvance ? null : (
-      <OnboardingCTA
-        label={submitting ? "Saving..." : continueLabel}
-        onPress={handleContinue}
-        disabled={!canContinue || submitting}
-      />
-    );
+  const footer = shouldAutoAdvance ? null : (
+    <OnboardingCTA
+      label={submitting ? "Saving..." : continueLabel}
+      onPress={handleContinue}
+      disabled={!canContinue || submitting}
+    />
+  );
 
   return (
     <>
