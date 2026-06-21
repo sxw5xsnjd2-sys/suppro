@@ -22,6 +22,11 @@ import {
   normalizeEmail,
   signOutAndClearLocalState,
 } from "@src/lib/account";
+import {
+  clearNavigationHandoff,
+  NAVIGATION_HANDOFFS,
+  startNavigationHandoff,
+} from "@src/lib/navigationHandoff";
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -239,6 +244,7 @@ export default function AccountScreen() {
     setAccountError("");
     setSaveMessage("");
     setDeletingAccount(true);
+    startNavigationHandoff(NAVIGATION_HANDOFFS.ACCOUNT_DELETION);
 
     try {
       const { data: sessionData, error: sessionError } =
@@ -279,8 +285,8 @@ export default function AccountScreen() {
           accountScopedUserId: account.user?.id ?? null,
         });
       });
-      router.replace("/onboarding?mode=first_run");
     } catch (error) {
+      clearNavigationHandoff(NAVIGATION_HANDOFFS.ACCOUNT_DELETION.reason);
       setAccountError(
         error instanceof Error
           ? error.message

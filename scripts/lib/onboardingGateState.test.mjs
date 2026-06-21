@@ -335,6 +335,8 @@ test("referral source screen does not complete premium onboarding", () => {
 
   assert.equal(source.includes("markOnboardingPremiumComplete"), false);
   assert.equal(source.includes("ONBOARDING_PREMIUM_COMPLETED_STORAGE_KEY"), false);
+  assert.equal(source.includes('label={isSubmitting ? "Saving..." : "Continue"}'), false);
+  assert.equal(source.includes('router.replace("/onboarding?mode=first_run&step=paywall")'), true);
 });
 
 test("needs paywall gate only allows paywall and book offer onboarding steps", () => {
@@ -431,12 +433,15 @@ test("Android screen modules gate Apple Health at the actual render and call sit
   );
 });
 
-test("onboarding paywall route stays visible while gate state catches up", () => {
+test("root layout limits the blocking loading overlay to blocking handoffs", () => {
   const source = readFileSync(
     new URL("../../app/_layout.jsx", import.meta.url),
     "utf8"
   );
 
+  assert.equal(source.includes("getNavigationHandoff"), true);
+  assert.equal(source.includes("subscribeNavigationHandoff"), true);
+  assert.equal(source.includes("clearNavigationHandoff"), true);
   assert.equal(
     source.includes("const ONBOARDING_PAYWALL_TRANSITION_GATE_STATES = new Set(["),
     true
@@ -449,11 +454,11 @@ test("onboarding paywall route stays visible while gate state catches up", () =>
     true
   );
   assert.equal(
-    source.includes(
-      "const shouldShowGateOverlay =\n    isRedirectingToAllowedRoute && !isOnboardingPaywallRoute;"
-    ),
+    source.includes("const shouldShowGateOverlay = activeNavigationHandoff?.blocking === true;"),
     true
   );
+  assert.equal(source.includes("const isRedirectingToAllowedRoute = useMemo(() => {"), false);
+  assert.equal(source.includes("shouldAllowDirectOnboardingHandoffRoute"), true);
 });
 
 test("paywall-complete first-run without account stays on create-account", async () => {

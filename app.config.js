@@ -82,6 +82,10 @@ module.exports = ({ config }) => {
       ...config.extra,
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? "",
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "",
+      goUpcApiKey:
+        process.env.EXPO_PUBLIC_GO_UPC_API_KEY ??
+        process.env.GO_UPC_API_KEY ??
+        "",
       revenueCat: {
         appleApiKey: process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY ?? "",
         googleApiKey: process.env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY ?? "",

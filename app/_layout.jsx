@@ -39,6 +39,12 @@ import {
   getOnboardingGateState,
   subscribeOnboardingGateChange,
 } from "@src/lib/onboarding";
+import {
+  clearNavigationHandoff,
+  getNavigationHandoff,
+  NAVIGATION_HANDOFFS,
+  subscribeNavigationHandoff,
+} from "@src/lib/navigationHandoff";
 import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
 import { provisionOnboardingSelections } from "@src/lib/onboardingProvisioning";
 import { clearAnonymousSessionIfPresent, supabase } from "@src/lib/supabase";
@@ -87,12 +93,52 @@ function LoadingScreen({ overlay = false }) {
   );
 }
 
+function routeMatchesNavigationHandoffTarget({
+  handoff,
+  isLoginRoute,
+  isOnboardingRoute,
+  isRetakeOnboarding,
+  modeParam,
+  segments,
+  stepParam,
+}) {
+  const target = handoff?.target;
+
+  if (!target || typeof target !== "object") {
+    return false;
+  }
+
+  if (target.pathname === "authenticated_app") {
+    return !isLoginRoute && !(isOnboardingRoute && !isRetakeOnboarding);
+  }
+
+  if (segments[0] !== target.pathname) {
+    return false;
+  }
+
+  if (
+    typeof target.mode === "string" &&
+    (modeParam === "retake" ? "retake" : "first_run") !== target.mode
+  ) {
+    return false;
+  }
+
+  if (typeof target.step === "string") {
+    return stepParam === target.step;
+  }
+
+  return true;
+}
+
 function RootNavigator() {
   const segments = useSegments();
   const params = useGlobalSearchParams();
   useRevenueCat();
   const [gateState, setGateState] = useState(null);
   const [gateResolved, setGateResolved] = useState(false);
+  const [activeNavigationHandoff, setActiveNavigationHandoff] = useState(() =>
+    getNavigationHandoff(),
+  );
   const gateRequestRef = useRef(0);
   const lastRedirectHrefRef = useRef(null);
   const isOnboardingRoute = segments[0] === "onboarding";
@@ -186,6 +232,14 @@ function RootNavigator() {
     };
   }, []);
 
+  useEffect(
+    () =>
+      subscribeNavigationHandoff((nextNavigationHandoff) => {
+        setActiveNavigationHandoff(nextNavigationHandoff);
+      }),
+    [],
+  );
+
   const effectiveGateState = useMemo(() => {
     if (
       !IS_APPLE_HEALTH_SUPPORTED_PLATFORM &&
@@ -211,6 +265,32 @@ function RootNavigator() {
     return gatedRoutes[effectiveGateState];
   }, [effectiveGateState]);
 
+  const matchesNavigationHandoffTarget = useMemo(
+    () =>
+      routeMatchesNavigationHandoffTarget({
+        handoff: activeNavigationHandoff,
+        isLoginRoute,
+        isOnboardingRoute,
+        isRetakeOnboarding,
+        modeParam,
+        segments,
+        stepParam,
+      }),
+    [
+      activeNavigationHandoff,
+      isLoginRoute,
+      isOnboardingRoute,
+      isRetakeOnboarding,
+      modeParam,
+      segments,
+      stepParam,
+    ],
+  );
+
+  const shouldAllowDirectOnboardingHandoffRoute =
+    activeNavigationHandoff?.blocking === false &&
+    matchesNavigationHandoffTarget;
+
   const isOnRequiredGateRoute = useMemo(() => {
     if (!effectiveGateState) return false;
 
@@ -226,6 +306,10 @@ function RootNavigator() {
       isOnboardingPaywallRoute &&
       ONBOARDING_PAYWALL_TRANSITION_GATE_STATES.has(effectiveGateState)
     ) {
+      return true;
+    }
+
+    if (shouldAllowDirectOnboardingHandoffRoute) {
       return true;
     }
 
@@ -290,41 +374,70 @@ function RootNavigator() {
     isBuildingOnboardingRoute,
     isLoginRoute,
     isOnboardingPaywallRoute,
-    isResetPasswordRoute,
     isOnboardingRoute,
     isOnboardingScannerFlow,
+    isResetPasswordRoute,
     isRetakeOnboarding,
     isVerifyEmailRoute,
     stepParam,
+    shouldAllowDirectOnboardingHandoffRoute,
   ]);
 
-  const isRedirectingToAllowedRoute = useMemo(() => {
-    if (!gateResolved || !effectiveGateState) {
-      return true;
+  const shouldShowGateOverlay = activeNavigationHandoff?.blocking === true;
+
+  useEffect(() => {
+    if (!gateResolved || !activeNavigationHandoff) {
+      return;
     }
 
-    if (effectiveGateState === "complete") {
-      return (
-        (isOnboardingRoute &&
-          !isRetakeOnboarding &&
-          !isAppSubscriptionGateRoute) ||
-        isLoginRoute
-      );
+    if (activeNavigationHandoff.blocking) {
+      if (
+        activeNavigationHandoff.reason === NAVIGATION_HANDOFFS.AUTH_SUCCESS.reason &&
+        effectiveGateState === "complete" &&
+        matchesNavigationHandoffTarget
+      ) {
+        clearNavigationHandoff(activeNavigationHandoff.reason);
+        return;
+      }
+
+      if (
+        activeNavigationHandoff.reason ===
+          NAVIGATION_HANDOFFS.ACCOUNT_DELETION.reason &&
+        effectiveGateState === "needs_questions" &&
+        matchesNavigationHandoffTarget
+      ) {
+        clearNavigationHandoff(activeNavigationHandoff.reason);
+      }
+
+      return;
     }
 
-    return !isOnRequiredGateRoute;
+    if (!matchesNavigationHandoffTarget) {
+      return;
+    }
+
+    if (
+      activeNavigationHandoff.reason ===
+        NAVIGATION_HANDOFFS.APPLE_HEALTH_NEXT.reason &&
+      effectiveGateState === "needs_referral_source"
+    ) {
+      clearNavigationHandoff(activeNavigationHandoff.reason);
+      return;
+    }
+
+    if (
+      activeNavigationHandoff.reason ===
+        NAVIGATION_HANDOFFS.REFERRAL_SOURCE_NEXT.reason &&
+      effectiveGateState === "needs_paywall"
+    ) {
+      clearNavigationHandoff(activeNavigationHandoff.reason);
+    }
   }, [
+    activeNavigationHandoff,
     effectiveGateState,
     gateResolved,
-    isAppSubscriptionGateRoute,
-    isLoginRoute,
-    isOnRequiredGateRoute,
-    isOnboardingRoute,
-    isRetakeOnboarding,
+    matchesNavigationHandoffTarget,
   ]);
-
-  const shouldShowGateOverlay =
-    isRedirectingToAllowedRoute && !isOnboardingPaywallRoute;
 
   useEffect(() => {
     if (!gateResolved || !effectiveGateState) return;
@@ -360,15 +473,9 @@ function RootNavigator() {
     gateResolved,
     isAppSubscriptionGateRoute,
     isLoginRoute,
-    isResetPasswordRoute,
     isOnRequiredGateRoute,
     isOnboardingRoute,
     isRetakeOnboarding,
-    modeParam,
-    originParam,
-    segments,
-    sourceParam,
-    stepParam,
   ]);
 
   return (

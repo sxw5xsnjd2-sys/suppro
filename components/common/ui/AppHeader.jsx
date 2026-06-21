@@ -19,6 +19,9 @@ export function AppHeader({
   titleNumberOfLines,
   titleEllipsizeMode,
 }) {
+  const hasTextTitle =
+    typeof title === "string" || typeof title === "number";
+
   return (
     <GradientHeader
       style={style}
@@ -35,7 +38,7 @@ export function AppHeader({
 
       {(title || titleAccessory) && (
         <View style={[styles.titleRow, titleRowStyle]}>
-          {title ? (
+          {hasTextTitle ? (
             <Text
               style={[styles.title, titleStyle]}
               numberOfLines={titleNumberOfLines}
@@ -43,6 +46,8 @@ export function AppHeader({
             >
               {title}
             </Text>
+          ) : title ? (
+            <View style={styles.customTitle}>{title}</View>
           ) : (
             <View />
           )}
@@ -82,6 +87,10 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.heading,
     letterSpacing: -0.7,
     color: appTheme.colors.textPrimary,
+  },
+  customTitle: {
+    flexShrink: 1,
+    minWidth: 0,
   },
   bottomSlot: {
     marginTop: 8,

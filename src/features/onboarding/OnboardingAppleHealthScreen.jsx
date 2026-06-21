@@ -12,6 +12,11 @@ import {
   markOnboardingAppleHealthComplete,
   markOnboardingAppleHealthConnectRequested,
 } from "@src/lib/onboarding";
+import {
+  clearNavigationHandoff,
+  NAVIGATION_HANDOFFS,
+  startNavigationHandoff,
+} from "@src/lib/navigationHandoff";
 import { requestOnboardingAppleHealthPermissions } from "@/features/health/onboardingAppleHealth";
 import { typography } from "@/theme";
 
@@ -20,13 +25,15 @@ const NEXT_STEP_HREF = "/onboarding?mode=first_run&step=referral-source";
 export default function OnboardingAppleHealthScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function goToPaywall() {
+  async function goToNextStep() {
+    startNavigationHandoff(NAVIGATION_HANDOFFS.APPLE_HEALTH_NEXT);
+
     try {
       await markOnboardingAppleHealthComplete();
-    } catch {
-      // Routing should still continue even if local completion state cannot be persisted.
-    } finally {
       router.replace(NEXT_STEP_HREF);
+    } catch (error) {
+      clearNavigationHandoff(NAVIGATION_HANDOFFS.APPLE_HEALTH_NEXT.reason);
+      throw error;
     }
   }
 
@@ -38,15 +45,21 @@ export default function OnboardingAppleHealthScreen() {
     setIsSubmitting(true);
 
     try {
-      await markOnboardingAppleHealthConnectRequested();
+      try {
+        await markOnboardingAppleHealthConnectRequested();
+      } catch {
+        // The onboarding step can still continue if this local marker fails.
+      }
 
       try {
         await requestOnboardingAppleHealthPermissions();
       } catch {
         // Permission denial, cancellation, or availability issues still advance onboarding.
       }
-    } finally {
-      await goToPaywall();
+
+      await goToNextStep();
+    } catch {
+      setIsSubmitting(false);
     }
   }
 
@@ -56,7 +69,12 @@ export default function OnboardingAppleHealthScreen() {
     }
 
     setIsSubmitting(true);
-    await goToPaywall();
+
+    try {
+      await goToNextStep();
+    } catch {
+      setIsSubmitting(false);
+    }
   }
 
   return (

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 import {
   Animated,
   FlatList,
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -12,6 +13,7 @@ import { AppButton, AppHeader } from "@/components/common/ui";
 import { appTheme, typography } from "@/theme";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { isSupplementScheduledOnDate } from "@/features/supplements/schedule";
+import SupproLogoDark from "@/assets/images/suppro-logo-dark.png";
 
 const PAGE_SIDE_PADDING = appTheme.screen.sidePadding;
 const PILL_HEIGHT = appTheme.header.progressPillHeight;
@@ -202,8 +204,12 @@ export function HomeHeader({ onLayout }) {
   return (
     <View style={styles.wrapper} onLayout={onLayout}>
       <AppHeader
-        title="SUPPRO"
-        titleStyle={styles.title}
+        title={
+          <View style={styles.brandLockup}>
+            <Image source={SupproLogoDark} style={styles.brandLogo} />
+            <Text style={styles.title}>SUPPRO</Text>
+          </View>
+        }
         titleAccessory={
           <AppButton
             label="Today"
@@ -283,6 +289,17 @@ const styles = StyleSheet.create({
   wrapper: {
     backgroundColor: "transparent",
   },
+  brandLockup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    minWidth: 0,
+  },
+  brandLogo: {
+    width: 23,
+    height: 23,
+    marginTop: 1,
+  },
   selectorSection: {
     paddingTop: 2,
   },
@@ -292,7 +309,7 @@ const styles = StyleSheet.create({
   title: {
     color: appTheme.colors.textPrimary,
     fontSize: 24,
-    lineHeight: 22,
+    lineHeight: 24,
     letterSpacing: -0.43,
     fontFamily: typography.fontFamily.headingBlack,
     fontWeight: "900",

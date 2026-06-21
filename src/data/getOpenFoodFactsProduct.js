@@ -161,7 +161,7 @@ function flattenOpenFoodFactsIngredients(ingredients, depth = 0) {
     const label = formatOpenFoodFactsIngredientLabel(ingredient, depth);
     const nested = flattenOpenFoodFactsIngredients(
       ingredient?.ingredients,
-      depth + 1
+      depth + 1,
     );
 
     return [label, ...nested].filter(Boolean);
@@ -174,18 +174,18 @@ export async function fetchOpenFoodFactsProduct(barcode, barcodeType) {
   if (!isValidBarcode(normalizedBarcode, barcodeType)) {
     throw createOpenFoodFactsError(
       "invalid_barcode",
-      "That barcode could not be read."
+      "That barcode could not be read.",
     );
   }
 
   const response = await fetch(
-    `${OPEN_FOOD_FACTS_BASE_URL}/${normalizedBarcode}.json`
+    `${OPEN_FOOD_FACTS_BASE_URL}/${normalizedBarcode}.json`,
   );
 
   if (!response.ok) {
     throw createOpenFoodFactsError(
       "open_food_facts_unavailable",
-      "We couldn't check that product right now."
+      "We couldn't check that product right now. Please check your connection and try again.",
     );
   }
 
@@ -194,7 +194,7 @@ export async function fetchOpenFoodFactsProduct(barcode, barcodeType) {
   if (payload?.status === 0) {
     throw createOpenFoodFactsError(
       "product_not_found",
-      "Sorry, we couldn't find that product, please take pictures to add it to the app"
+      "Sorry, we couldn't find that product, please take pictures to add it to the app",
     );
   }
 
@@ -203,7 +203,7 @@ export async function fetchOpenFoodFactsProduct(barcode, barcodeType) {
     productName: trimString(payload?.product?.product_name),
     ingredientsText: trimString(payload?.product?.ingredients_text),
     sourceIngredients: flattenOpenFoodFactsIngredients(
-      payload?.product?.ingredients
+      payload?.product?.ingredients,
     ),
     sourceStatus: typeof payload?.status === "number" ? payload.status : null,
     sourceStatusVerbose: trimString(payload?.status_verbose),

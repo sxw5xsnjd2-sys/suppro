@@ -421,3 +421,19 @@ test("getSupabaseAuthStorageKeys returns only persisted auth keys", () => {
     ["sb-test-auth-token", "SUPABASE.auth.token"]
   );
 });
+
+test("delete-account screen relies on the shared handoff instead of a local onboarding replace", () => {
+  const source = readFileSync(
+    new URL("../../app/(modals)/modal/account.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.equal(
+    source.includes("startNavigationHandoff(NAVIGATION_HANDOFFS.ACCOUNT_DELETION)"),
+    true,
+  );
+  assert.equal(
+    source.includes('router.replace("/onboarding?mode=first_run")'),
+    false,
+  );
+});

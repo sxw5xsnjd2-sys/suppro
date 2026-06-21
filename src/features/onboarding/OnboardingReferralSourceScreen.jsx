@@ -2,13 +2,17 @@ import React, { useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { router } from "expo-router";
 import {
-  OnboardingCTA,
   OnboardingShell,
   OptionRow,
   QuestionHero,
   onboardingV6,
 } from "./v6Primitives";
 import { markOnboardingReferralSourceComplete } from "@src/lib/onboarding";
+import {
+  clearNavigationHandoff,
+  NAVIGATION_HANDOFFS,
+  startNavigationHandoff,
+} from "@src/lib/navigationHandoff";
 import { logBuildAwareDiagnostic } from "@src/lib/runtimeConfig";
 
 const REFERRAL_SOURCE_OPTIONS = [
@@ -31,17 +35,22 @@ export default function OnboardingReferralSourceScreen() {
   const [selectedSource, setSelectedSource] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function completeReferralSourceStep() {
-    if (!selectedSource || isSubmitting) {
+  async function completeReferralSourceStep(nextSource) {
+    if (!nextSource || isSubmitting) {
       return;
     }
 
     setIsSubmitting(true);
+    setSelectedSource(nextSource);
+    startNavigationHandoff(NAVIGATION_HANDOFFS.REFERRAL_SOURCE_NEXT);
 
     try {
-      await markOnboardingReferralSourceComplete(selectedSource);
+      await markOnboardingReferralSourceComplete(nextSource);
       router.replace("/onboarding?mode=first_run&step=paywall");
     } catch (error) {
+      clearNavigationHandoff(
+        NAVIGATION_HANDOFFS.REFERRAL_SOURCE_NEXT.reason,
+      );
       logBuildAwareDiagnostic(
         "warn",
         "[onboarding-referral-source] Failed to complete referral source step",
@@ -63,15 +72,6 @@ export default function OnboardingReferralSourceScreen() {
       progress={0.99}
       showBack={false}
       contentContainerStyle={styles.content}
-      footer={
-        <OnboardingCTA
-          label={isSubmitting ? "Saving..." : "Continue"}
-          disabled={!selectedSource || isSubmitting}
-          onPress={() => {
-            void completeReferralSourceStep();
-          }}
-        />
-      }
     >
       <QuestionHero
         title="How did you hear about us?"
@@ -83,7 +83,9 @@ export default function OnboardingReferralSourceScreen() {
             key={option}
             label={option}
             selected={selectedSource === option}
-            onPress={() => setSelectedSource(option)}
+            onPress={() => {
+              void completeReferralSourceStep(option);
+            }}
           />
         ))}
       </View>

@@ -39,7 +39,7 @@ export async function buildScannedSupplementPayload(scanState) {
     supplementRows.map((supplement) => [supplement.id, supplement])
   );
 
-  return buildLinkedSupplementPayload({
+  const payload = await buildLinkedSupplementPayload({
     id: null,
     name: buildScannedSupplementName(scanState),
     verified: false,
@@ -47,6 +47,17 @@ export async function buildScannedSupplementPayload(scanState) {
     servingSizeText: trimString(scanState?.product?.servingSizeText) || null,
     supplementsByCatalogId,
   });
+
+  return {
+    ...payload,
+    barcode: trimString(scanState?.product?.barcode) || null,
+    brand: trimString(scanState?.product?.brand) || null,
+    imageUrl: trimString(scanState?.product?.imageUrl) || null,
+    scanDataSource: trimString(scanState?.product?.scanDataSource) || null,
+    scanDetailsIncomplete: Boolean(
+      scanState?.product?.hasIncompleteDetails
+    ),
+  };
 }
 
 export function buildScannedSupplementFailurePayload(scanState) {
@@ -83,5 +94,12 @@ export function buildScannedSupplementFailurePayload(scanState) {
         ? scanState.error.category
         : null,
     scanFailureMessage,
+    barcode: trimString(scanState?.product?.barcode) || null,
+    brand: trimString(scanState?.product?.brand) || null,
+    imageUrl: trimString(scanState?.product?.imageUrl) || null,
+    scanDataSource: trimString(scanState?.product?.scanDataSource) || null,
+    scanDetailsIncomplete: Boolean(
+      scanState?.product?.hasIncompleteDetails
+    ),
   };
 }

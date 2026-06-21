@@ -49,9 +49,18 @@ const expoExtraEnableDsldLookup = firstNonEmptyString([
   manifest2Extra?.enableDsldLookup,
   expoGoConfigExtra?.enableDsldLookup,
 ]);
+const processEnvGoUpcApiKey =
+  process.env.EXPO_PUBLIC_GO_UPC_API_KEY?.trim() ?? "";
+const expoExtraGoUpcApiKey = firstNonEmptyString([
+  expoConfigExtra?.goUpcApiKey,
+  manifestExtra?.goUpcApiKey,
+  manifest2Extra?.goUpcApiKey,
+  expoGoConfigExtra?.goUpcApiKey,
+]);
 
 export const SUPABASE_URL = processEnvUrl || expoExtraUrl;
 export const SUPABASE_ANON_KEY = processEnvAnonKey || expoExtraAnonKey;
+export const GO_UPC_API_KEY = processEnvGoUpcApiKey || expoExtraGoUpcApiKey;
 export const ENABLE_DSLD_LOOKUP =
   (processEnvEnableDsldLookup || expoExtraEnableDsldLookup).toLowerCase() ===
   "true";

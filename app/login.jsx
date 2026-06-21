@@ -31,6 +31,11 @@ import {
   hasCompletedQuestionnaire,
 } from "@src/lib/onboarding";
 import {
+  clearNavigationHandoff,
+  NAVIGATION_HANDOFFS,
+  startNavigationHandoff,
+} from "@src/lib/navigationHandoff";
+import {
   assertOauthLoginAllowed,
   buildProfilePayload,
   isLikelyEmail,
@@ -256,14 +261,22 @@ export default function LoginScreen() {
   };
 
   const finalizeAuthenticatedAccount = async () => {
-    await markAccountCreationComplete();
-    await syncIdentityForCurrentSession();
-    if (IS_APPLE_HEALTH_SUPPORTED_PLATFORM) {
-      const { syncAppleHealthAfterAuthentication } = require(
-        "@/features/health/useAppleHealthConnection"
-      );
-      await syncAppleHealthAfterAuthentication();
+    startNavigationHandoff(NAVIGATION_HANDOFFS.AUTH_SUCCESS);
+
+    try {
+      await markAccountCreationComplete();
+      await syncIdentityForCurrentSession();
+      if (IS_APPLE_HEALTH_SUPPORTED_PLATFORM) {
+        const { syncAppleHealthAfterAuthentication } = require(
+          "@/features/health/useAppleHealthConnection"
+        );
+        await syncAppleHealthAfterAuthentication();
+      }
+    } catch (error) {
+      clearNavigationHandoff(NAVIGATION_HANDOFFS.AUTH_SUCCESS.reason);
+      throw error;
     }
+
     // Root gate owns the post-login transition into the app shell.
   };
 

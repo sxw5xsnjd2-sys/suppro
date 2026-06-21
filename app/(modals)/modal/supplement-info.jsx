@@ -28,6 +28,7 @@ import Svg, {
 import { AppButton, PrimaryCard } from "@/components/common/ui";
 import { COMPACT_TITLE_HEADER_TRIGGER_OFFSET } from "@/components/common/ui/CompactTitleHeader";
 import ShieldTrustIcon from "@/assets/icons/shield-trust 1.svg";
+import SupproLogoDark from "@/assets/images/suppro-logo-dark.png";
 import {
   buildScannedSupplementFailurePayload,
   buildScannedSupplementPayload,
@@ -299,7 +300,8 @@ function formatReferenceMeta(reference) {
 function ReferenceRow({ reference, onPress }) {
   const benefitText = getReferenceBenefitText(reference);
   const referenceTitle =
-    typeof reference?.citationTitle === "string" && reference.citationTitle.trim()
+    typeof reference?.citationTitle === "string" &&
+    reference.citationTitle.trim()
       ? reference.citationTitle.trim()
       : "Open source";
   const metaText = formatReferenceMeta(reference);
@@ -307,9 +309,7 @@ function ReferenceRow({ reference, onPress }) {
   return (
     <Pressable
       accessibilityRole="link"
-      accessibilityLabel={`Open source for ${
-        benefitText || referenceTitle
-      }`}
+      accessibilityLabel={`Open source for ${benefitText || referenceTitle}`}
       onPress={onPress}
       style={({ pressed }) => [
         styles.referenceRow,
@@ -569,7 +569,7 @@ function BenefitGridCard({
   const evidenceSource =
     Array.isArray(benefit?.evidenceItems) && benefit.evidenceItems.length
       ? benefit.evidenceItems
-      : benefit?.evidence ?? benefit?.evidence_summary ?? supplementEvidence;
+      : (benefit?.evidence ?? benefit?.evidence_summary ?? supplementEvidence);
   const evidenceSnippets = buildEvidenceSnippets(evidenceSource);
 
   return (
@@ -708,11 +708,11 @@ function DetailCard({
           {blocks.map((block, index) => {
             const linkedItem =
               linkedItemsByHeading?.get(
-                normalizeDetailHeadingKey(block.heading)
+                normalizeDetailHeadingKey(block.heading),
               ) ?? null;
             const itemName = block.heading || `Ingredient ${index + 1}`;
             const itemKey = `${sectionKey}:${normalizeDetailHeadingKey(
-              block.heading
+              block.heading,
             )}:${index}`;
             const expanded = Boolean(expandedItems[itemKey]);
 
@@ -721,7 +721,8 @@ function DetailCard({
                 key={`${title}-${block.heading}-${index}`}
                 style={[
                   styles.detailCardBodyBlock,
-                  index < blocks.length - 1 && styles.detailCardBodyBlockDivider,
+                  index < blocks.length - 1 &&
+                    styles.detailCardBodyBlockDivider,
                 ]}
               >
                 <Pressable
@@ -916,7 +917,7 @@ function BenefitRow({
   const evidenceSource =
     Array.isArray(benefit?.evidenceItems) && benefit.evidenceItems.length
       ? benefit.evidenceItems
-      : benefit?.evidence ?? benefit?.evidence_summary ?? supplementEvidence;
+      : (benefit?.evidence ?? benefit?.evidence_summary ?? supplementEvidence);
   const evidenceSnippets = buildEvidenceSnippets(evidenceSource);
   const showScanSupportBar =
     ranking &&
@@ -1038,13 +1039,13 @@ export default function SupplementInfoModal() {
   const scannerError = useScannerStore((state) => state.error);
   const scannerProduct = useScannerStore((state) => state.product);
   const scannerMatchedIngredients = useScannerStore(
-    (state) => state.matchedIngredients
+    (state) => state.matchedIngredients,
   );
   const resetScan = useScannerStore((state) => state.resetScan);
   const trackedSupplement = useSupplementsStore((state) =>
     trackedSupplementId
       ? state.supplements.find((item) => item.id === trackedSupplementId)
-      : undefined
+      : undefined,
   );
 
   const [data, setData] = useState(null);
@@ -1077,7 +1078,7 @@ export default function SupplementInfoModal() {
         canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
         fallbackHref: "/",
       }),
-    []
+    [],
   );
   const toastMessage = useToastStore((state) => state.message);
   const toastTarget = useToastStore((state) => state.target);
@@ -1156,7 +1157,7 @@ export default function SupplementInfoModal() {
         if (scanProductId) {
           const productDetail = await getSupplementById(
             createSupplementProductCatalogId(scanProductId),
-            scannerProduct?.productName
+            scannerProduct?.productName,
           );
 
           if (productDetail) {
@@ -1232,7 +1233,7 @@ export default function SupplementInfoModal() {
         .catch((error) => {
           console.error(
             "Failed to build tracked scanned supplement payload",
-            error
+            error,
           );
           if (active) {
             setData(null);
@@ -1296,7 +1297,7 @@ export default function SupplementInfoModal() {
       const currentBenefits = data?.supplement_benefits ?? [];
       const labels = [
         ...new Set(
-          currentBenefits.map((benefit) => benefit?.label).filter(Boolean)
+          currentBenefits.map((benefit) => benefit?.label).filter(Boolean),
         ),
       ];
 
@@ -1319,7 +1320,7 @@ export default function SupplementInfoModal() {
       }
 
       setBenefitRankings(
-        buildBenefitRankings(currentBenefits, rankingRows ?? [])
+        buildBenefitRankings(currentBenefits, rankingRows ?? []),
       );
     };
 
@@ -1385,7 +1386,7 @@ export default function SupplementInfoModal() {
   }, [benefitRankings, data?.supplement_benefits, useProductSupportBar]);
   const matchedIngredients = useMemo(
     () => [...(data?.matchedIngredients ?? [])],
-    [data]
+    [data],
   );
   const linkedDetailItemsByHeading = useMemo(() => {
     if (
@@ -1408,7 +1409,7 @@ export default function SupplementInfoModal() {
           if (key && !lookup.has(key)) {
             lookup.set(key, item);
           }
-        }
+        },
       );
     });
 
@@ -1438,14 +1439,21 @@ export default function SupplementInfoModal() {
     isScanFailure && data?.scanFailureStatus === "not_found";
   const isNoIngredientsScanFailure =
     isScanFailure && data?.scanFailureStatus === "no_ingredients";
+  const isIncompleteGoUpcScan = Boolean(
+    isLiveScanSource &&
+    data?.scanDataSource === "go_upc" &&
+    data?.scanDetailsIncomplete,
+  );
   const isVerified = Boolean(data?.verified);
   const canAddSupplement = Boolean(
     (!isScanFailure && isLiveScanSource && fallbackName) ||
-      (!isScanStyledSource && data?.id && data?.name)
+    (!isScanStyledSource && data?.id && data?.name),
   );
   const canImproveScanWithPhotos = Boolean(
-    isLiveScanSource && isCurrentScanSession
+    isLiveScanSource && isCurrentScanSession,
   );
+  const canImproveScanWithPhotosInHeader =
+    canImproveScanWithPhotos && !isIncompleteGoUpcScan;
   const hasReferenceItems = referenceItems.length > 0;
   const showShareAction = !isScanFailure;
   const showRanking = !useProductSupportBar;
@@ -1453,26 +1461,31 @@ export default function SupplementInfoModal() {
   const visibleBenefitCount = showAllBenefits ? benefits.length : 6;
   const visibleBenefits = benefits.slice(0, visibleBenefitCount);
   const hiddenBenefitCount = Math.max(benefits.length - visibleBenefitCount, 0);
-  const visibleIngredientCount = showAllIngredients ? matchedIngredients.length : 6;
-  const visibleIngredients = matchedIngredients.slice(0, visibleIngredientCount);
+  const visibleIngredientCount = showAllIngredients
+    ? matchedIngredients.length
+    : 6;
+  const visibleIngredients = matchedIngredients.slice(
+    0,
+    visibleIngredientCount,
+  );
   const hiddenIngredientCount = Math.max(
     matchedIngredients.length - visibleIngredientCount,
-    0
+    0,
   );
   const isSupplementProductDetail =
     data?.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT;
   const productId = data?.product_id || data?.id;
   const shouldShowProductImage =
-    !isScanFailure &&
+    (!isScanFailure || isIncompleteGoUpcScan) &&
     data?.catalogType !== CATALOG_TYPES.ACTIVE_INGREDIENT &&
     (isSupplementProductDetail ||
       data?.catalogType === "supplement_product" ||
       Boolean(
         data?.product_id ||
-          data?.display_name ||
-          data?.barcode ||
-          data?.brand ||
-          data?.brand_name
+        data?.display_name ||
+        data?.barcode ||
+        data?.brand ||
+        data?.brand_name,
       ));
   const productImageUrl = getDisplayImageUrl(data);
   const showIngredientsSection =
@@ -1482,13 +1495,13 @@ export default function SupplementInfoModal() {
     !isScanFailure && typeof data?.id === "string" && data.id.trim()
       ? data.id.trim()
       : !isScanFailure && !isScanStyledSource && id
-      ? id
-      : "";
+        ? id
+        : "";
   const canFavourite = Boolean(favouriteSupplementId);
   const showBComplexReference =
     !isScanFailure &&
     B_COMPLEX_REFERENCE_SOURCE_NAMES.has(
-      typeof data?.name === "string" ? data.name.trim() : ""
+      typeof data?.name === "string" ? data.name.trim() : "",
     );
   const benefitScoreTooltipText = useProductSupportBar
     ? BENEFIT_SCORE_TOOLTIP_COPY.scan
@@ -1606,7 +1619,7 @@ export default function SupplementInfoModal() {
     if (headerAreaHeight <= 0) return;
     const threshold = Math.max(
       0,
-      16 + headerAreaHeight - COMPACT_TITLE_HEADER_TRIGGER_OFFSET
+      16 + headerAreaHeight - COMPACT_TITLE_HEADER_TRIGGER_OFFSET,
     );
     toggleCollapsedHeader(event.nativeEvent.contentOffset.y >= threshold);
   };
@@ -1797,7 +1810,9 @@ export default function SupplementInfoModal() {
       await setSupplementHearted(favouriteSupplementId, nextFavouriteState);
       setIsFavourite(nextFavouriteState);
       setFavouriteToastText(
-        nextFavouriteState ? "Added to favourites!" : "Removed from favourites!"
+        nextFavouriteState
+          ? "Added to favourites!"
+          : "Removed from favourites!",
       );
       setShowFavouriteToast(true);
     } catch (error) {
@@ -2067,6 +2082,13 @@ export default function SupplementInfoModal() {
         scrollEventThrottle={16}
       >
         <View style={styles.scrollInner} onLayout={handleHeaderAreaLayout}>
+          <View pointerEvents="none" style={styles.modalHeaderRow}>
+            <View style={styles.modalBrandLockup}>
+              <Image source={SupproLogoDark} style={styles.modalBrandLogo} />
+              <Text style={styles.modalBrandText}>SUPPRO</Text>
+            </View>
+          </View>
+
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Close supplement info"
@@ -2195,9 +2217,11 @@ export default function SupplementInfoModal() {
             {hasReferenceItems ||
             canAddSupplement ||
             showShareAction ||
-            (canImproveScanWithPhotos && !isProductNotRecognizedFailure) ? (
+            (canImproveScanWithPhotosInHeader &&
+              !isProductNotRecognizedFailure) ? (
               <View style={styles.headerActionsContainer}>
-                {canImproveScanWithPhotos && !isProductNotRecognizedFailure ? (
+                {canImproveScanWithPhotosInHeader &&
+                !isProductNotRecognizedFailure ? (
                   <View style={styles.headerActionsRow}>
                     <HeaderAction
                       icon="camera-outline"
@@ -2267,6 +2291,27 @@ export default function SupplementInfoModal() {
                   styles.summaryCardNotRecognized,
               ]}
             >
+              {isIncompleteGoUpcScan ? (
+                <View style={styles.incompleteScanWarning}>
+                  <View style={styles.incompleteScanWarningHeader}>
+                    <View style={styles.incompleteScanWarningIconWrap}>
+                      <Ionicons name="warning" size={18} color="#B42318" />
+                    </View>
+                    <Text style={styles.incompleteScanWarningText}>
+                      Some details may be missing or incomplete
+                    </Text>
+                  </View>
+                  {canImproveScanWithPhotos ? (
+                    <HeaderAction
+                      icon="camera-outline"
+                      label="Improve with photos"
+                      onPress={handleImproveScanWithPhotos}
+                      accent
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+
               {isActiveIngredientDetail ? (
                 <ActiveIngredientSummaryHeader
                   value={displayedRating}
@@ -2300,7 +2345,7 @@ export default function SupplementInfoModal() {
                 </View>
               ) : null}
 
-              {isScanFailure ? (
+              {isScanFailure && !isIncompleteGoUpcScan ? (
                 <View
                   style={[
                     styles.scanFailureState,
@@ -2416,7 +2461,7 @@ export default function SupplementInfoModal() {
                           onPress={() => {
                             setIsBenefitScoreTooltipOpen(false);
                             setOpenBenefitId((current) =>
-                              current === benefit.id ? null : benefit.id
+                              current === benefit.id ? null : benefit.id,
                             );
                           }}
                           onBenefitPress={() => {
@@ -2442,13 +2487,13 @@ export default function SupplementInfoModal() {
                           showRanking={showRanking}
                           scanSupportDriver={
                             useProductSupportBar
-                              ? benefit?.scanSupportDriver ?? null
+                              ? (benefit?.scanSupportDriver ?? null)
                               : null
                           }
                           onPress={() => {
                             setIsBenefitScoreTooltipOpen(false);
                             setOpenBenefitId((current) =>
-                              current === benefit.id ? null : benefit.id
+                              current === benefit.id ? null : benefit.id,
                             );
                           }}
                           onBenefitPress={() => {
@@ -2538,10 +2583,10 @@ export default function SupplementInfoModal() {
                         const ingredientName = String(
                           item?.ingredientName ??
                             item?.catalogName ??
-                            "Matched ingredient"
+                            "Matched ingredient",
                         );
                         const dosageDisplay = String(
-                          item?.dosageDisplay ?? ""
+                          item?.dosageDisplay ?? "",
                         ).trim();
                         const canOpenIngredient = Boolean(item?.catalogId);
 
@@ -2617,12 +2662,12 @@ export default function SupplementInfoModal() {
                                             hasTooltip
                                               ? () => {
                                                   setIsBenefitScoreTooltipOpen(
-                                                    false
+                                                    false,
                                                   );
                                                   setOpenDoseTooltipKey(
                                                     isTooltipOpen
                                                       ? null
-                                                      : tooltipKey
+                                                      : tooltipKey,
                                                   );
                                                 }
                                               : undefined
@@ -2830,7 +2875,9 @@ export default function SupplementInfoModal() {
                           <ReferenceRow
                             key={reference.url}
                             reference={reference}
-                            onPress={() => handleOpenReferenceUrl(reference.url)}
+                            onPress={() =>
+                              handleOpenReferenceUrl(reference.url)
+                            }
                           />
                         ))}
                       </View>
@@ -2913,6 +2960,33 @@ const styles = StyleSheet.create({
   },
   scrollInner: {
     position: "relative",
+  },
+  modalHeaderRow: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 40,
+    minHeight: 34,
+    justifyContent: "center",
+    zIndex: 9,
+  },
+  modalBrandLockup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  modalBrandLogo: {
+    width: 23,
+    height: 23,
+    marginTop: 1,
+  },
+  modalBrandText: {
+    color: appTheme.colors.textPrimary,
+    fontSize: 24,
+    lineHeight: 24,
+    letterSpacing: -0.43,
+    fontFamily: typography.fontFamily.headingBlack,
+    fontWeight: "900",
   },
   headerBlock: {
     marginBottom: 18,
@@ -3180,6 +3254,35 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginTop: 0,
     marginBottom: 0,
+  },
+  incompleteScanWarning: {
+    marginBottom: 18,
+    padding: 16,
+    gap: 12,
+    borderRadius: 16,
+    backgroundColor: "#FFF1F0",
+    borderWidth: 1,
+    borderColor: "#F3B3AD",
+  },
+  incompleteScanWarningHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  incompleteScanWarningIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FDE2E0",
+  },
+  incompleteScanWarningText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "#8F1D18",
+    flex: 1,
   },
   scoreAdjustmentNote: {
     marginTop: 12,

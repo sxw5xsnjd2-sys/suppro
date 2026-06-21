@@ -10,9 +10,11 @@ import { fetchLocalBarcodeScanProduct } from "@src/data/getLocalBarcodeScanProdu
 import {
   buildScanDebugMetadata,
   getOpenFoodFactsQuality,
+  hasUsefulSupplementFactsData,
   shouldCheckDsld,
 } from "@src/data/dsldSourceDecision";
 import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
+import { fetchGoUpcProduct } from "@src/data/getGoUpcProduct";
 import { fetchIngredientMatchCatalog } from "@src/data/getIngredientMatchCatalog";
 import { queueMissingActiveIngredients } from "@src/data/queueMissingActiveIngredients";
 import { scanSupplementPhotos } from "@src/data/scanSupplementPhotos";
@@ -181,6 +183,16 @@ function buildDsldSecondaryProduct({
   };
 }
 
+function logScannerSource(source, product) {
+  logDevelopmentDiagnostic("log", "[scanner-source]", {
+    source,
+    scanDataSource: trimString(product?.scanDataSource) || null,
+    barcode: trimString(product?.barcode) || null,
+    productName:
+      trimString(product?.productName) || trimString(product?.name) || null,
+  });
+}
+
 export const useScannerStore = create((set, get) => ({
   ...createInitialState(),
 
@@ -266,6 +278,9 @@ export const useScannerStore = create((set, get) => ({
       try {
         product = await fetchLocalBarcodeScanProduct(nextBarcode, nextBarcodeType);
         extractionSource = trimString(product?.scanDataSource) || null;
+        if (product) {
+          logScannerSource("local", product);
+        }
       } catch (localLookupError) {
         logBuildAwareDiagnostic(
           "warn",
@@ -312,6 +327,9 @@ export const useScannerStore = create((set, get) => ({
           extractionSource = "open_food_facts";
           offFound = Boolean(product);
           offQuality = getOpenFoodFactsQuality(product);
+          if (product) {
+            logScannerSource("open_food_facts", product);
+          }
         } catch (openFoodFactsError) {
           offFound = false;
           offQuality = "missing";
@@ -340,14 +358,42 @@ export const useScannerStore = create((set, get) => ({
               dsldMatch: dsldResult.dsldMatch,
               sourceDecision,
             });
-            extractionSource = "open_food_facts";
+            extractionSource = "dsld";
+            logScannerSource("dsld", product);
             logDevelopmentDiagnostic(
               "log",
               "[scanner-source-decision]",
               sourceDecision
             );
           } else {
-            throw openFoodFactsError;
+            try {
+              product = await fetchGoUpcProduct(nextBarcode, nextBarcodeType);
+              if (product) {
+                product = {
+                  ...product,
+                  hasIncompleteDetails: !hasUsefulSupplementFactsData(product),
+                };
+                extractionSource = "go_upc";
+                logScannerSource("go_upc", product);
+              }
+            } catch (goUpcError) {
+              logBuildAwareDiagnostic(
+                "warn",
+                "[scanner] Go-UPC lookup failed after DSLD miss",
+                {
+                  developmentDetails: {
+                    message:
+                      typeof goUpcError?.message === "string"
+                        ? goUpcError.message
+                        : "Unknown error",
+                  },
+                }
+              );
+            }
+
+            if (!product) {
+              throw openFoodFactsError;
+            }
           }
         }
       }
@@ -372,6 +418,36 @@ export const useScannerStore = create((set, get) => ({
             ...product,
             dsldMatch: dsldResult.dsldMatch,
           };
+          logScannerSource("dsld", product);
+        } else {
+          try {
+            const goUpcProduct = await fetchGoUpcProduct(
+              nextBarcode,
+              nextBarcodeType
+            );
+            if (goUpcProduct) {
+              product = {
+                ...goUpcProduct,
+                hasIncompleteDetails:
+                  !hasUsefulSupplementFactsData(goUpcProduct),
+              };
+              extractionSource = "go_upc";
+              logScannerSource("go_upc", product);
+            }
+          } catch (goUpcError) {
+            logBuildAwareDiagnostic(
+              "warn",
+              "[scanner] Go-UPC lookup failed after DSLD miss",
+              {
+                developmentDetails: {
+                  message:
+                    typeof goUpcError?.message === "string"
+                      ? goUpcError.message
+                      : "Unknown error",
+                },
+              }
+            );
+          }
         }
       }
 
@@ -392,11 +468,13 @@ export const useScannerStore = create((set, get) => ({
           trimString(product?.scanDataSource) === "supplement_products_master" ||
           trimString(product?.scanDataSource) === "off_products"
             ? trimString(product.scanDataSource)
-            : trimString(product?.dsldMatch?.source)
-              ? "open_food_facts_with_dsld"
-              : trimString(product?.scanDataSource) === "open_food_facts"
-                ? "open_food_facts"
-                : "photo_fallback_pending",
+            : trimString(product?.scanDataSource) === "go_upc"
+              ? "go_upc"
+              : trimString(product?.dsldMatch?.source)
+                ? "open_food_facts_with_dsld"
+                : trimString(product?.scanDataSource) === "open_food_facts"
+                  ? "open_food_facts"
+                  : "photo_fallback_pending",
       });
       if (product && typeof product === "object") {
         product = {
