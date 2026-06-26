@@ -10,12 +10,12 @@ import { fetchLocalBarcodeScanProduct } from "@src/data/getLocalBarcodeScanProdu
 import {
   buildScanDebugMetadata,
   getOpenFoodFactsQuality,
-  hasUsefulSupplementFactsData,
   shouldCheckDsld,
 } from "@src/data/dsldSourceDecision";
 import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
 import { fetchGoUpcProduct } from "@src/data/getGoUpcProduct";
 import { fetchIngredientMatchCatalog } from "@src/data/getIngredientMatchCatalog";
+import { persistGoUpcProduct } from "@src/data/persistGoUpcProduct";
 import { queueMissingActiveIngredients } from "@src/data/queueMissingActiveIngredients";
 import { scanSupplementPhotos } from "@src/data/scanSupplementPhotos";
 import {
@@ -127,6 +127,12 @@ function buildPhotoRescueProduct({
     scanDataSource: wroteCanonicalData
       ? "supplement_products_master"
       : trimString(currentProduct?.scanDataSource) || "photo_rescue",
+    verificationStatus: wroteCanonicalData
+      ? "photo_verified"
+      : trimString(currentProduct?.verificationStatus) || null,
+    hasIncompleteDetails: wroteCanonicalData
+      ? false
+      : Boolean(currentProduct?.hasIncompleteDetails),
     servingSizeText:
       trimString(servingSizeText) || trimString(currentProduct?.servingSizeText),
   };
@@ -191,6 +197,33 @@ function logScannerSource(source, product) {
     productName:
       trimString(product?.productName) || trimString(product?.name) || null,
   });
+}
+
+async function persistProvisionalGoUpcProduct(product, barcodeType) {
+  const persisted = await persistGoUpcProduct(product, barcodeType);
+  if (!persisted || typeof persisted !== "object") {
+    return product;
+  }
+
+  return {
+    ...product,
+    productId:
+      trimString(persisted.productId) || trimString(product?.productId) || null,
+    imageUrl:
+      trimString(persisted.imageUrl) || trimString(product?.imageUrl) || null,
+    imageSourceUrl:
+      trimString(persisted.imageSourceUrl) ||
+      trimString(product?.imageSourceUrl) ||
+      null,
+    imageProvider:
+      trimString(persisted.imageProvider) ||
+      trimString(product?.imageProvider) ||
+      null,
+    verificationStatus:
+      trimString(persisted.verificationStatus) ||
+      trimString(product?.verificationStatus) ||
+      "go_upc_unverified",
+  };
 }
 
 export const useScannerStore = create((set, get) => ({
@@ -369,9 +402,13 @@ export const useScannerStore = create((set, get) => ({
             try {
               product = await fetchGoUpcProduct(nextBarcode, nextBarcodeType);
               if (product) {
+                product = await persistProvisionalGoUpcProduct(
+                  product,
+                  nextBarcodeType
+                );
                 product = {
                   ...product,
-                  hasIncompleteDetails: !hasUsefulSupplementFactsData(product),
+                  hasIncompleteDetails: true,
                 };
                 extractionSource = "go_upc";
                 logScannerSource("go_upc", product);
@@ -426,10 +463,14 @@ export const useScannerStore = create((set, get) => ({
               nextBarcodeType
             );
             if (goUpcProduct) {
+              const persistedGoUpcProduct =
+                await persistProvisionalGoUpcProduct(
+                  goUpcProduct,
+                  nextBarcodeType
+                );
               product = {
-                ...goUpcProduct,
-                hasIncompleteDetails:
-                  !hasUsefulSupplementFactsData(goUpcProduct),
+                ...persistedGoUpcProduct,
+                hasIncompleteDetails: true,
               };
               extractionSource = "go_upc";
               logScannerSource("go_upc", product);

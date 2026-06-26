@@ -54,6 +54,8 @@ export async function buildScannedSupplementPayload(scanState) {
     brand: trimString(scanState?.product?.brand) || null,
     imageUrl: trimString(scanState?.product?.imageUrl) || null,
     scanDataSource: trimString(scanState?.product?.scanDataSource) || null,
+    verificationStatus:
+      trimString(scanState?.product?.verificationStatus) || null,
     scanDetailsIncomplete: Boolean(
       scanState?.product?.hasIncompleteDetails
     ),
@@ -98,6 +100,8 @@ export function buildScannedSupplementFailurePayload(scanState) {
     brand: trimString(scanState?.product?.brand) || null,
     imageUrl: trimString(scanState?.product?.imageUrl) || null,
     scanDataSource: trimString(scanState?.product?.scanDataSource) || null,
+    verificationStatus:
+      trimString(scanState?.product?.verificationStatus) || null,
     scanDetailsIncomplete: Boolean(
       scanState?.product?.hasIncompleteDetails
     ),

@@ -45,6 +45,8 @@ function loadScannerStoreModule(overrides = {}) {
     "getOpenFoodFactsQuality",
     "shouldCheckDsld",
     "maybeFetchDsldScanMatch",
+    "fetchGoUpcProduct",
+    "persistGoUpcProduct",
     "fetchIngredientMatchCatalog",
     "queueMissingActiveIngredients",
     "scanSupplementPhotos",
@@ -126,6 +128,8 @@ return { useScannerStore };`
         confidence: null,
         dsldMatch: null,
       })),
+    overrides.fetchGoUpcProduct ?? (async () => null),
+    overrides.persistGoUpcProduct ?? (async () => null),
     overrides.fetchIngredientMatchCatalog ?? (async () => []),
     overrides.queueMissingActiveIngredients ?? (async () => {}),
     overrides.scanSupplementPhotos ?? (async () => null),
@@ -317,6 +321,72 @@ test("scanner barcode orchestration preserves the DSLD secondary match when Open
     source: "dsld",
     product_name: "Vitamin D3 25 mcg",
   });
+});
+
+test("scanner barcode orchestration persists provisional Go-UPC matches", async () => {
+  const sequence = [];
+  let persistedPayload = null;
+  let persistedBarcodeType = null;
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => {
+      sequence.push("local");
+      return null;
+    },
+    fetchOpenFoodFactsProduct: async () => {
+      sequence.push("off");
+      throw new Error("OpenFoodFacts unavailable");
+    },
+    maybeFetchDsldScanMatch: async () => {
+      sequence.push("dsld");
+      return {
+        checked: true,
+        cacheHit: false,
+        confidence: "low",
+        dsldMatch: null,
+      };
+    },
+    persistGoUpcProduct: async (product, barcodeType) => {
+      persistedPayload = product;
+      persistedBarcodeType = barcodeType;
+      return {
+        productId: "prod_go_upc",
+        imageUrl: "https://cdn.example.com/go-upc.png",
+        imageSourceUrl: "https://cdn.example.com/go-upc.png",
+        imageProvider: "go_upc",
+        verificationStatus: "go_upc_unverified",
+      };
+    },
+    fetchGoUpcProduct: async () => {
+      sequence.push("go_upc");
+      return {
+        barcode: "0123456789012",
+        productName: "Go UPC Magnesium",
+        ingredientsText: "Magnesium",
+        imageUrl: "https://cdn.example.com/go-upc.png",
+        scanDataSource: "go_upc",
+      };
+    },
+    extractBestIngredientCandidates: () => [{ name: "Magnesium" }],
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.deepEqual(sequence, ["local", "off", "dsld", "go_upc"]);
+  assert.equal(persistedPayload?.productName, "Go UPC Magnesium");
+  assert.equal(persistedBarcodeType, "ean13");
+  assert.equal(state.status, "success");
+  assert.equal(state.product.productId, "prod_go_upc");
+  assert.equal(state.product.verificationStatus, "go_upc_unverified");
+  assert.equal(state.product.hasIncompleteDetails, true);
 });
 
 test("non-retail barcodes check the local cache before taking the not_found path", async () => {

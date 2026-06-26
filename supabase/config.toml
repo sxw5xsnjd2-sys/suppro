@@ -51,3 +51,9 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/enrich-product-image/deno.json"
 entrypoint = "./functions/enrich-product-image/index.ts"
+
+[functions.persist-go-upc-product]
+enabled = true
+verify_jwt = true
+import_map = "./functions/persist-go-upc-product/deno.json"
+entrypoint = "./functions/persist-go-upc-product/index.ts"

@@ -99,11 +99,13 @@ export async function fetchGoUpcProduct(barcode, barcodeType) {
     brand,
     barcode: trimString(payload?.code) || normalizedBarcode,
     imageUrl: trimString(product.imageUrl),
+    imageSourceUrl: trimString(product.imageUrl),
     ingredientsText: getIngredientsText(product),
     sourceIngredients: [],
     sourceStatus: 1,
     sourceStatusVerbose: "go_upc",
     scanDataSource: "go_upc",
     source: "go_upc",
+    verificationStatus: "go_upc_unverified",
   };
 }

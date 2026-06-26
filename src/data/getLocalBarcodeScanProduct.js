@@ -5,6 +5,11 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeVerificationStatus(value) {
+  const status = trimString(value);
+  return status || "verified";
+}
+
 function buildBarcodeLookupCandidates(barcode, barcodeType) {
   const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
   const candidates = [normalizedBarcode];
@@ -92,6 +97,24 @@ function extractMasterIngredients(activeIngredientsJson) {
   return ingredients;
 }
 
+async function fetchOffProductByProductId(productId) {
+  if (!trimString(productId)) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("off_products")
+    .select("id, barcode, name, ingredients")
+    .eq("id", trimString(productId))
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? null;
+}
+
 export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
   const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
   if (!isValidBarcode(normalizedBarcode, barcodeType)) {
@@ -105,7 +128,7 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
   const { data: masterBarcodeRows, error: masterBarcodeError } = await supabase
     .from("supplement_products_master")
     .select(
-      "product_id, barcode, display_name, active_ingredients_json, serving_size_text"
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_source_url, image_provider, verification_status"
     )
     .in("barcode", barcodeCandidates);
 
@@ -120,22 +143,38 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
     .find(Boolean);
 
   if (masterByBarcode?.product_id) {
+    const offProduct = await fetchOffProductByProductId(masterByBarcode.product_id);
     const masterIngredients = extractMasterIngredients(
       masterByBarcode.active_ingredients_json
+    );
+    const verificationStatus = normalizeVerificationStatus(
+      masterByBarcode.verification_status
     );
 
     return {
       barcode: trimString(masterByBarcode.barcode) || normalizedBarcode,
       productId: trimString(masterByBarcode.product_id) || null,
-      productName: trimString(masterByBarcode.display_name) || "Scanned supplement",
-      ingredientsText: masterIngredients
-        .map((item) => getIngredientDisplayName(item))
-        .join(", "),
+      productName:
+        trimString(masterByBarcode.display_name) ||
+        trimString(offProduct?.name) ||
+        "Scanned supplement",
+      ingredientsText:
+        masterIngredients.length > 0
+          ? masterIngredients.map((item) => getIngredientDisplayName(item)).join(", ")
+          : trimString(offProduct?.ingredients),
       sourceIngredients: masterIngredients,
       sourceStatus: 1,
-      sourceStatusVerbose: "supplement_products_master",
+      sourceStatusVerbose:
+        verificationStatus === "go_upc_unverified"
+          ? "supplement_products_master_go_upc_unverified"
+          : "supplement_products_master",
       scanDataSource: "supplement_products_master",
       servingSizeText: trimString(masterByBarcode.serving_size_text) || null,
+      imageUrl: trimString(masterByBarcode.image_url) || null,
+      imageSourceUrl: trimString(masterByBarcode.image_source_url) || null,
+      imageProvider: trimString(masterByBarcode.image_provider) || null,
+      verificationStatus,
+      hasIncompleteDetails: verificationStatus === "go_upc_unverified",
     };
   }
 
@@ -161,7 +200,7 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
   const { data: masterRows, error: masterError } = await supabase
     .from("supplement_products_master")
     .select(
-      "product_id, barcode, display_name, active_ingredients_json, serving_size_text"
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_source_url, image_provider, verification_status"
     )
     .eq("product_id", product.id)
     .limit(1);
@@ -175,6 +214,7 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
     master?.active_ingredients_json
   );
   const hasMaster = Boolean(master?.product_id);
+  const verificationStatus = normalizeVerificationStatus(master?.verification_status);
   const productName =
     trimString(master?.display_name) ||
     trimString(product?.name) ||
@@ -184,9 +224,11 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
       ? masterIngredients.map((item) => getIngredientDisplayName(item)).join(", ")
       : trimString(product?.ingredients);
   const sourceStatusVerbose = hasMaster
-    ? masterIngredients.length > 0
-      ? "supplement_products_master"
-      : "supplement_products_master_name_off_products_ingredients"
+    ? verificationStatus === "go_upc_unverified"
+      ? "supplement_products_master_go_upc_unverified"
+      : masterIngredients.length > 0
+        ? "supplement_products_master"
+        : "supplement_products_master_name_off_products_ingredients"
     : "off_products";
 
   return {
@@ -204,5 +246,11 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
       ? "supplement_products_master"
       : "off_products",
     servingSizeText: trimString(master?.serving_size_text) || null,
+    imageUrl: trimString(master?.image_url) || null,
+    imageSourceUrl: trimString(master?.image_source_url) || null,
+    imageProvider: trimString(master?.image_provider) || null,
+    verificationStatus: hasMaster ? verificationStatus : null,
+    hasIncompleteDetails:
+      hasMaster && verificationStatus === "go_upc_unverified",
   };
 }
