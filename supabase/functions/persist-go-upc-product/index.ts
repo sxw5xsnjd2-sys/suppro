@@ -327,6 +327,7 @@ function sanitizeDsldActiveIngredients(value: unknown) {
 
 function getVerificationStatusRank(value: unknown) {
   switch (trimString(value)) {
+    case "open_food_facts_unverified":
     case "ean_search_unverified":
     case "go_upc_unverified":
       return 10;
@@ -342,20 +343,36 @@ function getVerificationStatusRank(value: unknown) {
 }
 
 function getProvisionalBaseSource(source: string) {
-  return source === "ean_search" || source === "ean_search_plus_openai"
-    ? "ean_search"
-    : "go_upc";
+  if (source === "ean_search" || source === "ean_search_plus_openai") {
+    return "ean_search";
+  }
+  if (
+    source === "open_food_facts" ||
+    source === "open_food_facts_plus_openai"
+  ) {
+    return "open_food_facts";
+  }
+  return "go_upc";
 }
 
 function getProvisionalVerificationStatus(source: string) {
-  return getProvisionalBaseSource(source) === "ean_search"
-    ? "ean_search_unverified"
-    : "go_upc_unverified";
+  const baseSource = getProvisionalBaseSource(source);
+  if (baseSource === "ean_search") {
+    return "ean_search_unverified";
+  }
+  if (baseSource === "open_food_facts") {
+    return "open_food_facts_unverified";
+  }
+  return "go_upc_unverified";
 }
 
 function isProvisionalVerificationStatus(value: unknown) {
   const status = trimString(value);
-  return status === "go_upc_unverified" || status === "ean_search_unverified";
+  return (
+    status === "go_upc_unverified" ||
+    status === "ean_search_unverified" ||
+    status === "open_food_facts_unverified"
+  );
 }
 
 const RETAIL_BARCODE_TYPES = new Set(["ean13", "ean8", "upc_a", "upc_e"]);
@@ -743,6 +760,10 @@ Deno.serve(async (request) => {
     ? "ean_search"
     : requestedSource === "ean_search_plus_openai"
     ? "ean_search_plus_openai"
+    : requestedSource === "open_food_facts"
+    ? "open_food_facts"
+    : requestedSource === "open_food_facts_plus_openai"
+    ? "open_food_facts_plus_openai"
     : requestedSource === "go_upc_plus_openai"
     ? "go_upc_plus_openai"
     : "go_upc";
@@ -755,6 +776,7 @@ Deno.serve(async (request) => {
   const brand = trimString(body?.brand);
   const servingSizeText = trimString(body?.servingSizeText);
   let ingredientsText = trimString(body?.ingredientsText);
+  const hadRequestIngredientsText = Boolean(ingredientsText);
   const imageUrl = trimString(body?.imageUrl);
   const imageSourceUrl = trimString(body?.imageSourceUrl) || imageUrl;
   const imageProvider = trimString(body?.imageProvider) ||
@@ -798,6 +820,13 @@ Deno.serve(async (request) => {
       brand,
     });
   }
+  const usedOpenAiIngredientEnrichment = Boolean(
+    !hadRequestIngredientsText && ingredientsText,
+  );
+  const sourceForName =
+    source === "open_food_facts" && usedOpenAiIngredientEnrichment
+      ? "open_food_facts_plus_openai"
+      : source;
 
   if (isProvisionalSource && ingredientsText) {
     console.log(
@@ -805,7 +834,9 @@ Deno.serve(async (request) => {
       {
         barcode,
         productName,
-        source: body?.ingredientsText ? "request_body" : "openai_enrichment",
+        source: hadRequestIngredientsText
+          ? "request_body"
+          : "openai_enrichment",
       },
     );
   }
@@ -876,7 +907,9 @@ Deno.serve(async (request) => {
       existingNameSource !== "go_upc" &&
       existingNameSource !== "go_upc_plus_openai" &&
       existingNameSource !== "ean_search" &&
-      existingNameSource !== "ean_search_plus_openai";
+      existingNameSource !== "ean_search_plus_openai" &&
+      existingNameSource !== "open_food_facts" &&
+      existingNameSource !== "open_food_facts_plus_openai";
 
     const verificationStatus = shouldPreserveHigherQualityExisting
       ? existingVerificationStatus || "verified"
@@ -892,7 +925,7 @@ Deno.serve(async (request) => {
     const resolvedNameSource = shouldPreserveHigherQualityExisting ||
         (isProvisionalSource && shouldPreserveExistingName)
       ? existingNameSource
-      : source;
+      : sourceForName;
     const resolvedNamingConfidence = shouldPreserveHigherQualityExisting ||
         (isProvisionalSource && shouldPreserveExistingName)
       ? shouldPreserveExistingName &&
@@ -963,7 +996,7 @@ Deno.serve(async (request) => {
     console.log("[go-upc-persist] persisted product", {
       barcode,
       productId: productResolution.productId,
-      source,
+      source: sourceForName,
       displayName: resolvedDisplayName,
       nameSource: resolvedNameSource,
       verificationStatus,
@@ -978,6 +1011,7 @@ Deno.serve(async (request) => {
       barcode,
       displayName: resolvedDisplayName,
       nameSource: resolvedNameSource,
+      ingredientsText,
       servingSizeText: resolvedServingSizeText,
       activeIngredientsJson: resolvedActiveIngredients,
       active_ingredients_json: resolvedActiveIngredients,

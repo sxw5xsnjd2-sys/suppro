@@ -1,12 +1,12 @@
 import { create } from "zustand";
 import {
   canonicalizeBarcodeType,
+  fetchOpenFoodFactsProduct,
   isRetailBarcodeType,
   isValidBarcode,
   normalizeBarcode,
 } from "@src/data/getOpenFoodFactsProduct";
 import {
-  fetchOffProductsBarcodeScanProduct,
   fetchSupplementProductsMasterScanProduct,
 } from "@src/data/getLocalBarcodeScanProduct";
 import { buildScanDebugMetadata } from "@src/data/dsldSourceDecision";
@@ -21,6 +21,7 @@ import {
 } from "@src/data/persistGoUpcProduct";
 import { queueMissingActiveIngredients } from "@src/data/queueMissingActiveIngredients";
 import { scanSupplementPhotos } from "@src/data/scanSupplementPhotos";
+import { enrichProductImageIfNeeded } from "@src/lib/productImages";
 import {
   buildPartialProductDetailFailure,
   createScannerFailure,
@@ -52,6 +53,11 @@ const PROVISIONAL_BARCODE_SOURCE_CONFIG = {
     source: "ean_search",
     enrichedSource: "ean_search_plus_openai",
     unverifiedStatus: "ean_search_unverified",
+  },
+  open_food_facts: {
+    source: "open_food_facts",
+    enrichedSource: "open_food_facts_plus_openai",
+    unverifiedStatus: "open_food_facts_unverified",
   },
 };
 
@@ -88,6 +94,17 @@ function getProvisionalBarcodeSource(product) {
     return "go_upc";
   }
 
+  if (
+    values.some(
+      (value) =>
+        value === "open_food_facts" ||
+        value === "open_food_facts_plus_openai" ||
+        value.includes("open_food_facts_unverified"),
+    )
+  ) {
+    return "open_food_facts";
+  }
+
   return null;
 }
 
@@ -99,7 +116,9 @@ function getProvisionalBarcodeSourceConfig(product) {
 
 function isOpenAiEnrichedProvisionalSource(source) {
   return (
-    source === "go_upc_plus_openai" || source === "ean_search_plus_openai"
+    source === "go_upc_plus_openai" ||
+    source === "ean_search_plus_openai" ||
+    source === "open_food_facts_plus_openai"
   );
 }
 
@@ -394,6 +413,13 @@ function getIngredientCount(product) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function buildIngredientsTextFromActiveIngredients(product) {
+  return getActiveIngredientsJson(product)
+    .map((ingredient) => getIngredientDisplayName(ingredient))
+    .filter(Boolean)
+    .join(", ");
+}
+
 function isIncompleteBarcodeProduct(product) {
   if (!product || typeof product !== "object") {
     return true;
@@ -662,6 +688,30 @@ async function persistProvisionalGoUpcProduct(product, barcodeType) {
       trimString(persisted.imageProvider) ||
       trimString(product?.imageProvider) ||
       null,
+    nameSource:
+      trimString(persisted.nameSource) ||
+      trimString(persisted.name_source) ||
+      trimString(product?.nameSource) ||
+      trimString(product?.name_source) ||
+      null,
+    name_source:
+      trimString(persisted.nameSource) ||
+      trimString(persisted.name_source) ||
+      trimString(product?.name_source) ||
+      trimString(product?.nameSource) ||
+      null,
+    namingSource:
+      trimString(persisted.nameSource) ||
+      trimString(persisted.name_source) ||
+      trimString(product?.namingSource) ||
+      trimString(product?.naming_source) ||
+      null,
+    naming_source:
+      trimString(persisted.nameSource) ||
+      trimString(persisted.name_source) ||
+      trimString(product?.naming_source) ||
+      trimString(product?.namingSource) ||
+      null,
     sourceStatusVerbose:
       trimString(product?.sourceStatusVerbose) ||
       trimString(persisted.nameSource) ||
@@ -683,6 +733,12 @@ async function persistProvisionalGoUpcProduct(product, barcodeType) {
       trimString(product?.serving_size_text) ||
       trimString(product?.servingSizeText) ||
       null,
+    ingredientsText:
+      trimString(persisted.ingredientsText) ||
+      trimString(persisted.ingredients_text) ||
+      trimString(product?.ingredientsText) ||
+      buildIngredientsTextFromActiveIngredients(persisted) ||
+      buildIngredientsTextFromActiveIngredients(product),
     servingSizeText:
       trimString(persisted.servingSizeText) ||
       trimString(persisted.serving_size_text) ||
@@ -714,6 +770,64 @@ async function persistProvisionalGoUpcProduct(product, barcodeType) {
       getProvisionalBarcodeSourceConfig(product)?.unverifiedStatus ||
       "go_upc_unverified",
   };
+}
+
+async function maybeApplyImageFallback(product) {
+  if (!product || typeof product !== "object" || getProductImageUrl(product)) {
+    return product;
+  }
+
+  const productId =
+    trimString(product?.product_id) || trimString(product?.productId);
+  if (!productId) {
+    return product;
+  }
+
+  try {
+    const imageResult = await enrichProductImageIfNeeded({
+      ...product,
+      product_id: productId,
+    });
+
+    if (
+      !imageResult?.imageUrl ||
+      (imageResult.status !== "found" && imageResult.status !== "cached")
+    ) {
+      return product;
+    }
+
+    return {
+      ...product,
+      imageUrl: imageResult.imageUrl,
+      image_url: imageResult.imageUrl,
+      imageSourceUrl:
+        trimString(imageResult.sourceUrl) ||
+        trimString(product?.imageSourceUrl) ||
+        trimString(product?.image_source_url) ||
+        imageResult.imageUrl,
+      image_source_url:
+        trimString(imageResult.sourceUrl) ||
+        trimString(product?.image_source_url) ||
+        trimString(product?.imageSourceUrl) ||
+        imageResult.imageUrl,
+      imageProvider:
+        trimString(product?.imageProvider) || "enrich_product_image",
+    };
+  } catch (imageFallbackError) {
+    logBuildAwareDiagnostic(
+      "warn",
+      "[scanner] image fallback failed after Open Food Facts match",
+      {
+        developmentDetails: {
+          message:
+            typeof imageFallbackError?.message === "string"
+              ? imageFallbackError.message
+              : "Unknown error",
+        },
+      },
+    );
+    return product;
+  }
 }
 
 async function maybeEnrichIncompleteProvisionalBarcodeProduct(
@@ -1016,34 +1130,6 @@ export const useScannerStore = create((set, get) => ({
         }
       }
 
-      if (!product) {
-        try {
-          product = await fetchOffProductsBarcodeScanProduct(
-            nextBarcode,
-            nextBarcodeType,
-          );
-          offFound = Boolean(product);
-          extractionSource = trimString(product?.scanDataSource) || null;
-          if (product) {
-            logScannerSource("off_products", product);
-          }
-        } catch (offProductsError) {
-          offFound = false;
-          logBuildAwareDiagnostic(
-            "warn",
-            "[scanner] off_products lookup failed after DSLD, Go-UPC, and EAN-Search",
-            {
-              developmentDetails: {
-                message:
-                  typeof offProductsError?.message === "string"
-                    ? offProductsError.message
-                    : "Unknown error",
-              },
-            },
-          );
-        }
-      }
-
       if (!product && retailBarcode) {
         try {
           product = await searchBarcodeWithOpenAi(nextBarcode, nextBarcodeType);
@@ -1054,12 +1140,61 @@ export const useScannerStore = create((set, get) => ({
         } catch (openAiBarcodeError) {
           logBuildAwareDiagnostic(
             "warn",
-            "[scanner] OpenAI barcode fallback failed after OFF miss",
+            "[scanner] OpenAI barcode fallback failed after EAN-Search miss",
             {
               developmentDetails: {
                 message:
                   typeof openAiBarcodeError?.message === "string"
                     ? openAiBarcodeError.message
+                    : "Unknown error",
+              },
+            },
+          );
+        }
+      }
+
+      if (!product && retailBarcode) {
+        try {
+          product = await fetchOpenFoodFactsProduct(
+            nextBarcode,
+            nextBarcodeType,
+          );
+          offFound = Boolean(product);
+          offQuality = product
+            ? trimString(product?.ingredientsText)
+              ? "ingredient_text"
+              : "metadata_only"
+            : "missing";
+          if (product) {
+            product = await persistProvisionalGoUpcProduct(
+              product,
+              nextBarcodeType,
+            );
+            product = {
+              ...product,
+              hasIncompleteDetails: true,
+            };
+            product = await maybeApplyImageFallback(product);
+            extractionSource =
+              trimString(product?.scanDataSource) || "open_food_facts";
+            logScannerSource("open_food_facts", product);
+          }
+        } catch (openFoodFactsError) {
+          offFound = false;
+          offQuality = "missing";
+          logBuildAwareDiagnostic(
+            "warn",
+            "[scanner] Open Food Facts lookup failed after OpenAI miss",
+            {
+              developmentDetails: {
+                status:
+                  typeof openFoodFactsError?.status === "number"
+                    ? openFoodFactsError.status
+                    : null,
+                code: trimString(openFoodFactsError?.code) || null,
+                message:
+                  typeof openFoodFactsError?.message === "string"
+                    ? openFoodFactsError.message
                     : "Unknown error",
               },
             },
@@ -1108,6 +1243,9 @@ export const useScannerStore = create((set, get) => ({
                           : trimString(product?.scanDataSource) ===
                               "open_food_facts"
                             ? "open_food_facts"
+                            : trimString(product?.scanDataSource) ===
+                                "open_food_facts_plus_openai"
+                              ? "open_food_facts"
                             : "photo_fallback_pending",
       });
       if (product && typeof product === "object") {

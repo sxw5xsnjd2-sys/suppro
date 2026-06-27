@@ -36,10 +36,10 @@ function loadScannerStoreModule(overrides = {}) {
   const factory = new Function(
     "create",
     "canonicalizeBarcodeType",
+    "fetchOpenFoodFactsProduct",
     "isRetailBarcodeType",
     "isValidBarcode",
     "normalizeBarcode",
-    "fetchOffProductsBarcodeScanProduct",
     "fetchSupplementProductsMasterScanProduct",
     "buildScanDebugMetadata",
     "maybeFetchDsldScanMatch",
@@ -51,6 +51,7 @@ function loadScannerStoreModule(overrides = {}) {
     "fetchIngredientMatchCatalog",
     "queueMissingActiveIngredients",
     "scanSupplementPhotos",
+    "enrichProductImageIfNeeded",
     "buildPartialProductDetailFailure",
     "createScannerFailure",
     "normalizeBarcodeScanFailure",
@@ -99,10 +100,10 @@ return { useScannerStore };`
   return factory(
     overrides.create ?? createTestStore,
     overrides.canonicalizeBarcodeType ?? ((value) => value),
+    overrides.fetchOpenFoodFactsProduct ?? (async () => null),
     overrides.isRetailBarcodeType ?? (() => true),
     overrides.isValidBarcode ?? (() => true),
     overrides.normalizeBarcode ?? ((value) => value),
-    overrides.fetchOffProductsBarcodeScanProduct ?? (async () => null),
     overrides.fetchSupplementProductsMasterScanProduct ??
       overrides.fetchLocalBarcodeScanProduct ??
       (async () => null),
@@ -137,6 +138,7 @@ return { useScannerStore };`
     overrides.fetchIngredientMatchCatalog ?? (async () => []),
     overrides.queueMissingActiveIngredients ?? (async () => {}),
     overrides.scanSupplementPhotos ?? (async () => null),
+    overrides.enrichProductImageIfNeeded ?? (async () => null),
     overrides.buildPartialProductDetailFailure ??
       (() => ({
         category: "partial_product_detail",
@@ -221,7 +223,7 @@ test("scanner barcode orchestration checks supplement master before fallbacks", 
   );
 });
 
-test("scanner barcode orchestration checks DSLD before Go-UPC and off_products after master misses", async () => {
+test("scanner barcode orchestration checks DSLD before Go-UPC after master misses", async () => {
   const sequence = [];
   let persistedDsldPayload = null;
   let persistedDsldBarcodeType = null;
@@ -1065,8 +1067,9 @@ test("scanner barcode orchestration keeps metadata-only Go-UPC products when Ope
   assert.equal(state.product.hasIncompleteDetails, true);
 });
 
-test("scanner barcode orchestration uses off_products only after DSLD and Go-UPC miss", async () => {
+test("OpenAI barcode hit stops before Open Food Facts", async () => {
   const sequence = [];
+  let offCalled = false;
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
     normalizeBarcode: (value) => value.replace(/\D/g, ""),
@@ -1089,71 +1092,6 @@ test("scanner barcode orchestration uses off_products only after DSLD and Go-UPC
     },
     fetchEanSearchProduct: async () => {
       sequence.push("ean_search");
-      return null;
-    },
-    fetchOffProductsBarcodeScanProduct: async () => {
-      sequence.push("off_products");
-      return {
-        barcode: "0123456789012",
-        productId: "off_product",
-        productName: "Cached OFF Product",
-        ingredientsText: "Vitamin C",
-        sourceIngredients: [],
-        scanDataSource: "off_products",
-        sourceStatus: 1,
-      };
-    },
-    extractBestIngredientCandidates: () => [{ name: "Vitamin C" }],
-    matchIngredientsToCatalog: () => ({
-      matchedIngredients: [],
-      matches: [],
-      unmatchedIngredients: [],
-    }),
-  });
-
-  const state = await useScannerStore
-    .getState()
-    .processBarcode("0123456789012", "ean13");
-
-  assert.deepEqual(sequence, [
-    "local",
-    "dsld",
-    "go_upc",
-    "ean_search",
-    "off_products",
-  ]);
-  assert.equal(state.status, "success");
-  assert.equal(state.product.scanDataSource, "off_products");
-});
-
-test("scanner barcode orchestration still uses OpenAI after master, DSLD, Go-UPC, EAN-Search, and off_products miss", async () => {
-  const sequence = [];
-  const { useScannerStore } = loadScannerStoreModule({
-    canonicalizeBarcodeType: () => "ean13",
-    normalizeBarcode: (value) => value.replace(/\D/g, ""),
-    fetchLocalBarcodeScanProduct: async () => {
-      sequence.push("local");
-      return null;
-    },
-    maybeFetchDsldScanMatch: async () => {
-      sequence.push("dsld");
-      return {
-        checked: true,
-        cacheHit: false,
-        confidence: "low",
-        dsldMatch: null,
-      };
-    },
-    fetchGoUpcProduct: async () => {
-      sequence.push("go_upc");
-      return null;
-    },
-    fetchEanSearchProduct: async () => {
-      sequence.push("ean_search");
-      return null;
-    },
-    fetchOffProductsBarcodeScanProduct: async () => {
-      sequence.push("off_products");
       return null;
     },
     searchBarcodeWithOpenAi: async () => {
@@ -1172,10 +1110,14 @@ test("scanner barcode orchestration still uses OpenAI after master, DSLD, Go-UPC
         ],
         scanDataSource: "openai_web_search",
         sourceStatusVerbose: "openai_web_search",
-        verificationStatus: "go_upc_unverified",
+        verificationStatus: "openai_unverified",
         hasIncompleteDetails: true,
-        persisted: true,
       };
+    },
+    fetchOpenFoodFactsProduct: async () => {
+      offCalled = true;
+      sequence.push("open_food_facts");
+      return null;
     },
     extractBestIngredientCandidates: () => [{ name: "Vitamin C" }],
     matchIngredientsToCatalog: () => ({
@@ -1194,20 +1136,133 @@ test("scanner barcode orchestration still uses OpenAI after master, DSLD, Go-UPC
     "dsld",
     "go_upc",
     "ean_search",
-    "off_products",
     "openai_web_search",
   ]);
+  assert.equal(offCalled, false);
   assert.equal(state.status, "success");
   assert.equal(state.product.scanDataSource, "openai_web_search");
-  assert.equal(state.product.verificationStatus, "go_upc_unverified");
-  assert.equal(state.product.hasIncompleteDetails, true);
   assert.equal(
     state.product.sourceDecision.final_source_used,
     "openai_web_search"
   );
 });
 
-test("scanner barcode orchestration keeps not_found when OpenAI fallback misses", async () => {
+test("OpenAI miss then Open Food Facts hit returns and persists product", async () => {
+  const sequence = [];
+  let persistedPayload = null;
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => {
+      sequence.push("local");
+      return null;
+    },
+    maybeFetchDsldScanMatch: async () => {
+      sequence.push("dsld");
+      return {
+        checked: true,
+        cacheHit: false,
+        confidence: "low",
+        dsldMatch: null,
+      };
+    },
+    fetchGoUpcProduct: async () => {
+      sequence.push("go_upc");
+      return null;
+    },
+    fetchEanSearchProduct: async () => {
+      sequence.push("ean_search");
+      return null;
+    },
+    searchBarcodeWithOpenAi: async () => {
+      sequence.push("openai_web_search");
+      return null;
+    },
+    fetchOpenFoodFactsProduct: async () => {
+      sequence.push("open_food_facts");
+      return {
+        barcode: "0123456789012",
+        productName: "OFF Vitamin C",
+        brand: "OFF Brand",
+        servingSizeText: "60 tablets",
+        ingredientsText: "Vitamin C 500 mg",
+        imageUrl: "https://images.example.com/off-vitamin-c.png",
+        imageSourceUrl: "https://images.example.com/off-vitamin-c.png",
+        imageProvider: "open_food_facts",
+        categoryTags: ["en:dietary-supplements"],
+        scanDataSource: "open_food_facts",
+        sourceStatusVerbose: "open_food_facts",
+        verificationStatus: "open_food_facts_unverified",
+      };
+    },
+    persistGoUpcProduct: async (product) => {
+      sequence.push("persist_open_food_facts");
+      persistedPayload = product;
+      return {
+        productId: "prod_off",
+        displayName: product.productName,
+        nameSource: "open_food_facts",
+        servingSizeText: product.servingSizeText,
+        active_ingredients_json: [
+          {
+            name: "Vitamin C",
+            dosageValue: 500,
+            dosageUnit: "mg",
+            amountBasis: "per_serving",
+          },
+        ],
+        activeIngredientsJson: [
+          {
+            name: "Vitamin C",
+            dosageValue: 500,
+            dosageUnit: "mg",
+            amountBasis: "per_serving",
+          },
+        ],
+        ingredient_count: 1,
+        ingredientCount: 1,
+        imageUrl: product.imageUrl,
+        imageSourceUrl: product.imageSourceUrl,
+        imageProvider: product.imageProvider,
+        verificationStatus: "open_food_facts_unverified",
+      };
+    },
+    extractBestIngredientCandidates: (product) => product.activeIngredientsJson,
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.deepEqual(sequence, [
+    "local",
+    "dsld",
+    "go_upc",
+    "ean_search",
+    "openai_web_search",
+    "open_food_facts",
+    "persist_open_food_facts",
+  ]);
+  assert.equal(persistedPayload.scanDataSource, "open_food_facts");
+  assert.equal(persistedPayload.ingredientsText, "Vitamin C 500 mg");
+  assert.equal(state.status, "success");
+  assert.equal(state.product.scanDataSource, "open_food_facts");
+  assert.equal(state.product.verificationStatus, "open_food_facts_unverified");
+  assert.equal(state.product.hasIncompleteDetails, true);
+  assert.equal(state.product.imageUrl, "https://images.example.com/off-vitamin-c.png");
+  assert.equal(state.product.nameSource, "open_food_facts");
+  assert.equal(
+    state.product.sourceDecision.final_source_used,
+    "open_food_facts"
+  );
+});
+
+test("Open Food Facts miss returns not_found after OpenAI miss", async () => {
   const sequence = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
@@ -1233,12 +1288,12 @@ test("scanner barcode orchestration keeps not_found when OpenAI fallback misses"
       sequence.push("ean_search");
       return null;
     },
-    fetchOffProductsBarcodeScanProduct: async () => {
-      sequence.push("off_products");
-      return null;
-    },
     searchBarcodeWithOpenAi: async () => {
       sequence.push("openai_web_search");
+      return null;
+    },
+    fetchOpenFoodFactsProduct: async () => {
+      sequence.push("open_food_facts");
       return null;
     },
   });
@@ -1256,9 +1311,290 @@ test("scanner barcode orchestration keeps not_found when OpenAI fallback misses"
     "dsld",
     "go_upc",
     "ean_search",
-    "off_products",
     "openai_web_search",
+    "open_food_facts",
   ]);
+});
+
+test("Open Food Facts image is used when present", async () => {
+  let imageFallbackCalled = false;
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => null,
+    maybeFetchDsldScanMatch: async () => ({
+      checked: true,
+      cacheHit: false,
+      confidence: "low",
+      dsldMatch: null,
+    }),
+    fetchGoUpcProduct: async () => null,
+    fetchEanSearchProduct: async () => null,
+    searchBarcodeWithOpenAi: async () => null,
+    fetchOpenFoodFactsProduct: async () => ({
+      barcode: "0123456789012",
+      productName: "OFF Zinc",
+      ingredientsText: "Zinc 15 mg",
+      imageUrl: "https://images.example.com/off-zinc.png",
+      imageSourceUrl: "https://images.example.com/off-zinc.png",
+      imageProvider: "open_food_facts",
+      scanDataSource: "open_food_facts",
+      verificationStatus: "open_food_facts_unverified",
+    }),
+    persistGoUpcProduct: async (product) => ({
+      productId: "prod_off_zinc",
+      displayName: product.productName,
+      nameSource: "open_food_facts",
+      active_ingredients_json: [{ name: "Zinc", dosageValue: 15, dosageUnit: "mg" }],
+      activeIngredientsJson: [{ name: "Zinc", dosageValue: 15, dosageUnit: "mg" }],
+      ingredient_count: 1,
+      ingredientCount: 1,
+      imageUrl: product.imageUrl,
+      imageSourceUrl: product.imageSourceUrl,
+      imageProvider: product.imageProvider,
+      verificationStatus: "open_food_facts_unverified",
+    }),
+    enrichProductImageIfNeeded: async () => {
+      imageFallbackCalled = true;
+      return {
+        status: "found",
+        imageUrl: "https://images.example.com/fallback-zinc.png",
+      };
+    },
+    extractBestIngredientCandidates: (product) => product.activeIngredientsJson,
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.equal(state.status, "success");
+  assert.equal(state.product.imageUrl, "https://images.example.com/off-zinc.png");
+  assert.equal(state.product.imageProvider, "open_food_facts");
+  assert.equal(imageFallbackCalled, false);
+});
+
+test("Open Food Facts no image uses existing image fallback", async () => {
+  let imageFallbackPayload = null;
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => null,
+    maybeFetchDsldScanMatch: async () => ({
+      checked: true,
+      cacheHit: false,
+      confidence: "low",
+      dsldMatch: null,
+    }),
+    fetchGoUpcProduct: async () => null,
+    fetchEanSearchProduct: async () => null,
+    searchBarcodeWithOpenAi: async () => null,
+    fetchOpenFoodFactsProduct: async () => ({
+      barcode: "0123456789012",
+      productName: "OFF Magnesium",
+      ingredientsText: "Magnesium 200 mg",
+      scanDataSource: "open_food_facts",
+      verificationStatus: "open_food_facts_unverified",
+    }),
+    persistGoUpcProduct: async (product) => ({
+      productId: "prod_off_magnesium",
+      displayName: product.productName,
+      nameSource: "open_food_facts",
+      active_ingredients_json: [{ name: "Magnesium", dosageValue: 200, dosageUnit: "mg" }],
+      activeIngredientsJson: [{ name: "Magnesium", dosageValue: 200, dosageUnit: "mg" }],
+      ingredient_count: 1,
+      ingredientCount: 1,
+      verificationStatus: "open_food_facts_unverified",
+    }),
+    enrichProductImageIfNeeded: async (product) => {
+      imageFallbackPayload = product;
+      return {
+        status: "found",
+        imageUrl: "https://images.example.com/fallback-magnesium.png",
+        sourceUrl: "https://source.example.com/fallback-magnesium",
+      };
+    },
+    extractBestIngredientCandidates: (product) => product.activeIngredientsJson,
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.equal(state.status, "success");
+  assert.equal(imageFallbackPayload.product_id, "prod_off_magnesium");
+  assert.equal(
+    state.product.imageUrl,
+    "https://images.example.com/fallback-magnesium.png"
+  );
+  assert.equal(
+    state.product.imageSourceUrl,
+    "https://source.example.com/fallback-magnesium"
+  );
+  assert.equal(state.product.imageProvider, "enrich_product_image");
+});
+
+test("Open Food Facts ingredient text flows through provisional active-ingredient filtering", async () => {
+  let persistedPayload = null;
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => null,
+    maybeFetchDsldScanMatch: async () => ({
+      checked: true,
+      cacheHit: false,
+      confidence: "low",
+      dsldMatch: null,
+    }),
+    fetchGoUpcProduct: async () => null,
+    fetchEanSearchProduct: async () => null,
+    searchBarcodeWithOpenAi: async () => null,
+    fetchOpenFoodFactsProduct: async () => ({
+      barcode: "0123456789012",
+      productName: "OFF Magnesium Complex",
+      ingredientsText: "Magnesium 200 mg, rice flour, capsule shell",
+      scanDataSource: "open_food_facts",
+      verificationStatus: "open_food_facts_unverified",
+    }),
+    persistGoUpcProduct: async (product) => {
+      persistedPayload = product;
+      return {
+        productId: "prod_off_filtered",
+        displayName: product.productName,
+        nameSource: "open_food_facts",
+        active_ingredients_json: [
+          { name: "Magnesium", dosageValue: 200, dosageUnit: "mg" },
+        ],
+        activeIngredientsJson: [
+          { name: "Magnesium", dosageValue: 200, dosageUnit: "mg" },
+        ],
+        ingredient_count: 1,
+        ingredientCount: 1,
+        verificationStatus: "open_food_facts_unverified",
+      };
+    },
+    extractBestIngredientCandidates: (product) => product.activeIngredientsJson,
+    matchIngredientsToCatalog: (ingredients) => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: ingredients,
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.equal(persistedPayload.ingredientsText, "Magnesium 200 mg, rice flour, capsule shell");
+  assert.equal(state.status, "success");
+  assert.deepEqual(state.ingredients, [
+    { name: "Magnesium", dosageValue: 200, dosageUnit: "mg" },
+  ]);
+});
+
+test("Open Food Facts missing ingredient text can use OpenAI ingredient enrichment metadata", async () => {
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => null,
+    maybeFetchDsldScanMatch: async () => ({
+      checked: true,
+      cacheHit: false,
+      confidence: "low",
+      dsldMatch: null,
+    }),
+    fetchGoUpcProduct: async () => null,
+    fetchEanSearchProduct: async () => null,
+    searchBarcodeWithOpenAi: async () => null,
+    fetchOpenFoodFactsProduct: async () => ({
+      barcode: "0123456789012",
+      productName: "OFF Vitamin D3",
+      ingredientsText: "",
+      scanDataSource: "open_food_facts",
+      verificationStatus: "open_food_facts_unverified",
+    }),
+    persistGoUpcProduct: async (product) => ({
+      productId: "prod_off_openai",
+      displayName: product.productName,
+      nameSource: "open_food_facts_plus_openai",
+      active_ingredients_json: [
+        { name: "Vitamin D3", dosageValue: 25, dosageUnit: "mcg" },
+      ],
+      activeIngredientsJson: [
+        { name: "Vitamin D3", dosageValue: 25, dosageUnit: "mcg" },
+      ],
+      ingredient_count: 1,
+      ingredientCount: 1,
+      verificationStatus: "open_food_facts_unverified",
+    }),
+    extractBestIngredientCandidates: (product) => product.activeIngredientsJson,
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.equal(state.status, "success");
+  assert.equal(state.product.scanDataSource, "open_food_facts");
+  assert.equal(state.product.naming_source, "open_food_facts_plus_openai");
+  assert.equal(state.product.verificationStatus, "open_food_facts_unverified");
+  assert.equal(
+    state.product.sourceDecision.final_source_used,
+    "open_food_facts"
+  );
+});
+
+test("Open Food Facts network, rate-limit, and 503 errors do not throw to the UI", async () => {
+  for (const failure of [
+    { code: "network_error" },
+    { code: "open_food_facts_rate_limited", status: 429 },
+    { code: "open_food_facts_unavailable", status: 503 },
+  ]) {
+    const { useScannerStore } = loadScannerStoreModule({
+      canonicalizeBarcodeType: () => "ean13",
+      normalizeBarcode: (value) => value.replace(/\D/g, ""),
+      fetchLocalBarcodeScanProduct: async () => null,
+      maybeFetchDsldScanMatch: async () => ({
+        checked: true,
+        cacheHit: false,
+        confidence: "low",
+        dsldMatch: null,
+      }),
+      fetchGoUpcProduct: async () => null,
+      fetchEanSearchProduct: async () => null,
+      searchBarcodeWithOpenAi: async () => null,
+      fetchOpenFoodFactsProduct: async () => {
+        const error = new Error("OFF failed");
+        error.code = failure.code;
+        error.status = failure.status;
+        throw error;
+      },
+    });
+
+    const state = await useScannerStore
+      .getState()
+      .processBarcode("0123456789012", "ean13");
+    const finalState = useScannerStore.getState();
+
+    assert.equal(state, null);
+    assert.equal(finalState.status, "not_found");
+    assert.equal(finalState.error.code, "product_not_found");
+  }
 });
 
 test("non-retail barcodes check the local cache before taking the not_found path", async () => {

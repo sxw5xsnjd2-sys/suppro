@@ -1,5 +1,20 @@
 const OPEN_FOOD_FACTS_BASE_URL =
-  "https://world.openfoodfacts.org/api/v0/product";
+  "https://world.openfoodfacts.org/api/v3.6/product";
+const OPEN_FOOD_FACTS_USER_AGENT = "Suppro/1.0 (support@suppro.co.uk)";
+const OPEN_FOOD_FACTS_FIELDS = [
+  "code",
+  "product_name",
+  "product_name_en",
+  "brands",
+  "quantity",
+  "ingredients_text",
+  "ingredients_text_en",
+  "image_url",
+  "selected_images",
+  "categories_tags",
+  "status",
+  "status_verbose",
+];
 
 export const RETAIL_BARCODE_TYPES = ["ean13", "ean8", "upc_a", "upc_e"];
 export const ALPHANUMERIC_BARCODE_TYPES = ["code128", "code39", "code93"];
@@ -126,46 +141,11 @@ export function isRetailBarcodeType(barcodeType) {
   return RETAIL_BARCODE_TYPES.includes(canonicalizeBarcodeType(barcodeType));
 }
 
-function createOpenFoodFactsError(code, message) {
+function createOpenFoodFactsError(code, message, status = null) {
   const error = new Error(message);
   error.code = code;
+  error.status = status;
   return error;
-}
-
-function formatOpenFoodFactsIngredientLabel(ingredient, depth = 0) {
-  if (!ingredient || typeof ingredient !== "object") {
-    return "";
-  }
-
-  const text = trimString(ingredient.text);
-  const id = trimString(ingredient.id).replace(/^[a-z]{2}:/i, "");
-  const percent =
-    typeof ingredient.percent_estimate === "number"
-      ? ` (${ingredient.percent_estimate}%)`
-      : "";
-  const label = text || id;
-
-  if (!label) {
-    return "";
-  }
-
-  return `${"  ".repeat(depth)}${label}${percent}`;
-}
-
-function flattenOpenFoodFactsIngredients(ingredients, depth = 0) {
-  if (!Array.isArray(ingredients)) {
-    return [];
-  }
-
-  return ingredients.flatMap((ingredient) => {
-    const label = formatOpenFoodFactsIngredientLabel(ingredient, depth);
-    const nested = flattenOpenFoodFactsIngredients(
-      ingredient?.ingredients,
-      depth + 1,
-    );
-
-    return [label, ...nested].filter(Boolean);
-  });
 }
 
 export async function fetchOpenFoodFactsProduct(barcode, barcodeType) {
@@ -178,34 +158,89 @@ export async function fetchOpenFoodFactsProduct(barcode, barcodeType) {
     );
   }
 
-  const response = await fetch(
-    `${OPEN_FOOD_FACTS_BASE_URL}/${normalizedBarcode}.json`,
+  const url = new URL(
+    `${OPEN_FOOD_FACTS_BASE_URL}/${encodeURIComponent(normalizedBarcode)}.json`,
   );
+  url.searchParams.set("fields", OPEN_FOOD_FACTS_FIELDS.join(","));
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      "User-Agent": OPEN_FOOD_FACTS_USER_AGENT,
+    },
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
 
   if (!response.ok) {
+    if (response.status === 429 || response.status === 503) {
+      throw createOpenFoodFactsError(
+        response.status === 429
+          ? "open_food_facts_rate_limited"
+          : "open_food_facts_unavailable",
+        "Open Food Facts did not return a usable product.",
+        response.status,
+      );
+    }
+
     throw createOpenFoodFactsError(
       "open_food_facts_unavailable",
-      "We couldn't check that product right now. Please check your connection and try again.",
+      "Open Food Facts did not return a usable product.",
+      response.status,
     );
   }
 
   const payload = await response.json();
 
-  if (payload?.status === 0) {
-    throw createOpenFoodFactsError(
-      "product_not_found",
-      "Sorry, we couldn't find that product, please take pictures to add it to the app",
-    );
+  if (payload?.status === 0 || !payload?.product) {
+    return null;
+  }
+
+  const product = payload.product;
+  const productName =
+    trimString(product.product_name) || trimString(product.product_name_en);
+  const imageUrl =
+    trimString(product.image_url) ||
+    trimString(product.selected_images?.front?.display?.en) ||
+    trimString(product.selected_images?.front?.display?.fr) ||
+    trimString(product.selected_images?.front?.small?.en) ||
+    trimString(product.selected_images?.front?.small?.fr);
+  const ingredientsText =
+    trimString(product.ingredients_text) ||
+    trimString(product.ingredients_text_en);
+
+  if (!productName) {
+    return null;
   }
 
   return {
     barcode: normalizedBarcode,
-    productName: trimString(payload?.product?.product_name),
-    ingredientsText: trimString(payload?.product?.ingredients_text),
-    sourceIngredients: flattenOpenFoodFactsIngredients(
-      payload?.product?.ingredients,
-    ),
-    sourceStatus: typeof payload?.status === "number" ? payload.status : null,
-    sourceStatusVerbose: trimString(payload?.status_verbose),
+    productName,
+    name: productName,
+    brand: trimString(product.brands),
+    servingSizeText: trimString(product.quantity) || null,
+    ingredientsText,
+    sourceIngredients: [],
+    sourceStatus: 1,
+    sourceStatusVerbose: "open_food_facts",
+    scanDataSource: "open_food_facts",
+    source: "open_food_facts",
+    imageUrl: imageUrl || null,
+    imageSourceUrl: imageUrl || null,
+    imageProvider: imageUrl ? "open_food_facts" : null,
+    categoryTags: Array.isArray(product.categories_tags)
+      ? product.categories_tags.filter(Boolean)
+      : [],
+    categoriesTags: Array.isArray(product.categories_tags)
+      ? product.categories_tags.filter(Boolean)
+      : [],
+    active_ingredients_json: [],
+    activeIngredientsJson: [],
+    ingredient_count: 0,
+    ingredientCount: 0,
+    verificationStatus: "open_food_facts_unverified",
+    verification_status: "open_food_facts_unverified",
+    hasIncompleteDetails: true,
   };
 }

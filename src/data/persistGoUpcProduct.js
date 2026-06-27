@@ -28,6 +28,8 @@ const SUPPORTED_PROVISIONAL_SOURCES = new Set([
   "go_upc_plus_openai",
   "ean_search",
   "ean_search_plus_openai",
+  "open_food_facts",
+  "open_food_facts_plus_openai",
 ]);
 
 function getProvisionalPersistenceSource(product) {
