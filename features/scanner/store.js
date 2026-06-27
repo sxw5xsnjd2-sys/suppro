@@ -344,6 +344,27 @@ function isIncompleteBarcodeProduct(product) {
   return getActiveIngredientsJson(product).length === 0;
 }
 
+function isIncompleteProvisionalGoUpcProduct(product) {
+  if (!isIncompleteBarcodeProduct(product)) {
+    return false;
+  }
+
+  const verificationStatus =
+    trimString(product?.verificationStatus) ||
+    trimString(product?.verification_status);
+  const scanDataSource = trimString(product?.scanDataSource);
+  const sourceStatusVerbose = trimString(product?.sourceStatusVerbose);
+
+  return (
+    verificationStatus === "go_upc_unverified" ||
+    scanDataSource === "go_upc" ||
+    scanDataSource === "go_upc_plus_openai" ||
+    sourceStatusVerbose === "go_upc" ||
+    sourceStatusVerbose === "go_upc_plus_openai" ||
+    sourceStatusVerbose.includes("go_upc_unverified")
+  );
+}
+
 function getProductDisplayName(product) {
   return (
     trimString(product?.displayName) ||
@@ -635,6 +656,44 @@ async function persistProvisionalGoUpcProduct(product, barcodeType) {
   };
 }
 
+async function maybeEnrichIncompleteGoUpcProduct(
+  product,
+  barcode,
+  barcodeType,
+) {
+  if (!isIncompleteProvisionalGoUpcProduct(product)) {
+    return product;
+  }
+
+  try {
+    const openAiProduct = await searchBarcodeWithOpenAi(barcode, {
+      barcodeType,
+      fallbackSource: "go_upc_incomplete",
+    });
+    const mergedProduct = mergeGoUpcWithOpenAiProduct(product, openAiProduct);
+
+    if (mergedProduct === product) {
+      return product;
+    }
+
+    return await persistProvisionalGoUpcProduct(mergedProduct, barcodeType);
+  } catch (openAiBarcodeError) {
+    logBuildAwareDiagnostic(
+      "warn",
+      "[scanner] OpenAI barcode enrichment failed after incomplete Go-UPC match",
+      {
+        developmentDetails: {
+          message:
+            typeof openAiBarcodeError?.message === "string"
+              ? openAiBarcodeError.message
+              : "Unknown error",
+        },
+      },
+    );
+    return product;
+  }
+}
+
 export const useScannerStore = create((set, get) => ({
   ...createInitialState(),
 
@@ -725,6 +784,15 @@ export const useScannerStore = create((set, get) => ({
         extractionSource = trimString(product?.scanDataSource) || null;
         if (product) {
           logScannerSource("local", product);
+          product = await maybeEnrichIncompleteGoUpcProduct(
+            product,
+            nextBarcode,
+            nextBarcodeType,
+          );
+          extractionSource = trimString(product?.scanDataSource) || null;
+          if (trimString(product?.scanDataSource) === "go_upc_plus_openai") {
+            logScannerSource("go_upc_plus_openai", product);
+          }
         }
       } catch (localLookupError) {
         logBuildAwareDiagnostic(
@@ -808,45 +876,14 @@ export const useScannerStore = create((set, get) => ({
                 ...product,
                 hasIncompleteDetails: true,
               };
-              if (isIncompleteBarcodeProduct(product)) {
-                try {
-                  const openAiProduct = await searchBarcodeWithOpenAi(
-                    nextBarcode,
-                    {
-                      barcodeType: nextBarcodeType,
-                      fallbackSource: "go_upc_incomplete",
-                    },
-                  );
-
-                  const mergedProduct = mergeGoUpcWithOpenAiProduct(
-                    product,
-                    openAiProduct,
-                  );
-                  if (mergedProduct !== product) {
-                    product = await persistProvisionalGoUpcProduct(
-                      mergedProduct,
-                      nextBarcodeType,
-                    );
-                    logScannerSource("go_upc_plus_openai", product);
-                  }
-                } catch (openAiBarcodeError) {
-                  logBuildAwareDiagnostic(
-                    "warn",
-                    "[scanner] OpenAI barcode enrichment failed after incomplete Go-UPC match",
-                    {
-                      developmentDetails: {
-                        message:
-                          typeof openAiBarcodeError?.message === "string"
-                            ? openAiBarcodeError.message
-                            : "Unknown error",
-                      },
-                    },
-                  );
-                }
-              }
+              product = await maybeEnrichIncompleteGoUpcProduct(
+                product,
+                nextBarcode,
+                nextBarcodeType,
+              );
               extractionSource =
                 trimString(product?.scanDataSource) || "go_upc";
-              logScannerSource("go_upc", product);
+              logScannerSource(extractionSource, product);
             }
           } catch (goUpcError) {
             logBuildAwareDiagnostic(

@@ -681,7 +681,101 @@ test("scanner barcode orchestration enriches incomplete Go-UPC products with Ope
   assert.equal(state.product.hasIncompleteDetails, true);
 });
 
-test("scanner barcode orchestration keeps incomplete Go-UPC products when OpenAI misses", async () => {
+test("scanner barcode orchestration enriches cached incomplete provisional products from local master", async () => {
+  const sequence = [];
+  const persistedPayloads = [];
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => {
+      sequence.push("local");
+      return {
+        barcode: "0123456789012",
+        productId: "prod_go_upc",
+        productName: "Cached Go UPC Magnesium",
+        ingredientsText: "",
+        sourceIngredients: [],
+        scanDataSource: "supplement_products_master",
+        sourceStatusVerbose: "supplement_products_master_go_upc_unverified",
+        verificationStatus: "go_upc_unverified",
+        hasIncompleteDetails: true,
+      };
+    },
+    persistGoUpcProduct: async (product) => {
+      persistedPayloads.push(product);
+      return {
+        productId: "prod_go_upc",
+        displayName: product.displayName || product.productName,
+        active_ingredients_json: product.active_ingredients_json || [],
+        activeIngredientsJson: product.activeIngredientsJson || [],
+        ingredient_count: product.ingredient_count ?? 0,
+        ingredientCount: product.ingredientCount ?? 0,
+        verificationStatus: "go_upc_unverified",
+      };
+    },
+    searchBarcodeWithOpenAi: async () => {
+      sequence.push("openai_web_search");
+      return {
+        barcode: "0123456789012",
+        productName: "Cached Go UPC Magnesium 200 mg",
+        ingredientsText: "Magnesium 200 mg",
+        sourceIngredients: [
+          {
+            name: "Magnesium",
+            dosageValue: 200,
+            dosageUnit: "mg",
+            amountBasis: "per_serving",
+          },
+        ],
+        active_ingredients_json: [
+          {
+            name: "Magnesium",
+            dosageValue: 200,
+            dosageUnit: "mg",
+            amountBasis: "per_serving",
+          },
+        ],
+        ingredient_count: 1,
+        scanDataSource: "openai_web_search",
+        verificationStatus: "go_upc_unverified",
+      };
+    },
+    extractBestIngredientCandidates: (product) => product.sourceIngredients,
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.deepEqual(sequence, ["local", "openai_web_search"]);
+  assert.equal(persistedPayloads.length, 1);
+  assert.equal(persistedPayloads[0].productId, "prod_go_upc");
+  assert.equal(persistedPayloads[0].scanDataSource, "go_upc_plus_openai");
+  assert.equal(state.status, "success");
+  assert.equal(state.product.productId, "prod_go_upc");
+  assert.equal(state.product.scanDataSource, "go_upc_plus_openai");
+  assert.equal(state.product.productName, "Cached Go UPC Magnesium 200 mg");
+  assert.equal(state.product.ingredientCount, 1);
+  assert.deepEqual(state.product.active_ingredients_json, [
+    {
+      name: "Magnesium",
+      dosageValue: 200,
+      dosageUnit: "mg",
+      amountBasis: "per_serving",
+    },
+  ]);
+  assert.equal(
+    state.product.sourceDecision.final_source_used,
+    "go_upc_plus_openai"
+  );
+});
+
+test("scanner barcode orchestration keeps metadata-only Go-UPC products when OpenAI misses", async () => {
   const sequence = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
@@ -704,12 +798,13 @@ test("scanner barcode orchestration keeps incomplete Go-UPC products when OpenAI
       return {
         barcode: "0123456789012",
         productName: "Go UPC Original Magnesium",
-        ingredientsText: "Magnesium",
+        ingredientsText: "",
         imageUrl: "https://cdn.example.com/go-upc.png",
         sourceIngredients: [],
         active_ingredients_json: [],
         ingredient_count: 0,
         scanDataSource: "go_upc",
+        verificationStatus: "go_upc_unverified",
       };
     },
     persistGoUpcProduct: async () => ({
@@ -721,7 +816,7 @@ test("scanner barcode orchestration keeps incomplete Go-UPC products when OpenAI
       sequence.push("openai_web_search");
       return null;
     },
-    extractBestIngredientCandidates: () => [{ name: "Magnesium" }],
+    extractBestIngredientCandidates: () => [],
     matchIngredientsToCatalog: () => ({
       matchedIngredients: [],
       matches: [],
@@ -734,13 +829,14 @@ test("scanner barcode orchestration keeps incomplete Go-UPC products when OpenAI
     .processBarcode("0123456789012", "ean13");
 
   assert.deepEqual(sequence, ["local", "dsld", "go_upc", "openai_web_search"]);
-  assert.equal(state.status, "success");
+  assert.equal(state.status, "no_ingredients");
   assert.equal(state.product.scanDataSource, "go_upc");
   assert.equal(state.product.sourceDecision.final_source_used, "go_upc");
   assert.equal(state.product.productId, "prod_go_upc");
   assert.equal(state.product.productName, "Go UPC Original Magnesium");
   assert.equal(state.product.imageUrl, "https://cdn.example.com/go-upc.png");
   assert.equal(state.product.verificationStatus, "go_upc_unverified");
+  assert.equal(state.product.hasIncompleteDetails, true);
 });
 
 test("scanner barcode orchestration uses off_products only after DSLD and Go-UPC miss", async () => {

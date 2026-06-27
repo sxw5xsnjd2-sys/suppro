@@ -101,6 +101,81 @@ function loadPersistGoUpcHelpers() {
   )();
 }
 
+function loadResolveOrCreateProduct({
+  fetchOffProductByBarcode = async () => null,
+  adminSupabase,
+  normalizeBarcodeValue = (value) => value,
+  cryptoImpl = { randomUUID: () => "generated-product-id" },
+} = {}) {
+  const source = readFileSync(
+    new URL(
+      "../../supabase/functions/persist-go-upc-product/index.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  const resolveStart = source.indexOf("async function resolveOrCreateProduct");
+  if (resolveStart === -1) {
+    throw new Error("Could not find resolveOrCreateProduct in source");
+  }
+
+  const signatureSlice = source.slice(resolveStart);
+  const bodySignatureMatch = signatureSlice.match(/\)\s*\{/);
+  if (!bodySignatureMatch) {
+    throw new Error("Could not find resolveOrCreateProduct body start");
+  }
+
+  const bodyStart =
+    resolveStart + bodySignatureMatch.index + bodySignatureMatch[0].length - 1;
+  let depth = 0;
+  let resolveEnd = -1;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        resolveEnd = index + 1;
+        break;
+      }
+    }
+  }
+
+  if (resolveEnd === -1) {
+    throw new Error("Could not find resolveOrCreateProduct body end");
+  }
+
+  const resolveSource = source.slice(resolveStart, resolveEnd);
+
+  const transformed = [
+    extractFunctionSource(source, "trimString").replace(
+      /function trimString\(value: unknown\): string \{/,
+      "function trimString(value) {",
+    ),
+    resolveSource.replace(
+      /async function resolveOrCreateProduct\([\s\S]*?\)\s*\{/,
+      "async function resolveOrCreateProduct({ barcode, barcodeType, productName, ingredientsText }) {",
+    ).replace(/adminSupabase!/g, "adminSupabase"),
+  ].join("\n\n");
+
+  return new Function(
+    "fetchOffProductByBarcode",
+    "adminSupabase",
+    "TABLES",
+    "normalizeBarcodeValue",
+    "crypto",
+    `${transformed}\nreturn resolveOrCreateProduct;`,
+  )(
+    fetchOffProductByBarcode,
+    adminSupabase,
+    { products: "off_products" },
+    normalizeBarcodeValue,
+    cryptoImpl,
+  );
+}
+
 const {
   buildProvisionalActiveIngredients,
   getVerificationStatusRank,
@@ -241,4 +316,61 @@ test("verification status ranking lets DSLD replace only lower-quality rows", ()
     getVerificationStatusRank("photo_verified") >
       getVerificationStatusRank("dsld_verified"),
   );
+});
+
+test("resolveOrCreateProduct updates blank existing rows instead of duplicating them", async () => {
+  const updates = [];
+  const adminSupabase = {
+    from(table) {
+      assert.equal(table, "off_products");
+      return {
+        update(payload) {
+          return {
+            async eq(column, value) {
+              updates.push({ payload, column, value });
+              return { error: null };
+            },
+          };
+        },
+        async insert() {
+          throw new Error("insert should not be called for an existing product");
+        },
+      };
+    },
+  };
+
+  const resolveOrCreateProduct = loadResolveOrCreateProduct({
+    adminSupabase,
+    fetchOffProductByBarcode: async () => ({
+      id: "prod_existing",
+      barcode: "5045094051748",
+      name: "Boots Marine Collagen",
+      ingredients: "",
+    }),
+  });
+
+  const result = await resolveOrCreateProduct({
+    barcode: "5045094051748",
+    barcodeType: "ean13",
+    productName: "Boots Marine Collagen",
+    ingredientsText: "Marine collagen 5000 mg, Vitamin C 80 mg",
+  });
+
+  assert.deepEqual(updates, [
+    {
+      payload: {
+        ingredients: "Marine collagen 5000 mg, Vitamin C 80 mg",
+      },
+      column: "id",
+      value: "prod_existing",
+    },
+  ]);
+  assert.equal(result.productId, "prod_existing");
+  assert.equal(result.createdProduct, false);
+  assert.deepEqual(result.product, {
+    id: "prod_existing",
+    barcode: "5045094051748",
+    name: "Boots Marine Collagen",
+    ingredients: "Marine collagen 5000 mg, Vitamin C 80 mg",
+  });
 });
