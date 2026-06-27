@@ -524,6 +524,7 @@ test("scanner barcode orchestration does not call OpenAI for complete Go-UPC pro
 test("scanner barcode orchestration enriches incomplete Go-UPC products with OpenAI ingredients", async () => {
   const sequence = [];
   let openAiOptions = null;
+  const persistedPayloads = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
     normalizeBarcode: (value) => value.replace(/\D/g, ""),
@@ -554,13 +555,23 @@ test("scanner barcode orchestration enriches incomplete Go-UPC products with Ope
         scanDataSource: "go_upc",
       };
     },
-    persistGoUpcProduct: async () => ({
-      productId: "prod_go_upc",
-      imageUrl: "https://cdn.example.com/go-upc.png",
-      imageSourceUrl: "https://cdn.example.com/go-upc.png",
-      imageProvider: "go_upc",
-      verificationStatus: "go_upc_unverified",
-    }),
+    persistGoUpcProduct: async (product) => {
+      persistedPayloads.push(product);
+      return {
+        productId: "prod_go_upc",
+        displayName: product.displayName || product.productName,
+        servingSizeText: product.servingSizeText || null,
+        active_ingredients_json: product.active_ingredients_json || [],
+        activeIngredientsJson: product.activeIngredientsJson || [],
+        ingredient_count: product.ingredient_count ?? 0,
+        ingredientCount: product.ingredientCount ?? 0,
+        imageUrl: "https://cdn.example.com/go-upc.png",
+        imageSourceUrl: "https://cdn.example.com/go-upc.png",
+        imageProvider: "go_upc",
+        nameSource: product.scanDataSource || product.source || "go_upc",
+        verificationStatus: "go_upc_unverified",
+      };
+    },
     searchBarcodeWithOpenAi: async (_barcode, options) => {
       sequence.push("openai_web_search");
       openAiOptions = options;
@@ -606,6 +617,30 @@ test("scanner barcode orchestration enriches incomplete Go-UPC products with Ope
   assert.deepEqual(sequence, ["local", "dsld", "go_upc", "openai_web_search"]);
   assert.equal(openAiOptions?.barcodeType, "ean13");
   assert.equal(openAiOptions?.fallbackSource, "go_upc_incomplete");
+  assert.equal(persistedPayloads.length, 2);
+  assert.equal(persistedPayloads[0].scanDataSource, "go_upc");
+  assert.equal(persistedPayloads[1].scanDataSource, "go_upc_plus_openai");
+  assert.equal(persistedPayloads[1].source, "go_upc_plus_openai");
+  assert.equal(persistedPayloads[1].servingSizeText, "2 tablets");
+  assert.equal(persistedPayloads[1].serving_size_text, "2 tablets");
+  assert.equal(persistedPayloads[1].ingredient_count, 1);
+  assert.equal(persistedPayloads[1].ingredientCount, 1);
+  assert.deepEqual(persistedPayloads[1].active_ingredients_json, [
+    {
+      name: "Magnesium",
+      dosageValue: 200,
+      dosageUnit: "mg",
+      amountBasis: "per_serving",
+    },
+  ]);
+  assert.deepEqual(persistedPayloads[1].activeIngredientsJson, [
+    {
+      name: "Magnesium",
+      dosageValue: 200,
+      dosageUnit: "mg",
+      amountBasis: "per_serving",
+    },
+  ]);
   assert.equal(state.status, "success");
   assert.equal(state.product.scanDataSource, "go_upc_plus_openai");
   assert.equal(state.product.sourceDecision.final_source_used, "go_upc_plus_openai");
@@ -615,8 +650,26 @@ test("scanner barcode orchestration enriches incomplete Go-UPC products with Ope
   assert.equal(state.product.imageSourceUrl, "https://cdn.example.com/go-upc.png");
   assert.equal(state.product.productName, "Go UPC Magnesium Citrate 200 mg Tablets");
   assert.equal(state.product.servingSizeText, "2 tablets");
+  assert.equal(state.product.serving_size_text, "2 tablets");
   assert.equal(state.product.ingredient_count, 1);
+  assert.equal(state.product.ingredientCount, 1);
   assert.deepEqual(state.product.active_ingredients_json, [
+    {
+      name: "Magnesium",
+      dosageValue: 200,
+      dosageUnit: "mg",
+      amountBasis: "per_serving",
+    },
+  ]);
+  assert.deepEqual(state.product.activeIngredientsJson, [
+    {
+      name: "Magnesium",
+      dosageValue: 200,
+      dosageUnit: "mg",
+      amountBasis: "per_serving",
+    },
+  ]);
+  assert.deepEqual(state.ingredients, [
     {
       name: "Magnesium",
       dosageValue: 200,

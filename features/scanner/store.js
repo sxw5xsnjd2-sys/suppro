@@ -9,9 +9,7 @@ import {
   fetchOffProductsBarcodeScanProduct,
   fetchSupplementProductsMasterScanProduct,
 } from "@src/data/getLocalBarcodeScanProduct";
-import {
-  buildScanDebugMetadata,
-} from "@src/data/dsldSourceDecision";
+import { buildScanDebugMetadata } from "@src/data/dsldSourceDecision";
 import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
 import { fetchGoUpcProduct } from "@src/data/getGoUpcProduct";
 import { searchBarcodeWithOpenAi } from "@src/data/searchBarcodeWithOpenAi";
@@ -64,11 +62,13 @@ function getIngredientDisplayName(ingredient) {
     trimString(ingredient.dosageOriginalText) ||
     trimString(ingredient.dosage_original_text);
   const dosageValue =
-    typeof ingredient.dosageValue === "number" && Number.isFinite(ingredient.dosageValue)
+    typeof ingredient.dosageValue === "number" &&
+    Number.isFinite(ingredient.dosageValue)
       ? ingredient.dosageValue
-      : typeof ingredient.dosage_value === "number" && Number.isFinite(ingredient.dosage_value)
-      ? ingredient.dosage_value
-      : null;
+      : typeof ingredient.dosage_value === "number" &&
+          Number.isFinite(ingredient.dosage_value)
+        ? ingredient.dosage_value
+        : null;
   const dosageUnit =
     trimString(ingredient.dosageUnit) || trimString(ingredient.dosage_unit);
 
@@ -111,22 +111,25 @@ function buildPhotoRescueProduct({
     .filter(Boolean);
 
   return {
-    ...(currentProduct && typeof currentProduct === "object" ? currentProduct : {}),
+    ...(currentProduct && typeof currentProduct === "object"
+      ? currentProduct
+      : {}),
     barcode: trimString(barcode) || trimString(currentProduct?.barcode),
-    productId: trimString(productId) || trimString(currentProduct?.productId) || null,
+    productId:
+      trimString(productId) || trimString(currentProduct?.productId) || null,
     productName: nextProductName,
     name: nextProductName,
     ingredientsText:
-      ingredientDisplayNames.join(", ") || trimString(currentProduct?.ingredientsText),
+      ingredientDisplayNames.join(", ") ||
+      trimString(currentProduct?.ingredientsText),
     sourceIngredients: nextSourceIngredients,
     sourceStatus:
       typeof currentProduct?.sourceStatus === "number"
         ? currentProduct.sourceStatus
         : 1,
-    sourceStatusVerbose:
-      wroteCanonicalData
-        ? "photo_rescue_canonical"
-        : trimString(currentProduct?.sourceStatusVerbose) || "photo_rescue",
+    sourceStatusVerbose: wroteCanonicalData
+      ? "photo_rescue_canonical"
+      : trimString(currentProduct?.sourceStatusVerbose) || "photo_rescue",
     scanDataSource: wroteCanonicalData
       ? "supplement_products_master"
       : trimString(currentProduct?.scanDataSource) || "photo_rescue",
@@ -137,7 +140,8 @@ function buildPhotoRescueProduct({
       ? false
       : Boolean(currentProduct?.hasIncompleteDetails),
     servingSizeText:
-      trimString(servingSizeText) || trimString(currentProduct?.servingSizeText),
+      trimString(servingSizeText) ||
+      trimString(currentProduct?.servingSizeText),
   };
 }
 
@@ -217,16 +221,19 @@ function buildDsldSecondaryProduct({
 }) {
   const dsldSourceIngredients = [
     ...(Array.isArray(dsldMatch?.active_ingredients_with_disclosed_dose)
-      ? dsldMatch.active_ingredients_with_disclosed_dose
-          .map((row) => mapDsldIngredientRow(row, "active_with_disclosed_dose"))
+      ? dsldMatch.active_ingredients_with_disclosed_dose.map((row) =>
+          mapDsldIngredientRow(row, "active_with_disclosed_dose"),
+        )
       : []),
     ...(Array.isArray(dsldMatch?.active_ingredients_without_disclosed_dose)
-      ? dsldMatch.active_ingredients_without_disclosed_dose
-          .map((row) => mapDsldIngredientRow(row, "active_without_disclosed_dose"))
+      ? dsldMatch.active_ingredients_without_disclosed_dose.map((row) =>
+          mapDsldIngredientRow(row, "active_without_disclosed_dose"),
+        )
       : []),
     ...(Array.isArray(dsldMatch?.proprietary_blend_rows)
-      ? dsldMatch.proprietary_blend_rows
-          .map((row) => mapDsldIngredientRow(row, "proprietary_blend"))
+      ? dsldMatch.proprietary_blend_rows.map((row) =>
+          mapDsldIngredientRow(row, "proprietary_blend"),
+        )
       : []),
   ].filter(Boolean);
   const dsldIngredientsText = dsldSourceIngredients
@@ -240,10 +247,14 @@ function buildDsldSecondaryProduct({
   return {
     ...(product && typeof product === "object" ? product : {}),
     barcode: trimString(barcode) || trimString(product?.barcode),
-    brand: trimString(product?.brand) || trimString(dsldMatch?.brand_name) || null,
+    brand:
+      trimString(product?.brand) || trimString(dsldMatch?.brand_name) || null,
     productName:
-      trimString(product?.productName) || trimString(dsldMatch?.product_name) || null,
-    ingredientsText: trimString(product?.ingredientsText) || dsldIngredientsText,
+      trimString(product?.productName) ||
+      trimString(dsldMatch?.product_name) ||
+      null,
+    ingredientsText:
+      trimString(product?.ingredientsText) || dsldIngredientsText,
     sourceIngredients:
       productSourceIngredients.length > 0
         ? productSourceIngredients
@@ -253,7 +264,9 @@ function buildDsldSecondaryProduct({
     sourceStatusVerbose: trimString(product?.sourceStatusVerbose) || null,
     scanDataSource: trimString(product?.scanDataSource) || "dsld",
     servingSizeText:
-      trimString(product?.servingSizeText) || trimString(dsldMatch?.serving_size) || null,
+      trimString(product?.servingSizeText) ||
+      trimString(dsldMatch?.serving_size) ||
+      null,
     imageUrl: trimString(product?.imageUrl) || null,
     imageSourceUrl: trimString(product?.imageSourceUrl) || null,
     dsldMatch,
@@ -382,7 +395,9 @@ function hasOpenAiBarcodeImprovement(goUpcProduct, openAiProduct) {
     chooseBetterDisplayName(goUpcProduct, openAiProduct) !==
     getProductDisplayName(goUpcProduct);
 
-  return Boolean(openAiHasIngredients || openAiServingSize || betterDisplayName);
+  return Boolean(
+    openAiHasIngredients || openAiServingSize || betterDisplayName,
+  );
 }
 
 function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
@@ -397,7 +412,9 @@ function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
     openAiActiveIngredients.length > 0
       ? openAiActiveIngredients
       : goUpcActiveIngredients;
-  const openAiSourceIngredients = Array.isArray(openAiProduct?.sourceIngredients)
+  const openAiSourceIngredients = Array.isArray(
+    openAiProduct?.sourceIngredients,
+  )
     ? openAiProduct.sourceIngredients
     : [];
   const goUpcSourceIngredients = Array.isArray(goUpcProduct?.sourceIngredients)
@@ -410,7 +427,7 @@ function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
   const ingredientCount =
     activeIngredients.length > 0
       ? activeIngredients.length
-      : getIngredientCount(openAiProduct) ?? getIngredientCount(goUpcProduct);
+      : (getIngredientCount(openAiProduct) ?? getIngredientCount(goUpcProduct));
 
   return {
     ...goUpcProduct,
@@ -418,6 +435,12 @@ function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
     activeIngredientsJson: activeIngredients,
     ingredient_count: ingredientCount,
     ingredientCount,
+    serving_size_text:
+      trimString(openAiProduct?.servingSizeText) ||
+      trimString(openAiProduct?.serving_size_text) ||
+      trimString(goUpcProduct?.servingSizeText) ||
+      trimString(goUpcProduct?.serving_size_text) ||
+      null,
     ingredientsText:
       trimString(openAiProduct?.ingredientsText) ||
       trimString(goUpcProduct?.ingredientsText),
@@ -429,18 +452,40 @@ function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
     productName: displayName || null,
     name: displayName || null,
     displayName,
+    display_name: displayName,
     sourceStatusVerbose: "go_upc_plus_openai",
     scanDataSource: "go_upc_plus_openai",
     source: "go_upc_plus_openai",
-    barcode: trimString(goUpcProduct?.barcode) || trimString(openAiProduct?.barcode),
+    barcode:
+      trimString(goUpcProduct?.barcode) || trimString(openAiProduct?.barcode),
+    product_id:
+      trimString(goUpcProduct?.product_id) ||
+      trimString(goUpcProduct?.productId) ||
+      trimString(openAiProduct?.product_id) ||
+      trimString(openAiProduct?.productId) ||
+      null,
     productId:
       trimString(goUpcProduct?.productId) ||
+      trimString(goUpcProduct?.product_id) ||
       trimString(openAiProduct?.productId) ||
+      trimString(openAiProduct?.product_id) ||
+      null,
+    image_url:
+      trimString(goUpcProduct?.image_url) ||
+      trimString(goUpcProduct?.imageUrl) ||
+      trimString(openAiProduct?.image_url) ||
+      trimString(openAiProduct?.imageUrl) ||
       null,
     imageUrl:
       trimString(goUpcProduct?.imageUrl) ||
       trimString(goUpcProduct?.image_url) ||
       trimString(openAiProduct?.imageUrl) ||
+      null,
+    image_source_url:
+      trimString(goUpcProduct?.image_source_url) ||
+      trimString(goUpcProduct?.imageSourceUrl) ||
+      trimString(openAiProduct?.image_source_url) ||
+      trimString(openAiProduct?.imageSourceUrl) ||
       null,
     imageSourceUrl:
       trimString(goUpcProduct?.imageSourceUrl) ||
@@ -475,7 +520,8 @@ async function persistCanonicalDsldProduct(product, barcodeType) {
 
   return {
     ...product,
-    productId: trimString(persisted.productId) || trimString(product?.productId) || null,
+    productId:
+      trimString(persisted.productId) || trimString(product?.productId) || null,
     verificationStatus:
       trimString(persisted.verificationStatus) ||
       trimString(product?.verificationStatus) ||
@@ -504,19 +550,71 @@ async function persistProvisionalGoUpcProduct(product, barcodeType) {
     ...product,
     productId:
       trimString(persisted.productId) || trimString(product?.productId) || null,
+    product_id:
+      trimString(persisted.productId) ||
+      trimString(persisted.product_id) ||
+      trimString(product?.product_id) ||
+      trimString(product?.productId) ||
+      null,
+    displayName:
+      trimString(persisted.displayName) ||
+      trimString(product?.displayName) ||
+      trimString(product?.display_name) ||
+      null,
+    display_name:
+      trimString(persisted.displayName) ||
+      trimString(persisted.display_name) ||
+      trimString(product?.display_name) ||
+      trimString(product?.displayName) ||
+      null,
     imageUrl:
       trimString(persisted.imageUrl) || trimString(product?.imageUrl) || null,
+    image_url:
+      trimString(persisted.imageUrl) ||
+      trimString(persisted.image_url) ||
+      trimString(product?.image_url) ||
+      trimString(product?.imageUrl) ||
+      null,
     imageSourceUrl:
       trimString(persisted.imageSourceUrl) ||
+      trimString(product?.imageSourceUrl) ||
+      null,
+    image_source_url:
+      trimString(persisted.imageSourceUrl) ||
+      trimString(persisted.image_source_url) ||
+      trimString(product?.image_source_url) ||
       trimString(product?.imageSourceUrl) ||
       null,
     imageProvider:
       trimString(persisted.imageProvider) ||
       trimString(product?.imageProvider) ||
       null,
+    sourceStatusVerbose:
+      trimString(product?.sourceStatusVerbose) ||
+      trimString(persisted.nameSource) ||
+      trimString(persisted.name_source) ||
+      null,
+    scanDataSource:
+      trimString(product?.scanDataSource) ||
+      trimString(persisted.nameSource) ||
+      trimString(persisted.name_source) ||
+      null,
+    source:
+      trimString(product?.source) ||
+      trimString(persisted.nameSource) ||
+      trimString(persisted.name_source) ||
+      null,
+    serving_size_text:
+      trimString(persisted.servingSizeText) ||
+      trimString(persisted.serving_size_text) ||
+      trimString(product?.serving_size_text) ||
+      trimString(product?.servingSizeText) ||
+      null,
     servingSizeText:
       trimString(persisted.servingSizeText) ||
+      trimString(persisted.serving_size_text) ||
       trimString(product?.servingSizeText) ||
+      trimString(product?.serving_size_text) ||
       null,
     active_ingredients_json:
       getActiveIngredientsJson(persisted).length > 0
@@ -622,7 +720,7 @@ export const useScannerStore = create((set, get) => ({
       try {
         product = await fetchSupplementProductsMasterScanProduct(
           nextBarcode,
-          nextBarcodeType
+          nextBarcodeType,
         );
         extractionSource = trimString(product?.scanDataSource) || null;
         if (product) {
@@ -639,7 +737,7 @@ export const useScannerStore = create((set, get) => ({
                   ? localLookupError.message
                   : "Unknown error",
             },
-          }
+          },
         );
       }
 
@@ -672,12 +770,12 @@ export const useScannerStore = create((set, get) => ({
             try {
               const goUpcCosmetics = await fetchGoUpcProduct(
                 nextBarcode,
-                nextBarcodeType
+                nextBarcodeType,
               );
               if (goUpcCosmetics) {
                 product = enrichDsldProductWithGoUpcCosmetics(
                   product,
-                  goUpcCosmetics
+                  goUpcCosmetics,
                 );
               }
             } catch (goUpcError) {
@@ -691,7 +789,7 @@ export const useScannerStore = create((set, get) => ({
                         ? goUpcError.message
                         : "Unknown error",
                   },
-                }
+                },
               );
             }
           }
@@ -704,7 +802,7 @@ export const useScannerStore = create((set, get) => ({
             if (product) {
               product = await persistProvisionalGoUpcProduct(
                 product,
-                nextBarcodeType
+                nextBarcodeType,
               );
               product = {
                 ...product,
@@ -717,14 +815,18 @@ export const useScannerStore = create((set, get) => ({
                     {
                       barcodeType: nextBarcodeType,
                       fallbackSource: "go_upc_incomplete",
-                    }
+                    },
                   );
+
                   const mergedProduct = mergeGoUpcWithOpenAiProduct(
                     product,
-                    openAiProduct
+                    openAiProduct,
                   );
                   if (mergedProduct !== product) {
-                    product = mergedProduct;
+                    product = await persistProvisionalGoUpcProduct(
+                      mergedProduct,
+                      nextBarcodeType,
+                    );
                     logScannerSource("go_upc_plus_openai", product);
                   }
                 } catch (openAiBarcodeError) {
@@ -738,11 +840,12 @@ export const useScannerStore = create((set, get) => ({
                             ? openAiBarcodeError.message
                             : "Unknown error",
                       },
-                    }
+                    },
                   );
                 }
               }
-              extractionSource = trimString(product?.scanDataSource) || "go_upc";
+              extractionSource =
+                trimString(product?.scanDataSource) || "go_upc";
               logScannerSource("go_upc", product);
             }
           } catch (goUpcError) {
@@ -756,7 +859,7 @@ export const useScannerStore = create((set, get) => ({
                       ? goUpcError.message
                       : "Unknown error",
                 },
-              }
+              },
             );
           }
         }
@@ -766,7 +869,7 @@ export const useScannerStore = create((set, get) => ({
         try {
           product = await fetchOffProductsBarcodeScanProduct(
             nextBarcode,
-            nextBarcodeType
+            nextBarcodeType,
           );
           offFound = Boolean(product);
           extractionSource = trimString(product?.scanDataSource) || null;
@@ -785,7 +888,7 @@ export const useScannerStore = create((set, get) => ({
                     ? offProductsError.message
                     : "Unknown error",
               },
-            }
+            },
           );
         }
       }
@@ -808,7 +911,7 @@ export const useScannerStore = create((set, get) => ({
                     ? openAiBarcodeError.message
                     : "Unknown error",
               },
-            }
+            },
           );
         }
       }
@@ -831,7 +934,8 @@ export const useScannerStore = create((set, get) => ({
         dsldCacheHit,
         dsldConfidence,
         finalSourceUsed:
-          trimString(product?.scanDataSource) === "supplement_products_master" ||
+          trimString(product?.scanDataSource) ===
+            "supplement_products_master" ||
           trimString(product?.scanDataSource) === "off_products"
             ? trimString(product.scanDataSource)
             : trimString(product?.scanDataSource) === "go_upc"
@@ -842,11 +946,12 @@ export const useScannerStore = create((set, get) => ({
                   ? "dsld"
                   : trimString(product?.scanDataSource) === "openai_web_search"
                     ? "openai_web_search"
-                : trimString(product?.dsldMatch?.source)
-                ? "open_food_facts_with_dsld"
-                : trimString(product?.scanDataSource) === "open_food_facts"
-                  ? "open_food_facts"
-                  : "photo_fallback_pending",
+                    : trimString(product?.dsldMatch?.source)
+                      ? "open_food_facts_with_dsld"
+                      : trimString(product?.scanDataSource) ===
+                          "open_food_facts"
+                        ? "open_food_facts"
+                        : "photo_fallback_pending",
       });
       if (product && typeof product === "object") {
         product = {
@@ -854,7 +959,11 @@ export const useScannerStore = create((set, get) => ({
           sourceDecision,
         };
       }
-      logDevelopmentDiagnostic("log", "[scanner-source-decision]", sourceDecision);
+      logDevelopmentDiagnostic(
+        "log",
+        "[scanner-source-decision]",
+        sourceDecision,
+      );
 
       if (!product.ingredientsText || ingredients.length === 0) {
         set(() => ({
@@ -912,7 +1021,7 @@ export const useScannerStore = create((set, get) => ({
             "[scanner] failed to queue missing active ingredients",
             {
               developmentDetails: { reason: "unexpected_queue_error" },
-            }
+            },
           );
         });
       }
@@ -950,7 +1059,7 @@ export const useScannerStore = create((set, get) => ({
     const currentState = get();
     const requestedScanSessionId = Number.parseInt(
       String(scanSessionId ?? ""),
-      10
+      10,
     );
 
     if (
@@ -958,7 +1067,7 @@ export const useScannerStore = create((set, get) => ({
       requestedScanSessionId !== currentState.scanSessionId
     ) {
       const error = new Error(
-        "That scan is no longer active. Please rescan the barcode and try again."
+        "That scan is no longer active. Please rescan the barcode and try again.",
       );
       error.category = SCANNER_FAILURE_CATEGORIES.expiredScanSession;
       error.code = "expired_scan_session";
@@ -994,7 +1103,9 @@ export const useScannerStore = create((set, get) => ({
 
     try {
       logDevelopmentDiagnostic("info", "[scanner-photo-rescue] submitting", {
-        hasExistingProductId: Boolean(trimString(currentState.product?.productId)),
+        hasExistingProductId: Boolean(
+          trimString(currentState.product?.productId),
+        ),
       });
 
       const extraction = await scanSupplementPhotos({
@@ -1008,7 +1119,7 @@ export const useScannerStore = create((set, get) => ({
       });
 
       const ingredients = extractIngredientCandidatesFromList(
-        extraction.ingredients
+        extraction.ingredients,
       );
 
       if (extraction.isSupplement === false) {
@@ -1037,7 +1148,10 @@ export const useScannerStore = create((set, get) => ({
       if (ingredients.length) {
         try {
           const catalogRows = await fetchIngredientMatchCatalog();
-          const nextMatches = matchIngredientsToCatalog(ingredients, catalogRows);
+          const nextMatches = matchIngredientsToCatalog(
+            ingredients,
+            catalogRows,
+          );
           matchedIngredients = nextMatches.matchedIngredients;
           matches = nextMatches.matches;
           unmatchedIngredients = nextMatches.unmatchedIngredients;
@@ -1052,7 +1166,7 @@ export const useScannerStore = create((set, get) => ({
                     ? matchError.message
                     : "Unknown error",
               },
-            }
+            },
           );
 
           if (!extraction.wroteCanonicalData) {
@@ -1090,11 +1204,13 @@ export const useScannerStore = create((set, get) => ({
         photoRescueStatus: "success",
         photoRescueError: null,
         extractionSource: extraction.source || "photo_rescue",
-        extractionConfidence: Number.isFinite(extraction.classificationConfidence)
+        extractionConfidence: Number.isFinite(
+          extraction.classificationConfidence,
+        )
           ? extraction.classificationConfidence
           : Number.isFinite(extraction.confidence)
-          ? extraction.confidence
-          : null,
+            ? extraction.confidence
+            : null,
       }));
 
       logDevelopmentDiagnostic("info", "[scanner-photo-rescue] completed", {

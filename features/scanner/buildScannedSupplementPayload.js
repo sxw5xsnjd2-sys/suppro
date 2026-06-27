@@ -14,6 +14,23 @@ function buildScannedSupplementName(scanState) {
   );
 }
 
+function getActiveIngredientsJson(product) {
+  const ingredients =
+    product?.active_ingredients_json ?? product?.activeIngredientsJson;
+
+  return Array.isArray(ingredients) ? ingredients.filter(Boolean) : [];
+}
+
+function getIngredientCount(product) {
+  const count = product?.ingredient_count ?? product?.ingredientCount;
+  if (typeof count === "number" && Number.isFinite(count)) {
+    return count;
+  }
+
+  const parsed = Number.parseInt(String(count ?? "").trim(), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export async function buildScannedSupplementPayload(scanState) {
   const matchedIngredients = filterActiveMatchedIngredients(
     scanState?.matchedIngredients
@@ -54,6 +71,18 @@ export async function buildScannedSupplementPayload(scanState) {
     brand: trimString(scanState?.product?.brand) || null,
     imageUrl: trimString(scanState?.product?.imageUrl) || null,
     scanDataSource: trimString(scanState?.product?.scanDataSource) || null,
+    active_ingredients_json: getActiveIngredientsJson(scanState?.product),
+    activeIngredientsJson: getActiveIngredientsJson(scanState?.product),
+    ingredient_count: getIngredientCount(scanState?.product),
+    ingredientCount: getIngredientCount(scanState?.product),
+    serving_size_text:
+      trimString(scanState?.product?.serving_size_text) ||
+      trimString(scanState?.product?.servingSizeText) ||
+      null,
+    servingSizeText:
+      trimString(scanState?.product?.servingSizeText) ||
+      trimString(scanState?.product?.serving_size_text) ||
+      null,
     verificationStatus:
       trimString(scanState?.product?.verificationStatus) || null,
     scanDetailsIncomplete: Boolean(

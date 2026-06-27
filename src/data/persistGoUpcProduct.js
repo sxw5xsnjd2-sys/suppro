@@ -6,6 +6,32 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function getActiveIngredientsJson(product) {
+  const ingredients =
+    product?.active_ingredients_json ?? product?.activeIngredientsJson;
+
+  return Array.isArray(ingredients) ? ingredients.filter(Boolean) : [];
+}
+
+function getIngredientCount(product) {
+  const count = product?.ingredient_count ?? product?.ingredientCount;
+  if (typeof count === "number" && Number.isFinite(count)) {
+    return count;
+  }
+
+  const parsed = Number.parseInt(String(count ?? "").trim(), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getGoUpcPersistenceSource(product) {
+  const source =
+    trimString(product?.scanDataSource) ||
+    trimString(product?.source) ||
+    trimString(product?.sourceStatusVerbose);
+
+  return source === "go_upc_plus_openai" ? source : "go_upc";
+}
+
 export async function persistGoUpcProduct(product, barcodeType) {
   if (!product || typeof product !== "object") {
     return null;
@@ -17,6 +43,10 @@ export async function persistGoUpcProduct(product, barcodeType) {
   ).toLowerCase();
   const productName =
     trimString(product.productName) || trimString(product.name) || "";
+  const activeIngredients = getActiveIngredientsJson(product);
+  const sourceIngredients = Array.isArray(product.sourceIngredients)
+    ? product.sourceIngredients
+    : activeIngredients;
 
   if (!barcode || !productName) {
     return null;
@@ -31,16 +61,27 @@ export async function persistGoUpcProduct(product, barcodeType) {
           Authorization: `Bearer ${accessToken}`,
         },
         body: {
+          source: getGoUpcPersistenceSource(product),
           barcode,
           barcodeType: normalizedBarcodeType || null,
           productName,
           brand: trimString(product.brand) || null,
           ingredientsText: trimString(product.ingredientsText) || null,
+          servingSizeText:
+            trimString(product.servingSizeText) ||
+            trimString(product.serving_size_text) ||
+            null,
+          sourceIngredients,
+          activeIngredientsJson: activeIngredients,
+          active_ingredients_json: activeIngredients,
+          ingredientCount: getIngredientCount(product),
+          ingredient_count: getIngredientCount(product),
           imageUrl: trimString(product.imageUrl) || null,
           imageSourceUrl:
             trimString(product.imageSourceUrl) ||
             trimString(product.imageUrl) ||
             null,
+          imageProvider: trimString(product.imageProvider) || null,
         },
       }
     );
