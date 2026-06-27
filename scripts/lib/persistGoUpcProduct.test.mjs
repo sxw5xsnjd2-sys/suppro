@@ -304,6 +304,10 @@ test("DSLD ingredient sanitizer keeps canonical fields and deduplicates rows", (
 });
 
 test("verification status ranking lets DSLD replace only lower-quality rows", () => {
+  assert.equal(
+    getVerificationStatusRank("ean_search_unverified"),
+    getVerificationStatusRank("go_upc_unverified"),
+  );
   assert.ok(
     getVerificationStatusRank("dsld_verified") >
       getVerificationStatusRank("go_upc_unverified"),

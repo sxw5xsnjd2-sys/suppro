@@ -548,7 +548,9 @@ async function getSupplementProductById(catalogId, fallbackName) {
     image_last_checked_at: trimString(data?.image_last_checked_at) || null,
     verification_status: verificationStatus,
     verificationStatus,
-    scanDetailsIncomplete: verificationStatus === "go_upc_unverified",
+    scanDetailsIncomplete:
+      verificationStatus === "go_upc_unverified" ||
+      verificationStatus === "ean_search_unverified",
     ingredient_count: activeIngredients.length,
   };
 }

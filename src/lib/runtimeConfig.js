@@ -57,10 +57,20 @@ const expoExtraGoUpcApiKey = firstNonEmptyString([
   manifest2Extra?.goUpcApiKey,
   expoGoConfigExtra?.goUpcApiKey,
 ]);
+const processEnvEanSearchToken =
+  process.env.EXPO_PUBLIC_EAN_SEARCH_TOKEN?.trim() ?? "";
+const expoExtraEanSearchToken = firstNonEmptyString([
+  expoConfigExtra?.eanSearchToken,
+  manifestExtra?.eanSearchToken,
+  manifest2Extra?.eanSearchToken,
+  expoGoConfigExtra?.eanSearchToken,
+]);
 
 export const SUPABASE_URL = processEnvUrl || expoExtraUrl;
 export const SUPABASE_ANON_KEY = processEnvAnonKey || expoExtraAnonKey;
 export const GO_UPC_API_KEY = processEnvGoUpcApiKey || expoExtraGoUpcApiKey;
+export const EAN_SEARCH_TOKEN =
+  processEnvEanSearchToken || expoExtraEanSearchToken;
 export const ENABLE_DSLD_LOOKUP =
   (processEnvEnableDsldLookup || expoExtraEnableDsldLookup).toLowerCase() ===
   "true";

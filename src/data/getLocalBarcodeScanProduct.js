@@ -10,6 +10,31 @@ function normalizeVerificationStatus(value) {
   return status || "verified";
 }
 
+function getProvisionalSourceFromVerificationStatus(verificationStatus) {
+  if (verificationStatus === "ean_search_unverified") {
+    return "ean_search";
+  }
+
+  if (verificationStatus === "go_upc_unverified") {
+    return "go_upc";
+  }
+
+  return null;
+}
+
+function isProvisionalVerificationStatus(verificationStatus) {
+  return Boolean(getProvisionalSourceFromVerificationStatus(verificationStatus));
+}
+
+function getSupplementMasterSourceStatusVerbose(verificationStatus) {
+  const provisionalSource =
+    getProvisionalSourceFromVerificationStatus(verificationStatus);
+
+  return provisionalSource
+    ? `supplement_products_master_${provisionalSource}_unverified`
+    : "supplement_products_master";
+}
+
 function buildBarcodeLookupCandidates(barcode, barcodeType) {
   const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
   const candidates = [normalizedBarcode];
@@ -165,16 +190,14 @@ export async function fetchSupplementProductsMasterScanProduct(barcode, barcodeT
       sourceIngredients: masterIngredients,
       sourceStatus: 1,
       sourceStatusVerbose:
-        verificationStatus === "go_upc_unverified"
-          ? "supplement_products_master_go_upc_unverified"
-          : "supplement_products_master",
+        getSupplementMasterSourceStatusVerbose(verificationStatus),
       scanDataSource: "supplement_products_master",
       servingSizeText: trimString(masterByBarcode.serving_size_text) || null,
       imageUrl: trimString(masterByBarcode.image_url) || null,
       imageSourceUrl: trimString(masterByBarcode.image_source_url) || null,
       imageProvider: trimString(masterByBarcode.image_provider) || null,
       verificationStatus,
-      hasIncompleteDetails: verificationStatus === "go_upc_unverified",
+      hasIncompleteDetails: isProvisionalVerificationStatus(verificationStatus),
     };
   }
 
@@ -238,8 +261,8 @@ export async function fetchOffProductsBarcodeScanProduct(barcode, barcodeType) {
       ? masterIngredients.map((item) => getIngredientDisplayName(item)).join(", ")
       : trimString(product?.ingredients);
   const sourceStatusVerbose = hasMaster
-    ? verificationStatus === "go_upc_unverified"
-      ? "supplement_products_master_go_upc_unverified"
+    ? isProvisionalVerificationStatus(verificationStatus)
+      ? getSupplementMasterSourceStatusVerbose(verificationStatus)
       : masterIngredients.length > 0
         ? "supplement_products_master"
         : "supplement_products_master_name_off_products_ingredients"
@@ -265,7 +288,7 @@ export async function fetchOffProductsBarcodeScanProduct(barcode, barcodeType) {
     imageProvider: trimString(master?.image_provider) || null,
     verificationStatus: hasMaster ? verificationStatus : null,
     hasIncompleteDetails:
-      hasMaster && verificationStatus === "go_upc_unverified",
+      hasMaster && isProvisionalVerificationStatus(verificationStatus),
   };
 }
 

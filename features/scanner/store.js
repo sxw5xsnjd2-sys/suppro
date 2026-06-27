@@ -11,6 +11,7 @@ import {
 } from "@src/data/getLocalBarcodeScanProduct";
 import { buildScanDebugMetadata } from "@src/data/dsldSourceDecision";
 import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
+import { fetchEanSearchProduct } from "@src/data/getEanSearchProduct";
 import { fetchGoUpcProduct } from "@src/data/getGoUpcProduct";
 import { searchBarcodeWithOpenAi } from "@src/data/searchBarcodeWithOpenAi";
 import { fetchIngredientMatchCatalog } from "@src/data/getIngredientMatchCatalog";
@@ -39,6 +40,67 @@ import {
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+const PROVISIONAL_BARCODE_SOURCE_CONFIG = {
+  go_upc: {
+    source: "go_upc",
+    enrichedSource: "go_upc_plus_openai",
+    unverifiedStatus: "go_upc_unverified",
+  },
+  ean_search: {
+    source: "ean_search",
+    enrichedSource: "ean_search_plus_openai",
+    unverifiedStatus: "ean_search_unverified",
+  },
+};
+
+function getProvisionalBarcodeSource(product) {
+  const values = [
+    product?.scanDataSource,
+    product?.source,
+    product?.sourceStatusVerbose,
+    product?.verificationStatus,
+    product?.verification_status,
+  ]
+    .map((value) => trimString(value).toLowerCase())
+    .filter(Boolean);
+
+  if (
+    values.some(
+      (value) =>
+        value === "ean_search" ||
+        value === "ean_search_plus_openai" ||
+        value.includes("ean_search_unverified"),
+    )
+  ) {
+    return "ean_search";
+  }
+
+  if (
+    values.some(
+      (value) =>
+        value === "go_upc" ||
+        value === "go_upc_plus_openai" ||
+        value.includes("go_upc_unverified"),
+    )
+  ) {
+    return "go_upc";
+  }
+
+  return null;
+}
+
+function getProvisionalBarcodeSourceConfig(product) {
+  return PROVISIONAL_BARCODE_SOURCE_CONFIG[
+    getProvisionalBarcodeSource(product)
+  ];
+}
+
+function isOpenAiEnrichedProvisionalSource(source) {
+  return (
+    source === "go_upc_plus_openai" || source === "ean_search_plus_openai"
+  );
 }
 
 function getIngredientDisplayName(ingredient) {
@@ -344,25 +406,12 @@ function isIncompleteBarcodeProduct(product) {
   return getActiveIngredientsJson(product).length === 0;
 }
 
-function isIncompleteProvisionalGoUpcProduct(product) {
+function isIncompleteProvisionalBarcodeProduct(product) {
   if (!isIncompleteBarcodeProduct(product)) {
     return false;
   }
 
-  const verificationStatus =
-    trimString(product?.verificationStatus) ||
-    trimString(product?.verification_status);
-  const scanDataSource = trimString(product?.scanDataSource);
-  const sourceStatusVerbose = trimString(product?.sourceStatusVerbose);
-
-  return (
-    verificationStatus === "go_upc_unverified" ||
-    scanDataSource === "go_upc" ||
-    scanDataSource === "go_upc_plus_openai" ||
-    sourceStatusVerbose === "go_upc" ||
-    sourceStatusVerbose === "go_upc_plus_openai" ||
-    sourceStatusVerbose.includes("go_upc_unverified")
-  );
+  return Boolean(getProvisionalBarcodeSource(product));
 }
 
 function getProductDisplayName(product) {
@@ -426,6 +475,9 @@ function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
     return goUpcProduct;
   }
 
+  const provisionalSourceConfig =
+    getProvisionalBarcodeSourceConfig(goUpcProduct) ??
+    PROVISIONAL_BARCODE_SOURCE_CONFIG.go_upc;
   const displayName = chooseBetterDisplayName(goUpcProduct, openAiProduct);
   const openAiActiveIngredients = getActiveIngredientsJson(openAiProduct);
   const goUpcActiveIngredients = getActiveIngredientsJson(goUpcProduct);
@@ -474,9 +526,9 @@ function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
     name: displayName || null,
     displayName,
     display_name: displayName,
-    sourceStatusVerbose: "go_upc_plus_openai",
-    scanDataSource: "go_upc_plus_openai",
-    source: "go_upc_plus_openai",
+    sourceStatusVerbose: provisionalSourceConfig.enrichedSource,
+    scanDataSource: provisionalSourceConfig.enrichedSource,
+    source: provisionalSourceConfig.enrichedSource,
     barcode:
       trimString(goUpcProduct?.barcode) || trimString(openAiProduct?.barcode),
     product_id:
@@ -521,11 +573,11 @@ function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
     verificationStatus:
       trimString(goUpcProduct?.verificationStatus) ||
       trimString(openAiProduct?.verificationStatus) ||
-      "go_upc_unverified",
+      provisionalSourceConfig.unverifiedStatus,
     verification_status:
       trimString(goUpcProduct?.verification_status) ||
       trimString(openAiProduct?.verification_status) ||
-      "go_upc_unverified",
+      provisionalSourceConfig.unverifiedStatus,
     sourceUrls: Array.isArray(openAiProduct?.sourceUrls)
       ? openAiProduct.sourceUrls
       : goUpcProduct?.sourceUrls,
@@ -652,23 +704,35 @@ async function persistProvisionalGoUpcProduct(product, barcodeType) {
     verificationStatus:
       trimString(persisted.verificationStatus) ||
       trimString(product?.verificationStatus) ||
+      getProvisionalBarcodeSourceConfig(product)?.unverifiedStatus ||
+      "go_upc_unverified",
+    verification_status:
+      trimString(persisted.verificationStatus) ||
+      trimString(persisted.verification_status) ||
+      trimString(product?.verification_status) ||
+      trimString(product?.verificationStatus) ||
+      getProvisionalBarcodeSourceConfig(product)?.unverifiedStatus ||
       "go_upc_unverified",
   };
 }
 
-async function maybeEnrichIncompleteGoUpcProduct(
+async function maybeEnrichIncompleteProvisionalBarcodeProduct(
   product,
   barcode,
   barcodeType,
 ) {
-  if (!isIncompleteProvisionalGoUpcProduct(product)) {
+  if (!isIncompleteProvisionalBarcodeProduct(product)) {
     return product;
   }
+
+  const provisionalSourceConfig =
+    getProvisionalBarcodeSourceConfig(product) ??
+    PROVISIONAL_BARCODE_SOURCE_CONFIG.go_upc;
 
   try {
     const openAiProduct = await searchBarcodeWithOpenAi(barcode, {
       barcodeType,
-      fallbackSource: "go_upc_incomplete",
+      fallbackSource: `${provisionalSourceConfig.source}_incomplete`,
       productName:
         trimString(product?.productName) ||
         trimString(product?.displayName) ||
@@ -686,7 +750,7 @@ async function maybeEnrichIncompleteGoUpcProduct(
   } catch (openAiBarcodeError) {
     logBuildAwareDiagnostic(
       "warn",
-      "[scanner] OpenAI barcode enrichment failed after incomplete Go-UPC match",
+      "[scanner] OpenAI barcode enrichment failed after incomplete provisional barcode match",
       {
         developmentDetails: {
           message:
@@ -790,14 +854,18 @@ export const useScannerStore = create((set, get) => ({
         extractionSource = trimString(product?.scanDataSource) || null;
         if (product) {
           logScannerSource("local", product);
-          product = await maybeEnrichIncompleteGoUpcProduct(
+          product = await maybeEnrichIncompleteProvisionalBarcodeProduct(
             product,
             nextBarcode,
             nextBarcodeType,
           );
           extractionSource = trimString(product?.scanDataSource) || null;
-          if (trimString(product?.scanDataSource) === "go_upc_plus_openai") {
-            logScannerSource("go_upc_plus_openai", product);
+          if (
+            isOpenAiEnrichedProvisionalSource(
+              trimString(product?.scanDataSource),
+            )
+          ) {
+            logScannerSource(trimString(product?.scanDataSource), product);
           }
         }
       } catch (localLookupError) {
@@ -882,7 +950,7 @@ export const useScannerStore = create((set, get) => ({
                 ...product,
                 hasIncompleteDetails: true,
               };
-              product = await maybeEnrichIncompleteGoUpcProduct(
+              product = await maybeEnrichIncompleteProvisionalBarcodeProduct(
                 product,
                 nextBarcode,
                 nextBarcodeType,
@@ -905,6 +973,46 @@ export const useScannerStore = create((set, get) => ({
               },
             );
           }
+
+          if (!product) {
+            try {
+              product = await fetchEanSearchProduct(
+                nextBarcode,
+                nextBarcodeType,
+              );
+              if (product) {
+                product = await persistProvisionalGoUpcProduct(
+                  product,
+                  nextBarcodeType,
+                );
+                product = {
+                  ...product,
+                  hasIncompleteDetails: true,
+                };
+                product = await maybeEnrichIncompleteProvisionalBarcodeProduct(
+                  product,
+                  nextBarcode,
+                  nextBarcodeType,
+                );
+                extractionSource =
+                  trimString(product?.scanDataSource) || "ean_search";
+                logScannerSource(extractionSource, product);
+              }
+            } catch (eanSearchError) {
+              logBuildAwareDiagnostic(
+                "warn",
+                "[scanner] EAN-Search lookup failed after Go-UPC miss",
+                {
+                  developmentDetails: {
+                    message:
+                      typeof eanSearchError?.message === "string"
+                        ? eanSearchError.message
+                        : "Unknown error",
+                  },
+                },
+              );
+            }
+          }
         }
       }
 
@@ -923,7 +1031,7 @@ export const useScannerStore = create((set, get) => ({
           offFound = false;
           logBuildAwareDiagnostic(
             "warn",
-            "[scanner] off_products lookup failed after DSLD and Go-UPC",
+            "[scanner] off_products lookup failed after DSLD, Go-UPC, and EAN-Search",
             {
               developmentDetails: {
                 message:
@@ -985,16 +1093,22 @@ export const useScannerStore = create((set, get) => ({
               ? "go_upc"
               : trimString(product?.scanDataSource) === "go_upc_plus_openai"
                 ? "go_upc_plus_openai"
-                : trimString(product?.scanDataSource) === "dsld"
-                  ? "dsld"
-                  : trimString(product?.scanDataSource) === "openai_web_search"
-                    ? "openai_web_search"
-                    : trimString(product?.dsldMatch?.source)
-                      ? "open_food_facts_with_dsld"
+                : trimString(product?.scanDataSource) === "ean_search"
+                  ? "ean_search"
+                  : trimString(product?.scanDataSource) ===
+                      "ean_search_plus_openai"
+                    ? "ean_search_plus_openai"
+                    : trimString(product?.scanDataSource) === "dsld"
+                      ? "dsld"
                       : trimString(product?.scanDataSource) ===
-                          "open_food_facts"
-                        ? "open_food_facts"
-                        : "photo_fallback_pending",
+                          "openai_web_search"
+                        ? "openai_web_search"
+                        : trimString(product?.dsldMatch?.source)
+                          ? "open_food_facts_with_dsld"
+                          : trimString(product?.scanDataSource) ===
+                              "open_food_facts"
+                            ? "open_food_facts"
+                            : "photo_fallback_pending",
       });
       if (product && typeof product === "object") {
         product = {

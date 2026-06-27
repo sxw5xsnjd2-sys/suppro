@@ -43,6 +43,7 @@ function loadScannerStoreModule(overrides = {}) {
     "fetchSupplementProductsMasterScanProduct",
     "buildScanDebugMetadata",
     "maybeFetchDsldScanMatch",
+    "fetchEanSearchProduct",
     "fetchGoUpcProduct",
     "searchBarcodeWithOpenAi",
     "persistDsldProduct",
@@ -128,6 +129,7 @@ return { useScannerStore };`
         confidence: null,
         dsldMatch: null,
       })),
+    overrides.fetchEanSearchProduct ?? (async () => null),
     overrides.fetchGoUpcProduct ?? (async () => null),
     overrides.searchBarcodeWithOpenAi ?? (async () => null),
     overrides.persistDsldProduct ?? (async () => null),
@@ -466,6 +468,7 @@ test("scanner barcode orchestration persists provisional Go-UPC matches", async 
 test("scanner barcode orchestration does not call OpenAI for complete Go-UPC products", async () => {
   const sequence = [];
   let openAiCalled = false;
+  let eanSearchCalled = false;
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
     normalizeBarcode: (value) => value.replace(/\D/g, ""),
@@ -502,6 +505,10 @@ test("scanner barcode orchestration does not call OpenAI for complete Go-UPC pro
       openAiCalled = true;
       return null;
     },
+    fetchEanSearchProduct: async () => {
+      eanSearchCalled = true;
+      return null;
+    },
     extractBestIngredientCandidates: (product) => product.sourceIngredients,
     matchIngredientsToCatalog: () => ({
       matchedIngredients: [],
@@ -515,10 +522,229 @@ test("scanner barcode orchestration does not call OpenAI for complete Go-UPC pro
     .processBarcode("0123456789012", "ean13");
 
   assert.deepEqual(sequence, ["local", "dsld", "go_upc"]);
+  assert.equal(eanSearchCalled, false);
   assert.equal(openAiCalled, false);
   assert.equal(state.status, "success");
   assert.equal(state.product.scanDataSource, "go_upc");
   assert.equal(state.product.sourceDecision.final_source_used, "go_upc");
+});
+
+test("scanner barcode orchestration enriches EAN-Search products after Go-UPC misses", async () => {
+  const sequence = [];
+  let openAiOptions = null;
+  const persistedPayloads = [];
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => {
+      sequence.push("local");
+      return null;
+    },
+    maybeFetchDsldScanMatch: async () => {
+      sequence.push("dsld");
+      return {
+        checked: true,
+        cacheHit: false,
+        confidence: "low",
+        dsldMatch: null,
+      };
+    },
+    fetchGoUpcProduct: async () => {
+      sequence.push("go_upc");
+      return null;
+    },
+    fetchEanSearchProduct: async () => {
+      sequence.push("ean_search");
+      return {
+        barcode: "0123456789012",
+        productName: "EAN Magnesium Citrate Tablets",
+        ingredientsText: "",
+        sourceIngredients: [],
+        active_ingredients_json: [],
+        ingredient_count: 0,
+        scanDataSource: "ean_search",
+        source: "ean_search",
+        verificationStatus: "ean_search_unverified",
+      };
+    },
+    persistGoUpcProduct: async (product) => {
+      persistedPayloads.push(product);
+      return {
+        productId: "prod_ean_search",
+        displayName: product.displayName || product.productName,
+        servingSizeText: product.servingSizeText || null,
+        active_ingredients_json: product.active_ingredients_json || [],
+        activeIngredientsJson: product.activeIngredientsJson || [],
+        ingredient_count: product.ingredient_count ?? 0,
+        ingredientCount: product.ingredientCount ?? 0,
+        imageUrl: product.imageUrl || null,
+        imageSourceUrl: product.imageSourceUrl || null,
+        imageProvider: product.imageProvider || null,
+        nameSource: product.scanDataSource || product.source || "ean_search",
+        verificationStatus: "ean_search_unverified",
+      };
+    },
+    searchBarcodeWithOpenAi: async (_barcode, options) => {
+      sequence.push("openai_web_search");
+      openAiOptions = options;
+      return {
+        barcode: "0123456789012",
+        productName: "EAN Magnesium Citrate 200 mg Tablets",
+        ingredientsText: "Magnesium 200 mg",
+        sourceIngredients: [
+          {
+            name: "Magnesium",
+            dosageValue: 200,
+            dosageUnit: "mg",
+            amountBasis: "per_serving",
+          },
+        ],
+        active_ingredients_json: [
+          {
+            name: "Magnesium",
+            dosageValue: 200,
+            dosageUnit: "mg",
+            amountBasis: "per_serving",
+          },
+        ],
+        ingredient_count: 1,
+        servingSizeText: "2 tablets",
+        imageUrl: "https://cdn.example.com/fallback-image.png",
+        imageSourceUrl: "https://cdn.example.com/fallback-image.png",
+        imageProvider: "openai_image_lookup",
+        scanDataSource: "openai_web_search",
+        verificationStatus: "ean_search_unverified",
+      };
+    },
+    extractBestIngredientCandidates: (product) => product.sourceIngredients,
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.deepEqual(sequence, [
+    "local",
+    "dsld",
+    "go_upc",
+    "ean_search",
+    "openai_web_search",
+  ]);
+  assert.equal(openAiOptions?.barcodeType, "ean13");
+  assert.equal(openAiOptions?.fallbackSource, "ean_search_incomplete");
+  assert.equal(persistedPayloads.length, 2);
+  assert.equal(persistedPayloads[0].scanDataSource, "ean_search");
+  assert.equal(persistedPayloads[1].scanDataSource, "ean_search_plus_openai");
+  assert.equal(persistedPayloads[1].source, "ean_search_plus_openai");
+  assert.equal(persistedPayloads[1].servingSizeText, "2 tablets");
+  assert.equal(persistedPayloads[1].ingredient_count, 1);
+  assert.deepEqual(persistedPayloads[1].active_ingredients_json, [
+    {
+      name: "Magnesium",
+      dosageValue: 200,
+      dosageUnit: "mg",
+      amountBasis: "per_serving",
+    },
+  ]);
+  assert.equal(state.status, "success");
+  assert.equal(state.product.productId, "prod_ean_search");
+  assert.equal(state.product.scanDataSource, "ean_search_plus_openai");
+  assert.equal(
+    state.product.sourceDecision.final_source_used,
+    "ean_search_plus_openai"
+  );
+  assert.equal(state.product.verificationStatus, "ean_search_unverified");
+  assert.equal(
+    state.product.imageUrl,
+    "https://cdn.example.com/fallback-image.png"
+  );
+  assert.equal(state.product.imageProvider, "openai_image_lookup");
+  assert.deepEqual(state.ingredients, [
+    {
+      name: "Magnesium",
+      dosageValue: 200,
+      dosageUnit: "mg",
+      amountBasis: "per_serving",
+    },
+  ]);
+});
+
+test("scanner barcode orchestration does not call OpenAI when EAN-Search has complete details", async () => {
+  const sequence = [];
+  let openAiCalled = false;
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => {
+      sequence.push("local");
+      return null;
+    },
+    maybeFetchDsldScanMatch: async () => {
+      sequence.push("dsld");
+      return {
+        checked: true,
+        cacheHit: false,
+        confidence: "low",
+        dsldMatch: null,
+      };
+    },
+    fetchGoUpcProduct: async () => {
+      sequence.push("go_upc");
+      return null;
+    },
+    fetchEanSearchProduct: async () => {
+      sequence.push("ean_search");
+      return {
+        barcode: "0123456789012",
+        productName: "EAN Complete Vitamin D3",
+        ingredientsText: "Vitamin D3 25 mcg",
+        sourceIngredients: [
+          { name: "Vitamin D3", dosageValue: 25, dosageUnit: "mcg" },
+        ],
+        active_ingredients_json: [
+          { name: "Vitamin D3", dosageValue: 25, dosageUnit: "mcg" },
+        ],
+        ingredient_count: 1,
+        scanDataSource: "ean_search",
+        source: "ean_search",
+        verificationStatus: "ean_search_unverified",
+      };
+    },
+    persistGoUpcProduct: async (product) => ({
+      productId: "prod_ean_search",
+      displayName: product.productName,
+      active_ingredients_json: product.active_ingredients_json,
+      activeIngredientsJson: product.activeIngredientsJson,
+      ingredient_count: product.ingredient_count,
+      ingredientCount: product.ingredientCount,
+      verificationStatus: "ean_search_unverified",
+    }),
+    searchBarcodeWithOpenAi: async () => {
+      openAiCalled = true;
+      return null;
+    },
+    extractBestIngredientCandidates: (product) => product.sourceIngredients,
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.deepEqual(sequence, ["local", "dsld", "go_upc", "ean_search"]);
+  assert.equal(openAiCalled, false);
+  assert.equal(state.status, "success");
+  assert.equal(state.product.scanDataSource, "ean_search");
+  assert.equal(state.product.sourceDecision.final_source_used, "ean_search");
 });
 
 test("scanner barcode orchestration enriches incomplete Go-UPC products with OpenAI ingredients", async () => {
@@ -861,6 +1087,10 @@ test("scanner barcode orchestration uses off_products only after DSLD and Go-UPC
       sequence.push("go_upc");
       return null;
     },
+    fetchEanSearchProduct: async () => {
+      sequence.push("ean_search");
+      return null;
+    },
     fetchOffProductsBarcodeScanProduct: async () => {
       sequence.push("off_products");
       return {
@@ -885,12 +1115,18 @@ test("scanner barcode orchestration uses off_products only after DSLD and Go-UPC
     .getState()
     .processBarcode("0123456789012", "ean13");
 
-  assert.deepEqual(sequence, ["local", "dsld", "go_upc", "off_products"]);
+  assert.deepEqual(sequence, [
+    "local",
+    "dsld",
+    "go_upc",
+    "ean_search",
+    "off_products",
+  ]);
   assert.equal(state.status, "success");
   assert.equal(state.product.scanDataSource, "off_products");
 });
 
-test("scanner barcode orchestration still uses OpenAI after master, DSLD, Go-UPC, and off_products miss", async () => {
+test("scanner barcode orchestration still uses OpenAI after master, DSLD, Go-UPC, EAN-Search, and off_products miss", async () => {
   const sequence = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
@@ -910,6 +1146,10 @@ test("scanner barcode orchestration still uses OpenAI after master, DSLD, Go-UPC
     },
     fetchGoUpcProduct: async () => {
       sequence.push("go_upc");
+      return null;
+    },
+    fetchEanSearchProduct: async () => {
+      sequence.push("ean_search");
       return null;
     },
     fetchOffProductsBarcodeScanProduct: async () => {
@@ -953,6 +1193,7 @@ test("scanner barcode orchestration still uses OpenAI after master, DSLD, Go-UPC
     "local",
     "dsld",
     "go_upc",
+    "ean_search",
     "off_products",
     "openai_web_search",
   ]);
@@ -988,6 +1229,10 @@ test("scanner barcode orchestration keeps not_found when OpenAI fallback misses"
       sequence.push("go_upc");
       return null;
     },
+    fetchEanSearchProduct: async () => {
+      sequence.push("ean_search");
+      return null;
+    },
     fetchOffProductsBarcodeScanProduct: async () => {
       sequence.push("off_products");
       return null;
@@ -1010,6 +1255,7 @@ test("scanner barcode orchestration keeps not_found when OpenAI fallback misses"
     "local",
     "dsld",
     "go_upc",
+    "ean_search",
     "off_products",
     "openai_web_search",
   ]);

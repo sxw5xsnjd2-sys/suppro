@@ -86,6 +86,7 @@ module.exports = ({ config }) => {
         process.env.EXPO_PUBLIC_GO_UPC_API_KEY ??
         process.env.GO_UPC_API_KEY ??
         "",
+      eanSearchToken: process.env.EXPO_PUBLIC_EAN_SEARCH_TOKEN ?? "",
       revenueCat: {
         appleApiKey: process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY ?? "",
         googleApiKey: process.env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY ?? "",

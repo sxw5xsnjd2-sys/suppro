@@ -23,13 +23,20 @@ function getIngredientCount(product) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function getGoUpcPersistenceSource(product) {
+const SUPPORTED_PROVISIONAL_SOURCES = new Set([
+  "go_upc",
+  "go_upc_plus_openai",
+  "ean_search",
+  "ean_search_plus_openai",
+]);
+
+function getProvisionalPersistenceSource(product) {
   const source =
     trimString(product?.scanDataSource) ||
     trimString(product?.source) ||
     trimString(product?.sourceStatusVerbose);
 
-  return source === "go_upc_plus_openai" ? source : "go_upc";
+  return SUPPORTED_PROVISIONAL_SOURCES.has(source) ? source : "go_upc";
 }
 
 export async function persistGoUpcProduct(product, barcodeType) {
@@ -61,7 +68,7 @@ export async function persistGoUpcProduct(product, barcodeType) {
           Authorization: `Bearer ${accessToken}`,
         },
         body: {
-          source: getGoUpcPersistenceSource(product),
+          source: getProvisionalPersistenceSource(product),
           barcode,
           barcodeType: normalizedBarcodeType || null,
           productName,
