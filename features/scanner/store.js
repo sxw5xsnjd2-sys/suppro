@@ -14,6 +14,7 @@ import {
 } from "@src/data/dsldSourceDecision";
 import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
 import { fetchGoUpcProduct } from "@src/data/getGoUpcProduct";
+import { searchBarcodeWithOpenAi } from "@src/data/searchBarcodeWithOpenAi";
 import { fetchIngredientMatchCatalog } from "@src/data/getIngredientMatchCatalog";
 import {
   persistDsldProduct,
@@ -301,6 +302,171 @@ function enrichDsldProductWithGoUpcCosmetics(product, goUpcProduct) {
   };
 }
 
+function getActiveIngredientsJson(product) {
+  const ingredients =
+    product?.active_ingredients_json ?? product?.activeIngredientsJson;
+
+  return Array.isArray(ingredients) ? ingredients.filter(Boolean) : [];
+}
+
+function getIngredientCount(product) {
+  const count = product?.ingredient_count ?? product?.ingredientCount;
+  if (typeof count === "number" && Number.isFinite(count)) {
+    return count;
+  }
+
+  const parsed = Number.parseInt(String(count ?? "").trim(), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isIncompleteBarcodeProduct(product) {
+  if (!product || typeof product !== "object") {
+    return true;
+  }
+
+  if (getIngredientCount(product) === 0) {
+    return true;
+  }
+
+  return getActiveIngredientsJson(product).length === 0;
+}
+
+function getProductDisplayName(product) {
+  return (
+    trimString(product?.displayName) ||
+    trimString(product?.display_name) ||
+    trimString(product?.productName) ||
+    trimString(product?.name)
+  );
+}
+
+function chooseBetterDisplayName(goUpcProduct, openAiProduct) {
+  const goUpcName = getProductDisplayName(goUpcProduct);
+  const openAiName = getProductDisplayName(openAiProduct);
+
+  if (!openAiName) {
+    return goUpcName;
+  }
+
+  if (!goUpcName) {
+    return openAiName;
+  }
+
+  const normalizedGoUpcName = goUpcName.toLowerCase();
+  const normalizedOpenAiName = openAiName.toLowerCase();
+  if (normalizedGoUpcName === normalizedOpenAiName) {
+    return goUpcName;
+  }
+
+  if (
+    normalizedOpenAiName.includes(normalizedGoUpcName) ||
+    openAiName.length > goUpcName.length + 8
+  ) {
+    return openAiName;
+  }
+
+  return goUpcName;
+}
+
+function hasOpenAiBarcodeImprovement(goUpcProduct, openAiProduct) {
+  if (!openAiProduct || typeof openAiProduct !== "object") {
+    return false;
+  }
+
+  const openAiHasIngredients =
+    getActiveIngredientsJson(openAiProduct).length > 0 ||
+    (Array.isArray(openAiProduct.sourceIngredients) &&
+      openAiProduct.sourceIngredients.length > 0);
+  const openAiServingSize = trimString(openAiProduct.servingSizeText);
+  const betterDisplayName =
+    chooseBetterDisplayName(goUpcProduct, openAiProduct) !==
+    getProductDisplayName(goUpcProduct);
+
+  return Boolean(openAiHasIngredients || openAiServingSize || betterDisplayName);
+}
+
+function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
+  if (!hasOpenAiBarcodeImprovement(goUpcProduct, openAiProduct)) {
+    return goUpcProduct;
+  }
+
+  const displayName = chooseBetterDisplayName(goUpcProduct, openAiProduct);
+  const openAiActiveIngredients = getActiveIngredientsJson(openAiProduct);
+  const goUpcActiveIngredients = getActiveIngredientsJson(goUpcProduct);
+  const activeIngredients =
+    openAiActiveIngredients.length > 0
+      ? openAiActiveIngredients
+      : goUpcActiveIngredients;
+  const openAiSourceIngredients = Array.isArray(openAiProduct?.sourceIngredients)
+    ? openAiProduct.sourceIngredients
+    : [];
+  const goUpcSourceIngredients = Array.isArray(goUpcProduct?.sourceIngredients)
+    ? goUpcProduct.sourceIngredients
+    : [];
+  const sourceIngredients =
+    openAiSourceIngredients.length > 0
+      ? openAiSourceIngredients
+      : goUpcSourceIngredients;
+  const ingredientCount =
+    activeIngredients.length > 0
+      ? activeIngredients.length
+      : getIngredientCount(openAiProduct) ?? getIngredientCount(goUpcProduct);
+
+  return {
+    ...goUpcProduct,
+    active_ingredients_json: activeIngredients,
+    activeIngredientsJson: activeIngredients,
+    ingredient_count: ingredientCount,
+    ingredientCount,
+    ingredientsText:
+      trimString(openAiProduct?.ingredientsText) ||
+      trimString(goUpcProduct?.ingredientsText),
+    sourceIngredients,
+    servingSizeText:
+      trimString(openAiProduct?.servingSizeText) ||
+      trimString(goUpcProduct?.servingSizeText) ||
+      null,
+    productName: displayName || null,
+    name: displayName || null,
+    displayName,
+    sourceStatusVerbose: "go_upc_plus_openai",
+    scanDataSource: "go_upc_plus_openai",
+    source: "go_upc_plus_openai",
+    barcode: trimString(goUpcProduct?.barcode) || trimString(openAiProduct?.barcode),
+    productId:
+      trimString(goUpcProduct?.productId) ||
+      trimString(openAiProduct?.productId) ||
+      null,
+    imageUrl:
+      trimString(goUpcProduct?.imageUrl) ||
+      trimString(goUpcProduct?.image_url) ||
+      trimString(openAiProduct?.imageUrl) ||
+      null,
+    imageSourceUrl:
+      trimString(goUpcProduct?.imageSourceUrl) ||
+      trimString(goUpcProduct?.image_source_url) ||
+      trimString(openAiProduct?.imageSourceUrl) ||
+      trimString(openAiProduct?.image_source_url) ||
+      null,
+    imageProvider:
+      trimString(goUpcProduct?.imageProvider) ||
+      trimString(openAiProduct?.imageProvider) ||
+      null,
+    verificationStatus:
+      trimString(goUpcProduct?.verificationStatus) ||
+      trimString(openAiProduct?.verificationStatus) ||
+      "go_upc_unverified",
+    verification_status:
+      trimString(goUpcProduct?.verification_status) ||
+      trimString(openAiProduct?.verification_status) ||
+      "go_upc_unverified",
+    sourceUrls: Array.isArray(openAiProduct?.sourceUrls)
+      ? openAiProduct.sourceUrls
+      : goUpcProduct?.sourceUrls,
+    hasIncompleteDetails: true,
+  };
+}
+
 async function persistCanonicalDsldProduct(product, barcodeType) {
   const persisted = await persistDsldProduct(product, barcodeType);
   if (!persisted || typeof persisted !== "object") {
@@ -348,6 +514,22 @@ async function persistProvisionalGoUpcProduct(product, barcodeType) {
       trimString(persisted.imageProvider) ||
       trimString(product?.imageProvider) ||
       null,
+    servingSizeText:
+      trimString(persisted.servingSizeText) ||
+      trimString(product?.servingSizeText) ||
+      null,
+    active_ingredients_json:
+      getActiveIngredientsJson(persisted).length > 0
+        ? getActiveIngredientsJson(persisted)
+        : getActiveIngredientsJson(product),
+    activeIngredientsJson:
+      getActiveIngredientsJson(persisted).length > 0
+        ? getActiveIngredientsJson(persisted)
+        : getActiveIngredientsJson(product),
+    ingredient_count:
+      getIngredientCount(persisted) ?? getIngredientCount(product),
+    ingredientCount:
+      getIngredientCount(persisted) ?? getIngredientCount(product),
     verificationStatus:
       trimString(persisted.verificationStatus) ||
       trimString(product?.verificationStatus) ||
@@ -528,7 +710,39 @@ export const useScannerStore = create((set, get) => ({
                 ...product,
                 hasIncompleteDetails: true,
               };
-              extractionSource = "go_upc";
+              if (isIncompleteBarcodeProduct(product)) {
+                try {
+                  const openAiProduct = await searchBarcodeWithOpenAi(
+                    nextBarcode,
+                    {
+                      barcodeType: nextBarcodeType,
+                      fallbackSource: "go_upc_incomplete",
+                    }
+                  );
+                  const mergedProduct = mergeGoUpcWithOpenAiProduct(
+                    product,
+                    openAiProduct
+                  );
+                  if (mergedProduct !== product) {
+                    product = mergedProduct;
+                    logScannerSource("go_upc_plus_openai", product);
+                  }
+                } catch (openAiBarcodeError) {
+                  logBuildAwareDiagnostic(
+                    "warn",
+                    "[scanner] OpenAI barcode enrichment failed after incomplete Go-UPC match",
+                    {
+                      developmentDetails: {
+                        message:
+                          typeof openAiBarcodeError?.message === "string"
+                            ? openAiBarcodeError.message
+                            : "Unknown error",
+                      },
+                    }
+                  );
+                }
+              }
+              extractionSource = trimString(product?.scanDataSource) || "go_upc";
               logScannerSource("go_upc", product);
             }
           } catch (goUpcError) {
@@ -576,6 +790,29 @@ export const useScannerStore = create((set, get) => ({
         }
       }
 
+      if (!product && retailBarcode) {
+        try {
+          product = await searchBarcodeWithOpenAi(nextBarcode, nextBarcodeType);
+          extractionSource = trimString(product?.scanDataSource) || null;
+          if (product) {
+            logScannerSource("openai_web_search", product);
+          }
+        } catch (openAiBarcodeError) {
+          logBuildAwareDiagnostic(
+            "warn",
+            "[scanner] OpenAI barcode fallback failed after OFF miss",
+            {
+              developmentDetails: {
+                message:
+                  typeof openAiBarcodeError?.message === "string"
+                    ? openAiBarcodeError.message
+                    : "Unknown error",
+              },
+            }
+          );
+        }
+      }
+
       if (!product) {
         throw { code: "product_not_found" };
       }
@@ -599,8 +836,12 @@ export const useScannerStore = create((set, get) => ({
             ? trimString(product.scanDataSource)
             : trimString(product?.scanDataSource) === "go_upc"
               ? "go_upc"
-              : trimString(product?.scanDataSource) === "dsld"
-                ? "dsld"
+              : trimString(product?.scanDataSource) === "go_upc_plus_openai"
+                ? "go_upc_plus_openai"
+                : trimString(product?.scanDataSource) === "dsld"
+                  ? "dsld"
+                  : trimString(product?.scanDataSource) === "openai_web_search"
+                    ? "openai_web_search"
                 : trimString(product?.dsldMatch?.source)
                 ? "open_food_facts_with_dsld"
                 : trimString(product?.scanDataSource) === "open_food_facts"

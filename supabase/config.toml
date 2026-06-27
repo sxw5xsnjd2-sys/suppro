@@ -57,3 +57,9 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/persist-go-upc-product/deno.json"
 entrypoint = "./functions/persist-go-upc-product/index.ts"
+
+[functions.search-barcode-with-openai]
+enabled = true
+verify_jwt = true
+import_map = "./functions/search-barcode-with-openai/deno.json"
+entrypoint = "./functions/search-barcode-with-openai/index.ts"
