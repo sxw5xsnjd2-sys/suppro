@@ -63,6 +63,44 @@ const LIKELY_ACTIVE_INGREDIENT_WORDS = new Set([
   "multivitamin",
 ]);
 
+const INACTIVE_SUPPLEMENT_INGREDIENT_NAMES = new Set([
+  "acidity regulator",
+  "acidity regulators",
+  "citric acid",
+  "colour",
+  "colours",
+  "color",
+  "colors",
+  "flavour",
+  "flavours",
+  "flavouring",
+  "flavourings",
+  "flavor",
+  "flavors",
+  "flavoring",
+  "flavorings",
+  "glucose syrup",
+  "glycerin",
+  "glycerine",
+  "glycerol",
+  "juice",
+  "preservative",
+  "preservatives",
+  "purified water",
+  "salt",
+  "stabiliser",
+  "stabilisers",
+  "stabilizer",
+  "stabilizers",
+  "sucralose",
+  "sugar",
+  "sweetener",
+  "sweeteners",
+  "thickener",
+  "thickeners",
+  "water",
+]);
+
 function extractFunctionByHeader(source, headerPattern, functionName) {
   const match = source.match(headerPattern);
   if (!match || typeof match.index !== "number") {
@@ -254,6 +292,24 @@ function loadSearchBarcodeHelpers({
     ),
     transformFunction(
       source,
+      /function normalizeActiveIngredientFilterText\(value: unknown\) \{/,
+      "normalizeActiveIngredientFilterText",
+      [[/function normalizeActiveIngredientFilterText\(value: unknown\) \{/, "function normalizeActiveIngredientFilterText(value) {"]],
+    ),
+    transformFunction(
+      source,
+      /function isInactiveSupplementIngredient\(ingredient: Ingredient\) \{/,
+      "isInactiveSupplementIngredient",
+      [[/function isInactiveSupplementIngredient\(ingredient: Ingredient\) \{/, "function isInactiveSupplementIngredient(ingredient) {"]],
+    ),
+    transformFunction(
+      source,
+      /function filterActiveSupplementIngredients\(ingredients: Ingredient\[\]\) \{/,
+      "filterActiveSupplementIngredients",
+      [[/function filterActiveSupplementIngredients\(ingredients: Ingredient\[\]\) \{/, "function filterActiveSupplementIngredients(ingredients) {"]],
+    ),
+    transformFunction(
+      source,
       /function hasVisibleDosage\(ingredients: Ingredient\[\]\) \{/,
       "hasVisibleDosage",
       [[/function hasVisibleDosage\(ingredients: Ingredient\[\]\) \{/, "function hasVisibleDosage(ingredients) {"]],
@@ -275,6 +331,24 @@ function loadSearchBarcodeHelpers({
       /function isEmptySearchResult\(result: BarcodeSearchResult\) \{/,
       "isEmptySearchResult",
       [[/function isEmptySearchResult\(result: BarcodeSearchResult\) \{/, "function isEmptySearchResult(result) {"]],
+    ),
+    transformFunction(
+      source,
+      /function parseAmountValue\(value: string \| null\) \{/,
+      "parseAmountValue",
+      [[/function parseAmountValue\(value: string \| null\) \{/, "function parseAmountValue(value) {"]],
+    ),
+    transformFunction(
+      source,
+      /function buildDosageDisplay\(ingredient: Ingredient\) \{/,
+      "buildDosageDisplay",
+      [[/function buildDosageDisplay\(ingredient: Ingredient\) \{/, "function buildDosageDisplay(ingredient) {"]],
+    ),
+    transformFunction(
+      source,
+      /function buildMasterActiveIngredients\(result: BarcodeSearchResult\) \{/,
+      "buildMasterActiveIngredients",
+      [[/function buildMasterActiveIngredients\(result: BarcodeSearchResult\) \{/, "function buildMasterActiveIngredients(result) {"]],
     ),
     transformFunction(
       source,
@@ -307,7 +381,9 @@ function loadSearchBarcodeHelpers({
     "BROAD_FALLBACK_NOISE_WORDS",
     "FLAVOR_WORDS",
     "LIKELY_ACTIVE_INGREDIENT_WORDS",
-    `${transformed}\nreturn { cleanProductNameForSearch, buildSearchQueries, emptyResult, requestBarcodeSearch, sanitizeSearchResult };`,
+    "INACTIVE_SUPPLEMENT_INGREDIENT_NAMES",
+    "PROVIDER",
+    `${transformed}\nreturn { cleanProductNameForSearch, buildSearchQueries, emptyResult, requestBarcodeSearch, sanitizeSearchResult, buildMasterActiveIngredients };`,
   )(
     requestOpenAiSearch,
     consoleImpl,
@@ -315,6 +391,8 @@ function loadSearchBarcodeHelpers({
     BROAD_FALLBACK_NOISE_WORDS,
     FLAVOR_WORDS,
     LIKELY_ACTIVE_INGREDIENT_WORDS,
+    INACTIVE_SUPPLEMENT_INGREDIENT_NAMES,
+    "openai_web_search",
   );
 }
 
@@ -525,6 +603,156 @@ test("raw OpenAI sources are preserved when JSON omits source_urls", () => {
     "https://www.boots.com/boots-marine-collagen-liquid-drink-14-sachets-10353992",
   ]);
   assert.equal(sanitized.result.ingredients.length, 1);
+});
+
+test("water is removed from active_ingredients_json", () => {
+  const { sanitizeSearchResult, buildMasterActiveIngredients } =
+    loadSearchBarcodeHelpers();
+
+  const sanitized = sanitizeSearchResult(
+    {
+      product_name: "Boots Marine Collagen Liquid Drink",
+      brand: "Boots",
+      serving_size: "1 sachet",
+      ingredients_text: "Water, Marine Collagen 5000 mg",
+      ingredients: [
+        {
+          name: "Water",
+          amount: null,
+          unit: null,
+          per: "serving",
+          raw_text: "Water",
+        },
+        {
+          name: "Marine Collagen",
+          amount: "5000",
+          unit: "mg",
+          per: "serving",
+          raw_text: "Marine Collagen 5000 mg",
+        },
+      ],
+      source_urls: ["https://www.boots.com/example-product"],
+      confidence: "medium",
+      verification_status: "openai_unverified",
+    },
+    "5045094051748",
+    [],
+    "product_name_broad",
+  );
+  const activeIngredients = buildMasterActiveIngredients(sanitized.result);
+
+  assert.deepEqual(
+    sanitized.result.ingredients.map((ingredient) => ingredient.name),
+    ["Marine Collagen"],
+  );
+  assert.deepEqual(
+    activeIngredients.map((ingredient) => ingredient.name),
+    ["Marine Collagen"],
+  );
+});
+
+test("purified water flavouring and sweetener are removed from active ingredients", () => {
+  const { sanitizeSearchResult, buildMasterActiveIngredients } =
+    loadSearchBarcodeHelpers();
+
+  const sanitized = sanitizeSearchResult(
+    {
+      product_name: "Example Collagen Drink",
+      brand: "Example",
+      serving_size: "1 sachet",
+      ingredients_text:
+        "Purified water, flavouring, sweetener, Vitamin C 80 mg, Zinc 10 mg",
+      ingredients: [
+        {
+          name: "Purified Water",
+          amount: null,
+          unit: null,
+          per: "serving",
+          raw_text: "Purified Water",
+        },
+        {
+          name: "Flavouring",
+          amount: null,
+          unit: null,
+          per: "serving",
+          raw_text: "Flavouring",
+        },
+        {
+          name: "Sweetener",
+          amount: null,
+          unit: null,
+          per: "serving",
+          raw_text: "Sweetener",
+        },
+        {
+          name: "Vitamin C",
+          amount: "80",
+          unit: "mg",
+          per: "serving",
+          raw_text: "Vitamin C 80 mg",
+        },
+        {
+          name: "Zinc",
+          amount: "10",
+          unit: "mg",
+          per: "serving",
+          raw_text: "Zinc 10 mg",
+        },
+      ],
+      source_urls: ["https://example.com/product"],
+      confidence: "medium",
+      verification_status: "openai_unverified",
+    },
+    "1234567890123",
+    [],
+    "product_name_broad",
+  );
+  const activeIngredients = buildMasterActiveIngredients(sanitized.result);
+
+  assert.deepEqual(
+    sanitized.result.ingredients.map((ingredient) => ingredient.name),
+    ["Vitamin C", "Zinc"],
+  );
+  assert.deepEqual(
+    activeIngredients.map((ingredient) => ingredient.name),
+    ["Vitamin C", "Zinc"],
+  );
+});
+
+test("watermelon extract is allowed when explicitly extracted", () => {
+  const { sanitizeSearchResult, buildMasterActiveIngredients } =
+    loadSearchBarcodeHelpers();
+
+  const sanitized = sanitizeSearchResult(
+    {
+      product_name: "Example Watermelon Extract",
+      brand: "Example",
+      serving_size: "1 capsule",
+      ingredients_text: "Watermelon Extract 500 mg",
+      ingredients: [
+        {
+          name: "Watermelon Extract",
+          amount: "500",
+          unit: "mg",
+          per: "serving",
+          raw_text: "Watermelon Extract 500 mg",
+        },
+      ],
+      source_urls: ["https://example.com/watermelon-extract"],
+      confidence: "medium",
+      verification_status: "openai_unverified",
+    },
+    "1234567890123",
+    [],
+    "product_name_broad",
+  );
+  const activeIngredients = buildMasterActiveIngredients(sanitized.result);
+
+  assert.equal(sanitized.reason, null);
+  assert.deepEqual(
+    activeIngredients.map((ingredient) => ingredient.name),
+    ["Watermelon Extract"],
+  );
 });
 
 test("product-name fallback with credible source and ingredients succeeds without barcode", async () => {

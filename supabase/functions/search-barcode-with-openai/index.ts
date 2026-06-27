@@ -81,6 +81,43 @@ const LIKELY_ACTIVE_INGREDIENT_WORDS = new Set([
   "d3",
   "multivitamin",
 ]);
+const INACTIVE_SUPPLEMENT_INGREDIENT_NAMES = new Set([
+  "acidity regulator",
+  "acidity regulators",
+  "citric acid",
+  "colour",
+  "colours",
+  "color",
+  "colors",
+  "flavour",
+  "flavours",
+  "flavouring",
+  "flavourings",
+  "flavor",
+  "flavors",
+  "flavoring",
+  "flavorings",
+  "glucose syrup",
+  "glycerin",
+  "glycerine",
+  "glycerol",
+  "juice",
+  "preservative",
+  "preservatives",
+  "purified water",
+  "salt",
+  "stabiliser",
+  "stabilisers",
+  "stabilizer",
+  "stabilizers",
+  "sucralose",
+  "sugar",
+  "sweetener",
+  "sweeteners",
+  "thickener",
+  "thickeners",
+  "water",
+]);
 
 const adminSupabase = supabaseUrl && supabaseServiceRoleKey
   ? createClient(supabaseUrl, supabaseServiceRoleKey)
@@ -604,6 +641,35 @@ function normalizeConfidence(value: unknown): Confidence {
   return value === "high" || value === "medium" ? value : "low";
 }
 
+function normalizeActiveIngredientFilterText(value: unknown) {
+  return trimString(value)
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’']/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9+\s-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isInactiveSupplementIngredient(ingredient: Ingredient) {
+  const values = [
+    ingredient.name,
+    ingredient.raw_text,
+  ].map(normalizeActiveIngredientFilterText).filter(Boolean);
+
+  return values.some((value) =>
+    INACTIVE_SUPPLEMENT_INGREDIENT_NAMES.has(value)
+  );
+}
+
+function filterActiveSupplementIngredients(ingredients: Ingredient[]) {
+  return ingredients.filter((ingredient) =>
+    !isInactiveSupplementIngredient(ingredient)
+  );
+}
+
 function hasVisibleDosage(ingredients: Ingredient[]) {
   return ingredients.some((ingredient) =>
     Boolean(ingredient.name && ingredient.amount && ingredient.unit)
@@ -674,7 +740,7 @@ function buildDosageDisplay(ingredient: Ingredient) {
 }
 
 function buildMasterActiveIngredients(result: BarcodeSearchResult) {
-  return result.ingredients
+  return filterActiveSupplementIngredients(result.ingredients)
     .map((ingredient) => {
       const name = trimString(ingredient.name);
       if (!name) return null;
@@ -889,7 +955,9 @@ function sanitizeSearchResult(
     brand: sanitizeNullableString(record.brand, 120),
     serving_size: sanitizeNullableString(record.serving_size, 120),
     ingredients_text: sanitizeNullableString(record.ingredients_text, 4000),
-    ingredients: sanitizeIngredients(record.ingredients),
+    ingredients: filterActiveSupplementIngredients(
+      sanitizeIngredients(record.ingredients),
+    ),
     source_urls: sourceUrls,
     confidence: normalizeConfidence(record.confidence),
     verification_status: VERIFICATION_STATUS,
@@ -956,6 +1024,8 @@ function buildOpenAiRequestBody(
         ? "You search the public web for a credible supplement product match by product name when barcode search did not find usable ingredients."
         : "You search the public web for exact supplement product matches by barcode.",
       "Use only visible information from web pages returned by web search.",
+      "Return ACTIVE SUPPLEMENT INGREDIENTS only. Do not return base liquids, carriers, excipients, flavours, sweeteners, acidity regulators, preservatives, colours, stabilisers, thickeners, sugars, salts, juices, or ordinary food/base ingredients.",
+      "Examples of excluded inactive ingredients include water, purified water, flavouring, sweetener, acidity regulator, preservative, colour, stabiliser, thickener, citric acid, sucralose, glycerol, glucose syrup, juice, sugar, and salt.",
       "Never guess, infer from similar products, or copy data from near-matches, alternate flavours, alternate sizes, or lookalike labels.",
       isProductNameMode
         ? "If the barcode is not visible on the page, you may still accept a credible retailer or manufacturer source when the brand and core product identity match. Do not require an exact flavour or pack-size match for provisional ingredient extraction."

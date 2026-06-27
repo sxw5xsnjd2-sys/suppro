@@ -115,6 +115,8 @@ const FOOD_INGREDIENT_BLOCKLIST = new Set([
   "cocoa butter",
   "cocoa powder",
   "sugar",
+  "water",
+  "purified water",
   "glucose syrup",
   "cream",
   "butter",
