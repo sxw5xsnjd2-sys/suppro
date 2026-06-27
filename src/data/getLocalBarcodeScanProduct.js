@@ -115,7 +115,7 @@ async function fetchOffProductByProductId(productId) {
   return data ?? null;
 }
 
-export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
+export async function fetchSupplementProductsMasterScanProduct(barcode, barcodeType) {
   const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
   if (!isValidBarcode(normalizedBarcode, barcodeType)) {
     return null;
@@ -177,6 +177,20 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
       hasIncompleteDetails: verificationStatus === "go_upc_unverified",
     };
   }
+
+  return null;
+}
+
+export async function fetchOffProductsBarcodeScanProduct(barcode, barcodeType) {
+  const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
+  if (!isValidBarcode(normalizedBarcode, barcodeType)) {
+    return null;
+  }
+
+  const barcodeCandidates = buildBarcodeLookupCandidates(
+    normalizedBarcode,
+    barcodeType
+  );
 
   const { data: productRows, error: productError } = await supabase
     .from("off_products")
@@ -253,4 +267,11 @@ export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
     hasIncompleteDetails:
       hasMaster && verificationStatus === "go_upc_unverified",
   };
+}
+
+export async function fetchLocalBarcodeScanProduct(barcode, barcodeType) {
+  return (
+    (await fetchSupplementProductsMasterScanProduct(barcode, barcodeType)) ||
+    (await fetchOffProductsBarcodeScanProduct(barcode, barcodeType))
+  );
 }

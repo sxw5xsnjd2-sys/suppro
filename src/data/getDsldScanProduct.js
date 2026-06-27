@@ -72,6 +72,12 @@ function buildBarcodeLookupCandidates(barcode, barcodeType) {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
+function formatUpcAWithSpaces(value) {
+  return /^\d{12}$/.test(value)
+    ? `${value.slice(0, 1)} ${value.slice(1, 6)} ${value.slice(6, 11)} ${value.slice(11)}`
+    : "";
+}
+
 function marketStatusFromOffMarket(offMarket) {
   if (offMarket === 0) return "on_market";
   if (offMarket === 1) return "off_market";
@@ -280,20 +286,25 @@ async function fetchCachedDsldMatch(barcode, barcodeType) {
 }
 
 function scoreLabelMatch(input, label) {
-  const normalizedInputBarcode = normalizeOpenFoodFactsBarcode(input.barcode, input.barcodeType);
+  const inputBarcodeCandidates = new Set(
+    buildBarcodeLookupCandidates(input.barcode, input.barcodeType)
+  );
   const rawLabelBarcode = trimString(label?.upcSku).replace(/\D/g, "");
   const labelBarcodeCandidates = new Set(rawLabelBarcode ? [rawLabelBarcode] : []);
   if (/^\d{12}$/.test(rawLabelBarcode)) labelBarcodeCandidates.add(`0${rawLabelBarcode}`);
   else if (/^0\d{12}$/.test(rawLabelBarcode)) labelBarcodeCandidates.add(rawLabelBarcode.slice(1));
   const normalizedInputName = normalizeName(input.productName);
   const normalizedLabelName = normalizeName(label?.fullName);
+  const hasExactBarcodeMatch = Array.from(inputBarcodeCandidates).some((candidate) =>
+    labelBarcodeCandidates.has(candidate)
+  );
 
   let score = 0;
   const reasons = [];
 
-  if (rawLabelBarcode && labelBarcodeCandidates.has(normalizedInputBarcode)) {
+  if (rawLabelBarcode && hasExactBarcodeMatch) {
     score += 70;
-    reasons.push("exact barcode match");
+    reasons.push("exact_barcode_match");
   }
 
   if (normalizedInputName && normalizedLabelName === normalizedInputName) {
@@ -325,7 +336,8 @@ function scoreLabelMatch(input, label) {
   }
 
   let confidence = "low";
-  if (score >= 110) confidence = "high";
+  if (hasExactBarcodeMatch) confidence = "high";
+  else if (score >= 110) confidence = "high";
   else if (score >= 80) confidence = "medium";
 
   return { score, confidence, reasons };
@@ -333,7 +345,14 @@ function scoreLabelMatch(input, label) {
 
 async function searchDsldCandidates(input) {
   const barcodeCandidates = buildBarcodeLookupCandidates(input.barcode, input.barcodeType);
-  const queries = barcodeCandidates.flatMap((b) => [b, `"${b}"`]);
+  const queries = Array.from(
+    new Set(
+      barcodeCandidates.flatMap((b) => {
+        const spacedUpc = formatUpcAWithSpaces(b);
+        return [b, `"${b}"`, spacedUpc ? `"${spacedUpc}"` : ""].filter(Boolean);
+      })
+    )
+  );
   const hits = [];
 
   for (const query of queries) {

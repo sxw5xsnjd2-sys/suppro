@@ -36,14 +36,12 @@ function loadScannerStoreModule(overrides = {}) {
   const factory = new Function(
     "create",
     "canonicalizeBarcodeType",
-    "fetchOpenFoodFactsProduct",
     "isRetailBarcodeType",
     "isValidBarcode",
     "normalizeBarcode",
-    "fetchLocalBarcodeScanProduct",
+    "fetchOffProductsBarcodeScanProduct",
+    "fetchSupplementProductsMasterScanProduct",
     "buildScanDebugMetadata",
-    "getOpenFoodFactsQuality",
-    "shouldCheckDsld",
     "maybeFetchDsldScanMatch",
     "fetchGoUpcProduct",
     "persistGoUpcProduct",
@@ -98,11 +96,13 @@ return { useScannerStore };`
   return factory(
     overrides.create ?? createTestStore,
     overrides.canonicalizeBarcodeType ?? ((value) => value),
-    overrides.fetchOpenFoodFactsProduct ?? (async () => null),
     overrides.isRetailBarcodeType ?? (() => true),
     overrides.isValidBarcode ?? (() => true),
     overrides.normalizeBarcode ?? ((value) => value),
-    overrides.fetchLocalBarcodeScanProduct ?? (async () => null),
+    overrides.fetchOffProductsBarcodeScanProduct ?? (async () => null),
+    overrides.fetchSupplementProductsMasterScanProduct ??
+      overrides.fetchLocalBarcodeScanProduct ??
+      (async () => null),
     overrides.buildScanDebugMetadata ??
       (({
         offFound,
@@ -119,8 +119,6 @@ return { useScannerStore };`
         dsld_confidence: dsldConfidence ?? null,
         final_source_used: finalSourceUsed ?? "unknown",
       })),
-    overrides.getOpenFoodFactsQuality ?? (() => "missing"),
-    overrides.shouldCheckDsld ?? (() => false),
     overrides.maybeFetchDsldScanMatch ??
       (async () => ({
         checked: false,
@@ -165,7 +163,7 @@ return { useScannerStore };`
   );
 }
 
-test("scanner barcode orchestration checks local cache before OpenFoodFacts", async () => {
+test("scanner barcode orchestration checks supplement master before fallbacks", async () => {
   const sequence = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
@@ -217,7 +215,7 @@ test("scanner barcode orchestration checks local cache before OpenFoodFacts", as
   );
 });
 
-test("scanner barcode orchestration falls back from local to OpenFoodFacts and then DSLD for weak OFF data", async () => {
+test("scanner barcode orchestration checks DSLD before Go-UPC and off_products after master misses", async () => {
   const sequence = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
@@ -226,20 +224,6 @@ test("scanner barcode orchestration falls back from local to OpenFoodFacts and t
       sequence.push("local");
       return null;
     },
-    fetchOpenFoodFactsProduct: async () => {
-      sequence.push("off");
-      return {
-        barcode: "0474690758590",
-        productName: "Natrol Melatonin",
-        ingredientsText: "Melatonin",
-        sourceIngredients: ["Melatonin"],
-        scanDataSource: "open_food_facts",
-        sourceStatus: 1,
-      };
-    },
-    getOpenFoodFactsQuality: () => "low",
-    shouldCheckDsld: ({ openFoodFactsQuality, featureEnabled }) =>
-      featureEnabled && openFoodFactsQuality !== "good",
     maybeFetchDsldScanMatch: async () => {
       sequence.push("dsld");
       return {
@@ -249,10 +233,31 @@ test("scanner barcode orchestration falls back from local to OpenFoodFacts and t
         dsldMatch: {
           source: "dsld",
           product_name: "Natrol Melatonin 5 mg",
+          brand_name: "Natrol",
+          serving_size: "1 tablet",
+          active_ingredients_with_disclosed_dose: [
+            {
+              ingredient_name: "Melatonin",
+              amount_per_serving: "5",
+              amount_unit: "mg",
+            },
+          ],
         },
       };
     },
-    extractBestIngredientCandidates: () => [{ name: "Melatonin" }],
+    fetchGoUpcProduct: async () => {
+      sequence.push("go_upc");
+      return {
+        productName: "Go-UPC Melatonin Display",
+        brand: "Go-UPC Brand",
+        imageUrl: "https://cdn.example.com/go-upc-melatonin.png",
+        imageSourceUrl: "https://cdn.example.com/go-upc-melatonin.png",
+        ingredientsText: "Go-UPC ingredients should not be used",
+        sourceIngredients: [{ name: "Wrong ingredient" }],
+        scanDataSource: "go_upc",
+      };
+    },
+    extractIngredientCandidatesFromList: (ingredients) => ingredients,
     matchIngredientsToCatalog: () => ({
       matchedIngredients: [],
       matches: [],
@@ -264,20 +269,56 @@ test("scanner barcode orchestration falls back from local to OpenFoodFacts and t
     .getState()
     .processBarcode("0474690758590", "ean13");
 
-  assert.deepEqual(sequence, ["local", "off", "dsld"]);
+  assert.deepEqual(sequence, ["local", "dsld", "go_upc"]);
   assert.equal(state.status, "success");
-  assert.equal(state.product.scanDataSource, "open_food_facts");
+  assert.equal(state.product.scanDataSource, "dsld");
+  assert.equal(state.product.productName, "Natrol Melatonin 5 mg");
   assert.deepEqual(state.product.dsldMatch, {
     source: "dsld",
     product_name: "Natrol Melatonin 5 mg",
+    brand_name: "Natrol",
+    serving_size: "1 tablet",
+    active_ingredients_with_disclosed_dose: [
+      {
+        ingredient_name: "Melatonin",
+        amount_per_serving: "5",
+        amount_unit: "mg",
+      },
+    ],
   });
+  assert.equal(state.product.brand, "Natrol");
+  assert.equal(state.product.servingSizeText, "1 tablet");
+  assert.equal(
+    state.product.imageUrl,
+    "https://cdn.example.com/go-upc-melatonin.png"
+  );
+  assert.equal(state.product.imageDataSource, "go_upc");
+  assert.equal(state.product.imageProvider, "go_upc");
+  assert.equal(state.product.displayName, "Go-UPC Melatonin Display");
+  assert.deepEqual(state.product.sourceIngredients, [
+    {
+      ingredient_name: "Melatonin",
+      amount_per_serving: "5",
+      amount_unit: "mg",
+      name: "Melatonin",
+      amount: 5,
+      unit: "mg",
+      dosageValue: 5,
+      dosageUnit: "mg",
+      dosageDisplay: "5mg",
+      ingredientType: "active_with_disclosed_dose",
+      ingredient_type: "active_with_disclosed_dose",
+      parentBlend: null,
+      parent_blend: null,
+    },
+  ]);
   assert.equal(
     state.product.sourceDecision.final_source_used,
-    "open_food_facts_with_dsld"
+    "dsld"
   );
 });
 
-test("scanner barcode orchestration preserves the DSLD secondary match when OpenFoodFacts fails", async () => {
+test("scanner barcode orchestration uses DSLD before Go-UPC when master misses", async () => {
   const sequence = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
@@ -285,10 +326,6 @@ test("scanner barcode orchestration preserves the DSLD secondary match when Open
     fetchLocalBarcodeScanProduct: async () => {
       sequence.push("local");
       return null;
-    },
-    fetchOpenFoodFactsProduct: async () => {
-      sequence.push("off");
-      throw new Error("OpenFoodFacts unavailable");
     },
     maybeFetchDsldScanMatch: async () => {
       sequence.push("dsld");
@@ -299,6 +336,9 @@ test("scanner barcode orchestration preserves the DSLD secondary match when Open
         dsldMatch: {
           source: "dsld",
           product_name: "Vitamin D3 25 mcg",
+          active_ingredients_with_disclosed_dose: [
+            { ingredient_name: "Vitamin D3" },
+          ],
         },
       };
     },
@@ -314,12 +354,15 @@ test("scanner barcode orchestration preserves the DSLD secondary match when Open
     .getState()
     .processBarcode("0123456789012", "ean13");
 
-  assert.deepEqual(sequence, ["local", "off", "dsld"]);
-  assert.equal(state.status, "no_ingredients");
-  assert.equal(state.product.productName, null);
+  assert.deepEqual(sequence, ["local", "dsld"]);
+  assert.equal(state.status, "success");
+  assert.equal(state.product.productName, "Vitamin D3 25 mcg");
   assert.deepEqual(state.product.dsldMatch, {
     source: "dsld",
     product_name: "Vitamin D3 25 mcg",
+    active_ingredients_with_disclosed_dose: [
+      { ingredient_name: "Vitamin D3" },
+    ],
   });
 });
 
@@ -333,10 +376,6 @@ test("scanner barcode orchestration persists provisional Go-UPC matches", async 
     fetchLocalBarcodeScanProduct: async () => {
       sequence.push("local");
       return null;
-    },
-    fetchOpenFoodFactsProduct: async () => {
-      sequence.push("off");
-      throw new Error("OpenFoodFacts unavailable");
     },
     maybeFetchDsldScanMatch: async () => {
       sequence.push("dsld");
@@ -380,13 +419,64 @@ test("scanner barcode orchestration persists provisional Go-UPC matches", async 
     .getState()
     .processBarcode("0123456789012", "ean13");
 
-  assert.deepEqual(sequence, ["local", "off", "dsld", "go_upc"]);
+  assert.deepEqual(sequence, ["local", "dsld", "go_upc"]);
   assert.equal(persistedPayload?.productName, "Go UPC Magnesium");
   assert.equal(persistedBarcodeType, "ean13");
   assert.equal(state.status, "success");
   assert.equal(state.product.productId, "prod_go_upc");
   assert.equal(state.product.verificationStatus, "go_upc_unverified");
   assert.equal(state.product.hasIncompleteDetails, true);
+});
+
+test("scanner barcode orchestration uses off_products only after DSLD and Go-UPC miss", async () => {
+  const sequence = [];
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => {
+      sequence.push("local");
+      return null;
+    },
+    maybeFetchDsldScanMatch: async () => {
+      sequence.push("dsld");
+      return {
+        checked: true,
+        cacheHit: false,
+        confidence: "low",
+        dsldMatch: null,
+      };
+    },
+    fetchGoUpcProduct: async () => {
+      sequence.push("go_upc");
+      return null;
+    },
+    fetchOffProductsBarcodeScanProduct: async () => {
+      sequence.push("off_products");
+      return {
+        barcode: "0123456789012",
+        productId: "off_product",
+        productName: "Cached OFF Product",
+        ingredientsText: "Vitamin C",
+        sourceIngredients: [],
+        scanDataSource: "off_products",
+        sourceStatus: 1,
+      };
+    },
+    extractBestIngredientCandidates: () => [{ name: "Vitamin C" }],
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.deepEqual(sequence, ["local", "dsld", "go_upc", "off_products"]);
+  assert.equal(state.status, "success");
+  assert.equal(state.product.scanDataSource, "off_products");
 });
 
 test("non-retail barcodes check the local cache before taking the not_found path", async () => {

@@ -1,4 +1,8 @@
 import {
+  extractIngredientCandidatesFromList,
+  matchIngredientsToCatalog,
+} from "@/features/scanner/ingredientMatching";
+import {
   CATALOG_TYPES,
   createSupplementProductCatalogId,
   getCatalogEntityId,
@@ -9,6 +13,7 @@ import {
   buildLinkedSupplementPayload,
   buildSupplementReferenceItems,
 } from "./buildLinkedSupplementPayload";
+import { fetchIngredientMatchCatalog } from "./getIngredientMatchCatalog";
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -380,6 +385,49 @@ async function loadSupplementProductIngredientSets(catalogId) {
   };
 }
 
+async function loadMasterJsonIngredientSets(activeIngredientsJson) {
+  if (
+    !Array.isArray(activeIngredientsJson) ||
+    activeIngredientsJson.length === 0
+  ) {
+    return {
+      activeIngredients: [],
+      linkedIngredients: [],
+      supplementRows: [],
+    };
+  }
+
+  const candidates = extractIngredientCandidatesFromList(activeIngredientsJson);
+  if (candidates.length === 0) {
+    return {
+      activeIngredients: [],
+      linkedIngredients: [],
+      supplementRows: [],
+    };
+  }
+
+  const catalogRows = await fetchIngredientMatchCatalog();
+  const { matchedIngredients } = matchIngredientsToCatalog(
+    candidates,
+    catalogRows
+  );
+  const activeIngredients =
+    dedupeProductIngredientsForDisplay(matchedIngredients);
+  const linkedIngredients = dedupeByKey(
+    activeIngredients.filter((match) => trimString(match.catalogId)),
+    (match) => trimString(match.catalogId)
+  );
+  const supplementRows = await getSupplementsByIds(
+    linkedIngredients.map((match) => match.catalogId)
+  );
+
+  return {
+    activeIngredients,
+    linkedIngredients,
+    supplementRows,
+  };
+}
+
 export async function getSupplementProductActiveIngredients(catalogId) {
   const { activeIngredients } = await loadSupplementProductIngredientSets(
     catalogId
@@ -432,7 +480,7 @@ async function getSupplementProductById(catalogId, fallbackName) {
   const { data, error } = await supabase
     .from("supplement_products_master")
     .select(
-      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at"
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at, verification_status"
     )
     .eq("product_id", productId)
     .maybeSingle();
@@ -446,8 +494,18 @@ async function getSupplementProductById(catalogId, fallbackName) {
     return null;
   }
 
-  const { activeIngredients, linkedIngredients, supplementRows } =
+  let { activeIngredients, linkedIngredients, supplementRows } =
     await loadSupplementProductIngredientSets(catalogId);
+  if (
+    activeIngredients.length === 0 &&
+    linkedIngredients.length === 0 &&
+    Array.isArray(data?.active_ingredients_json) &&
+    data.active_ingredients_json.length > 0
+  ) {
+    ({ activeIngredients, linkedIngredients, supplementRows } =
+      await loadMasterJsonIngredientSets(data.active_ingredients_json));
+  }
+
   const supplementsByCatalogId = new Map(
     supplementRows.map((row) => [row.id, row])
   );
@@ -455,6 +513,8 @@ async function getSupplementProductById(catalogId, fallbackName) {
     trimString(data?.display_name) || trimString(fallbackName) || "Supplement";
   const barcode =
     trimString(data?.barcode) || (await getOffProductBarcode(data.product_id));
+  const verificationStatus =
+    trimString(data?.verification_status) || "verified";
 
   return {
     ...buildLinkedSupplementPayload({
@@ -486,6 +546,9 @@ async function getSupplementProductById(catalogId, fallbackName) {
     image_error: trimString(data?.image_error) || null,
     image_manual_override: Boolean(data?.image_manual_override),
     image_last_checked_at: trimString(data?.image_last_checked_at) || null,
+    verification_status: verificationStatus,
+    verificationStatus,
+    scanDetailsIncomplete: verificationStatus === "go_upc_unverified",
     ingredient_count: activeIngredients.length,
   };
 }

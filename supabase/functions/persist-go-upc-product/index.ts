@@ -43,6 +43,232 @@ function trimString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeProvisionalIngredientText(value: unknown) {
+  return trimString(value)
+    .normalize("NFKC")
+    .replace(
+      /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE00-\uFE0F\uFEFF]/g,
+      "",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => normalizeProvisionalIngredientText(item))
+    .filter(Boolean);
+}
+
+function normalizeDosageUnit(value: string) {
+  const normalized = trimString(value).toLowerCase().replace(/[µμ]/g, "u");
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "ug") {
+    return "mcg";
+  }
+  if (normalized === "iu") {
+    return "IU";
+  }
+  return normalized;
+}
+
+function stripProvisionalMarketingText(value: string) {
+  const trimmed = normalizeProvisionalIngredientText(value)
+    .replace(
+      /^(?:the supplement includes key ingredients such as|the supplement includes|key ingredients(?: include| are| such as)?|includes key ingredients such as|ingredients include|contains)\s+/i,
+      "",
+    );
+
+  const keptSentences = trimmed
+    .split(/(?<!\d)[.!?]+(?!\d)/)
+    .map((sentence) => normalizeProvisionalIngredientText(sentence))
+    .filter(Boolean)
+    .filter(
+      (sentence) =>
+        !/^(?:these components|these ingredients|carefully selected|selected to|designed to|formulated to|to support|supporting|helps?\b|helping\b|promotes?\b|promoting\b|provides?\b|providing\b)/i
+          .test(sentence),
+    )
+    .map((sentence) =>
+      sentence.replace(
+        /\b(?:these components|these ingredients|carefully selected|selected to|designed to|formulated to|to support|supporting|helps?\b|helping\b|promotes?\b|promoting\b|provides?\b|providing\b).*$/i,
+        "",
+      )
+    )
+    .map((sentence) => normalizeProvisionalIngredientText(sentence))
+    .filter(Boolean);
+
+  return keptSentences.join(", ");
+}
+
+function titleCaseFallback(value: string) {
+  if (!value || /[A-Z]/.test(value)) {
+    return value;
+  }
+
+  return value.replace(/\b[a-z]/g, (match) => match.toUpperCase());
+}
+
+function normalizeProvisionalIngredientName(
+  value: string,
+  preferVitaminPrefix: boolean,
+) {
+  let next = normalizeProvisionalIngredientText(value)
+    .replace(/^ingredients?\s*:\s*/i, "")
+    .replace(/^(?:and|with|plus)\b[\s,:-]*/i, "")
+    .replace(/^[,;:•·-]+/, "")
+    .replace(/[,;:•·-]+$/, "")
+    .trim();
+
+  if (!next) {
+    return { name: "", carriesVitaminContext: preferVitaminPrefix };
+  }
+
+  let carriesVitaminContext = preferVitaminPrefix;
+  if (/^vitamins?\s+/i.test(next)) {
+    next = next.replace(/^vitamins?\s+/i, "").trim();
+    carriesVitaminContext = true;
+  } else if (/^minerals?\s+/i.test(next)) {
+    next = next.replace(/^minerals?\s+/i, "").trim();
+  }
+
+  const vitaminCodeMatch = next.match(/^([A-Za-z])(?:[\s-]*([0-9]{0,2}))?$/);
+  if (
+    vitaminCodeMatch &&
+    (carriesVitaminContext ||
+      /^(?:A|B|C|D|E|K)$/i.test(vitaminCodeMatch[1]))
+  ) {
+    const vitaminSuffix = `${vitaminCodeMatch[1].toUpperCase()}${
+      vitaminCodeMatch[2] ?? ""
+    }`;
+    return {
+      name: `Vitamin ${vitaminSuffix}`,
+      carriesVitaminContext: true,
+    };
+  }
+
+  const explicitVitaminMatch = next.match(
+    /^vitamin\s+([A-Za-z])(?:[\s-]*([0-9]{0,2}))?$/i,
+  );
+  if (explicitVitaminMatch) {
+    return {
+      name: `Vitamin ${explicitVitaminMatch[1].toUpperCase()}${
+        explicitVitaminMatch[2] ?? ""
+      }`,
+      carriesVitaminContext: true,
+    };
+  }
+
+  return {
+    name: titleCaseFallback(next),
+    carriesVitaminContext,
+  };
+}
+
+function parseProvisionalIngredient(
+  value: string,
+  preferVitaminPrefix: boolean,
+) {
+  let next = normalizeProvisionalIngredientText(value)
+    .replace(
+      /\b(?:these components|these ingredients|carefully selected|selected to|designed to|formulated to|to support|supporting|helps?\b|helping\b|promotes?\b|promoting\b|provides?\b|providing\b).*$/i,
+      "",
+    )
+    .trim();
+
+  if (!next) {
+    return { ingredient: null, carriesVitaminContext: preferVitaminPrefix };
+  }
+
+  const dosageMatch = next.match(
+    /\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|μg|ug|g|kg|iu|ml|l)\b/i,
+  );
+  const dosageValue = dosageMatch
+    ? Number.parseFloat(dosageMatch[1].replace(",", "."))
+    : null;
+  const dosageUnit = dosageMatch ? normalizeDosageUnit(dosageMatch[2]) : null;
+  const dosageDisplay = Number.isFinite(dosageValue) && dosageUnit
+    ? `${String(dosageValue).replace(/\.0$/, "")} ${dosageUnit}`
+    : null;
+
+  if (dosageMatch) {
+    next = next
+      .replace(
+        /\(?\b\d+(?:[.,]\d+)?\s*(mg|mcg|µg|μg|ug|g|kg|iu|ml|l)\b(?:\s*\/\s*serving)?\)?/i,
+        "",
+      )
+      .replace(/\(\s*\)/g, "")
+      .trim();
+  }
+
+  const normalizedName = normalizeProvisionalIngredientName(
+    next,
+    preferVitaminPrefix,
+  );
+  if (!normalizedName.name) {
+    return {
+      ingredient: null,
+      carriesVitaminContext: normalizedName.carriesVitaminContext,
+    };
+  }
+
+  return {
+    ingredient: {
+      name: normalizedName.name,
+      dosageValue: Number.isFinite(dosageValue) ? dosageValue : null,
+      dosageUnit,
+      dosageDisplay,
+    },
+    carriesVitaminContext: normalizedName.carriesVitaminContext,
+  };
+}
+
+function buildProvisionalActiveIngredients(
+  sourceIngredients: unknown,
+  ingredientsText: string,
+) {
+  const providedIngredients = sanitizeStringArray(sourceIngredients);
+  const normalizedText = stripProvisionalMarketingText(ingredientsText)
+    .replace(/\s+(?:and|plus)\s+/gi, ", ");
+  const rawIngredients = providedIngredients.length > 0
+    ? providedIngredients
+    : normalizedText
+      .split(/\s*,\s*(?=[A-Za-z])|[;\n]+/)
+      .map((item) => normalizeProvisionalIngredientText(item))
+      .filter(Boolean);
+
+  const parsedIngredients = [];
+  const seenIngredients = new Set<string>();
+  let carriesVitaminContext = false;
+
+  rawIngredients.forEach((item) => {
+    const parsed = parseProvisionalIngredient(item, carriesVitaminContext);
+    carriesVitaminContext = parsed.carriesVitaminContext;
+
+    if (!parsed.ingredient?.name) {
+      return;
+    }
+
+    const key = [
+      parsed.ingredient.name.toLowerCase(),
+      parsed.ingredient.dosageDisplay ?? "",
+    ].join("|");
+    if (seenIngredients.has(key)) {
+      return;
+    }
+
+    seenIngredients.add(key);
+    parsedIngredients.push(parsed.ingredient);
+  });
+
+  return parsedIngredients.slice(0, 80);
+}
+
 const RETAIL_BARCODE_TYPES = new Set(["ean13", "ean8", "upc_a", "upc_e"]);
 const ALPHANUMERIC_BARCODE_TYPES = new Set(["code128", "code39", "code93"]);
 const SAFE_ALPHANUMERIC_BARCODE_PATTERN = /^[A-Za-z0-9._-]{4,40}$/;
@@ -456,6 +682,11 @@ Deno.serve(async (request) => {
     );
   }
 
+  const provisionalActiveIngredients = buildProvisionalActiveIngredients(
+    body?.sourceIngredients,
+    ingredientsText,
+  );
+
   try {
     const productResolution = await resolveOrCreateProduct({
       barcode,
@@ -468,7 +699,7 @@ Deno.serve(async (request) => {
       await adminSupabase!
         .from(TABLES.supplementProducts)
         .select(
-          "product_id, barcode, display_name, active_ingredients_json, image_url, image_source_url, image_provider, image_status, verification_status",
+          "product_id, barcode, display_name, name_source, naming_confidence, serving_size_text, active_ingredients_json, ingredient_count, processed_at, image_url, image_source_url, image_provider, image_status, verification_status",
         )
         .eq("product_id", productResolution.productId)
         .maybeSingle();
@@ -482,10 +713,36 @@ Deno.serve(async (request) => {
     const shouldPreserveCanonicalStatus =
       hasCanonicalIngredients(existingMaster?.active_ingredients_json) &&
       trimString(existingMaster?.verification_status) !== "go_upc_unverified";
+    const existingDisplayName = trimString(existingMaster?.display_name);
+    const existingNameSource = trimString(existingMaster?.name_source);
+    const shouldPreserveExistingName = Boolean(existingDisplayName) &&
+      Boolean(existingNameSource) &&
+      existingNameSource !== "go_upc";
 
     const verificationStatus = shouldPreserveCanonicalStatus
       ? trimString(existingMaster?.verification_status) || "verified"
       : "go_upc_unverified";
+    const resolvedDisplayName = shouldPreserveExistingName
+      ? existingDisplayName
+      : productName;
+    const resolvedNameSource = shouldPreserveExistingName
+      ? existingNameSource
+      : "go_upc";
+    const resolvedNamingConfidence = shouldPreserveExistingName &&
+        typeof existingMaster?.naming_confidence === "number" &&
+        Number.isFinite(existingMaster.naming_confidence)
+      ? existingMaster.naming_confidence
+      : null;
+    const existingActiveIngredients = Array.isArray(
+        existingMaster?.active_ingredients_json,
+      )
+      ? existingMaster.active_ingredients_json
+      : [];
+    const resolvedActiveIngredients = existingActiveIngredients.length > 0
+      ? existingActiveIngredients
+      : provisionalActiveIngredients;
+    const resolvedIngredientCount = resolvedActiveIngredients.length;
+    const processedAt = new Date().toISOString();
     const resolvedImageUrl = imageUrl ||
       trimString(existingMaster?.image_url) || null;
     const resolvedImageSourceUrl = imageSourceUrl ||
@@ -503,7 +760,14 @@ Deno.serve(async (request) => {
         {
           product_id: productResolution.productId,
           barcode,
-          display_name: trimString(existingMaster?.display_name) || productName,
+          display_name: resolvedDisplayName,
+          name_source: resolvedNameSource,
+          naming_confidence: resolvedNamingConfidence,
+          serving_size_text: trimString(existingMaster?.serving_size_text) ||
+            null,
+          active_ingredients_json: resolvedActiveIngredients,
+          ingredient_count: resolvedIngredientCount,
+          processed_at: processedAt,
           image_url: resolvedImageUrl,
           image_source_url: resolvedImageSourceUrl,
           image_provider: resolvedImageProvider,
@@ -524,6 +788,8 @@ Deno.serve(async (request) => {
     console.log("[go-upc-persist] persisted provisional product", {
       barcode,
       productId: productResolution.productId,
+      displayName: resolvedDisplayName,
+      nameSource: resolvedNameSource,
       verificationStatus,
       createdProduct: productResolution.createdProduct,
       hasImage: Boolean(resolvedImageUrl),
@@ -533,7 +799,7 @@ Deno.serve(async (request) => {
       productId: productResolution.productId,
       createdProduct: productResolution.createdProduct,
       barcode,
-      displayName: trimString(existingMaster?.display_name) || productName,
+      displayName: resolvedDisplayName,
       imageUrl: resolvedImageUrl,
       imageSourceUrl: resolvedImageSourceUrl,
       imageProvider: resolvedImageProvider,

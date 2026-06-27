@@ -1439,10 +1439,10 @@ export default function SupplementInfoModal() {
     isScanFailure && data?.scanFailureStatus === "not_found";
   const isNoIngredientsScanFailure =
     isScanFailure && data?.scanFailureStatus === "no_ingredients";
-  const isIncompleteGoUpcScan = Boolean(
-    isLiveScanSource &&
-    data?.scanDataSource === "go_upc" &&
-    data?.scanDetailsIncomplete,
+  const hasIncompleteDetailsWarning = Boolean(
+    data?.scanDetailsIncomplete ||
+      data?.verificationStatus === "go_upc_unverified" ||
+      data?.verification_status === "go_upc_unverified",
   );
   const isVerified = Boolean(data?.verified);
   const canAddSupplement = Boolean(
@@ -1453,7 +1453,7 @@ export default function SupplementInfoModal() {
     isLiveScanSource && isCurrentScanSession,
   );
   const canImproveScanWithPhotosInHeader =
-    canImproveScanWithPhotos && !isIncompleteGoUpcScan;
+    canImproveScanWithPhotos && !hasIncompleteDetailsWarning;
   const hasReferenceItems = referenceItems.length > 0;
   const showShareAction = !isScanFailure;
   const showRanking = !useProductSupportBar;
@@ -1476,7 +1476,7 @@ export default function SupplementInfoModal() {
     data?.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT;
   const productId = data?.product_id || data?.id;
   const shouldShowProductImage =
-    (!isScanFailure || isIncompleteGoUpcScan) &&
+    (!isScanFailure || hasIncompleteDetailsWarning) &&
     data?.catalogType !== CATALOG_TYPES.ACTIVE_INGREDIENT &&
     (isSupplementProductDetail ||
       data?.catalogType === "supplement_product" ||
@@ -2291,14 +2291,14 @@ export default function SupplementInfoModal() {
                   styles.summaryCardNotRecognized,
               ]}
             >
-              {isIncompleteGoUpcScan ? (
+              {hasIncompleteDetailsWarning ? (
                 <View style={styles.incompleteScanWarning}>
                   <View style={styles.incompleteScanWarningHeader}>
                     <View style={styles.incompleteScanWarningIconWrap}>
                       <Ionicons name="warning" size={18} color="#B42318" />
                     </View>
                     <Text style={styles.incompleteScanWarningText}>
-                      Some details may be missing or incomplete
+                      Warning some details may be missing or incomplete
                     </Text>
                   </View>
                   {canImproveScanWithPhotos ? (
@@ -2345,7 +2345,7 @@ export default function SupplementInfoModal() {
                 </View>
               ) : null}
 
-              {isScanFailure && !isIncompleteGoUpcScan ? (
+              {isScanFailure && !hasIncompleteDetailsWarning ? (
                 <View
                   style={[
                     styles.scanFailureState,

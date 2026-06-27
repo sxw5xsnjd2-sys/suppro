@@ -1,16 +1,16 @@
 import { create } from "zustand";
 import {
   canonicalizeBarcodeType,
-  fetchOpenFoodFactsProduct,
   isRetailBarcodeType,
   isValidBarcode,
   normalizeBarcode,
 } from "@src/data/getOpenFoodFactsProduct";
-import { fetchLocalBarcodeScanProduct } from "@src/data/getLocalBarcodeScanProduct";
+import {
+  fetchOffProductsBarcodeScanProduct,
+  fetchSupplementProductsMasterScanProduct,
+} from "@src/data/getLocalBarcodeScanProduct";
 import {
   buildScanDebugMetadata,
-  getOpenFoodFactsQuality,
-  shouldCheckDsld,
 } from "@src/data/dsldSourceDecision";
 import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
 import { fetchGoUpcProduct } from "@src/data/getGoUpcProduct";
@@ -26,7 +26,6 @@ import {
   SCANNER_FAILURE_CATEGORIES,
 } from "@src/lib/scannerFailure";
 import {
-  ENABLE_DSLD_LOOKUP,
   logBuildAwareDiagnostic,
   logDevelopmentDiagnostic,
 } from "@src/lib/runtimeConfig";
@@ -160,10 +159,50 @@ function createInitialState() {
 
 function shouldUseStructuredLocalIngredients(product) {
   return (
-    trimString(product?.scanDataSource) === "supplement_products_master" &&
+    (trimString(product?.scanDataSource) === "supplement_products_master" ||
+      trimString(product?.scanDataSource) === "dsld") &&
     Array.isArray(product?.sourceIngredients) &&
     product.sourceIngredients.length > 0
   );
+}
+
+function mapDsldIngredientRow(row, ingredientType) {
+  const name = trimString(row?.ingredient_name) || trimString(row?.name);
+  if (!name) {
+    return null;
+  }
+
+  const dosageValueRaw = row?.amount_per_serving;
+  const dosageValue =
+    typeof dosageValueRaw === "number" && Number.isFinite(dosageValueRaw)
+      ? dosageValueRaw
+      : Number.parseFloat(String(dosageValueRaw ?? "").trim());
+  const dosageUnit = trimString(row?.amount_unit) || null;
+  const hasValidDosageValue = Number.isFinite(dosageValue);
+  const dosageDisplay =
+    hasValidDosageValue && dosageUnit ? `${dosageValue}${dosageUnit}` : null;
+
+  return {
+    ...row,
+    name,
+    amount: hasValidDosageValue ? dosageValue : null,
+    unit: dosageUnit,
+    dosageValue: hasValidDosageValue ? dosageValue : null,
+    dosageUnit,
+    dosageDisplay,
+    ingredientType,
+    ingredient_type: ingredientType,
+    parentBlend:
+      trimString(row?.parentBlend) ||
+      trimString(row?.parent_blend) ||
+      trimString(row?.blend_name) ||
+      null,
+    parent_blend:
+      trimString(row?.parent_blend) ||
+      trimString(row?.parentBlend) ||
+      trimString(row?.blend_name) ||
+      null,
+  };
 }
 
 function buildDsldSecondaryProduct({
@@ -172,20 +211,90 @@ function buildDsldSecondaryProduct({
   dsldMatch,
   sourceDecision,
 }) {
+  const dsldSourceIngredients = [
+    ...(Array.isArray(dsldMatch?.active_ingredients_with_disclosed_dose)
+      ? dsldMatch.active_ingredients_with_disclosed_dose
+          .map((row) => mapDsldIngredientRow(row, "active_with_disclosed_dose"))
+      : []),
+    ...(Array.isArray(dsldMatch?.active_ingredients_without_disclosed_dose)
+      ? dsldMatch.active_ingredients_without_disclosed_dose
+          .map((row) => mapDsldIngredientRow(row, "active_without_disclosed_dose"))
+      : []),
+    ...(Array.isArray(dsldMatch?.proprietary_blend_rows)
+      ? dsldMatch.proprietary_blend_rows
+          .map((row) => mapDsldIngredientRow(row, "proprietary_blend"))
+      : []),
+  ].filter(Boolean);
+  const dsldIngredientsText = dsldSourceIngredients
+    .map((row) => trimString(row.name))
+    .filter(Boolean)
+    .join(", ");
+  const productSourceIngredients = Array.isArray(product?.sourceIngredients)
+    ? product.sourceIngredients
+    : [];
+
   return {
     ...(product && typeof product === "object" ? product : {}),
     barcode: trimString(barcode) || trimString(product?.barcode),
-    productName: trimString(product?.productName) || null,
-    ingredientsText: trimString(product?.ingredientsText) || "",
-    sourceIngredients: Array.isArray(product?.sourceIngredients)
-      ? product.sourceIngredients
-      : [],
+    brand: trimString(product?.brand) || trimString(dsldMatch?.brand_name) || null,
+    productName:
+      trimString(product?.productName) || trimString(dsldMatch?.product_name) || null,
+    ingredientsText: trimString(product?.ingredientsText) || dsldIngredientsText,
+    sourceIngredients:
+      productSourceIngredients.length > 0
+        ? productSourceIngredients
+        : dsldSourceIngredients,
     sourceStatus:
       typeof product?.sourceStatus === "number" ? product.sourceStatus : null,
     sourceStatusVerbose: trimString(product?.sourceStatusVerbose) || null,
-    scanDataSource: trimString(product?.scanDataSource) || "open_food_facts",
+    scanDataSource: trimString(product?.scanDataSource) || "dsld",
+    servingSizeText:
+      trimString(product?.servingSizeText) || trimString(dsldMatch?.serving_size) || null,
+    imageUrl: trimString(product?.imageUrl) || null,
+    imageSourceUrl: trimString(product?.imageSourceUrl) || null,
     dsldMatch,
     sourceDecision,
+  };
+}
+
+function getProductImageUrl(product) {
+  return (
+    trimString(product?.imageUrl) ||
+    trimString(product?.image_url) ||
+    trimString(product?.image) ||
+    null
+  );
+}
+
+function enrichDsldProductWithGoUpcCosmetics(product, goUpcProduct) {
+  const goUpcImageUrl = getProductImageUrl(goUpcProduct);
+  const productImageUrl = getProductImageUrl(product);
+  const goUpcProductName =
+    trimString(goUpcProduct?.productName) || trimString(goUpcProduct?.name);
+
+  return {
+    ...product,
+    imageUrl: productImageUrl || goUpcImageUrl,
+    imageSourceUrl:
+      trimString(product?.imageSourceUrl) ||
+      trimString(product?.image_source_url) ||
+      trimString(goUpcProduct?.imageSourceUrl) ||
+      trimString(goUpcProduct?.image_source_url) ||
+      goUpcImageUrl ||
+      null,
+    imageProvider:
+      trimString(product?.imageProvider) ||
+      trimString(product?.image_provider) ||
+      (goUpcImageUrl ? "go_upc" : null),
+    imageDataSource:
+      trimString(product?.imageDataSource) ||
+      trimString(product?.image_data_source) ||
+      (goUpcImageUrl ? "go_upc" : null),
+    displayName:
+      trimString(product?.displayName) ||
+      trimString(product?.display_name) ||
+      goUpcProductName ||
+      null,
   };
 }
 
@@ -309,7 +418,10 @@ export const useScannerStore = create((set, get) => ({
       let dsldConfidence = null;
 
       try {
-        product = await fetchLocalBarcodeScanProduct(nextBarcode, nextBarcodeType);
+        product = await fetchSupplementProductsMasterScanProduct(
+          nextBarcode,
+          nextBarcodeType
+        );
         extractionSource = trimString(product?.scanDataSource) || null;
         if (product) {
           logScannerSource("local", product);
@@ -317,7 +429,7 @@ export const useScannerStore = create((set, get) => ({
       } catch (localLookupError) {
         logBuildAwareDiagnostic(
           "warn",
-          "[scanner] local barcode lookup failed; falling back to OpenFoodFacts",
+          "[scanner] supplement master lookup failed; falling back to DSLD",
           {
             developmentDetails: {
               message:
@@ -329,94 +441,47 @@ export const useScannerStore = create((set, get) => ({
         );
       }
 
-      if (!product && !retailBarcode) {
-        const notFound = normalizeBarcodeScanFailure({
-          code: "product_not_found",
-        });
-
-        set(() => ({
-          status: notFound.status,
-          error: notFound.error,
-          scanSessionId: nextScanSessionId,
+      if (!product && retailBarcode) {
+        const dsldResult = await maybeFetchDsldScanMatch({
           barcode: nextBarcode,
           barcodeType: nextBarcodeType,
-          product: null,
-          ingredients: [],
-          matchedIngredients: [],
-          matches: [],
-          unmatchedIngredients: [],
-          photoRescueStatus: "idle",
-          photoRescueError: null,
-          extractionSource: null,
-          extractionConfidence: null,
-        }));
+          productName: "",
+        });
+        dsldChecked = dsldResult.checked;
+        dsldCacheHit = dsldResult.cacheHit;
+        dsldConfidence = dsldResult.confidence;
 
-        return null;
-      }
-
-      if (!product) {
-        try {
-          product = await fetchOpenFoodFactsProduct(nextBarcode, nextBarcodeType);
-          extractionSource = "open_food_facts";
-          offFound = Boolean(product);
-          offQuality = getOpenFoodFactsQuality(product);
-          if (product) {
-            logScannerSource("open_food_facts", product);
-          }
-        } catch (openFoodFactsError) {
-          offFound = false;
-          offQuality = "missing";
-
-          const dsldResult = await maybeFetchDsldScanMatch({
-            barcode: nextBarcode,
-            barcodeType: nextBarcodeType,
-            productName: "",
+        if (dsldResult.dsldMatch) {
+          const sourceDecision = buildScanDebugMetadata({
+            offFound,
+            offQuality,
+            dsldChecked,
+            dsldCacheHit,
+            dsldConfidence,
+            finalSourceUsed: "photo_fallback_with_dsld",
           });
-          dsldChecked = dsldResult.checked;
-          dsldCacheHit = dsldResult.cacheHit;
-          dsldConfidence = dsldResult.confidence;
-
-          if (dsldResult.dsldMatch) {
-            const sourceDecision = buildScanDebugMetadata({
-              offFound,
-              offQuality,
-              dsldChecked,
-              dsldCacheHit,
-              dsldConfidence,
-              finalSourceUsed: "photo_fallback_with_dsld",
-            });
-            product = buildDsldSecondaryProduct({
-              barcode: nextBarcode,
-              product: null,
-              dsldMatch: dsldResult.dsldMatch,
-              sourceDecision,
-            });
-            extractionSource = "dsld";
-            logScannerSource("dsld", product);
-            logDevelopmentDiagnostic(
-              "log",
-              "[scanner-source-decision]",
-              sourceDecision
-            );
-          } else {
+          product = buildDsldSecondaryProduct({
+            barcode: nextBarcode,
+            product: null,
+            dsldMatch: dsldResult.dsldMatch,
+            sourceDecision,
+          });
+          if (!getProductImageUrl(product)) {
             try {
-              product = await fetchGoUpcProduct(nextBarcode, nextBarcodeType);
-              if (product) {
-                product = await persistProvisionalGoUpcProduct(
+              const goUpcCosmetics = await fetchGoUpcProduct(
+                nextBarcode,
+                nextBarcodeType
+              );
+              if (goUpcCosmetics) {
+                product = enrichDsldProductWithGoUpcCosmetics(
                   product,
-                  nextBarcodeType
+                  goUpcCosmetics
                 );
-                product = {
-                  ...product,
-                  hasIncompleteDetails: true,
-                };
-                extractionSource = "go_upc";
-                logScannerSource("go_upc", product);
               }
             } catch (goUpcError) {
               logBuildAwareDiagnostic(
                 "warn",
-                "[scanner] Go-UPC lookup failed after DSLD miss",
+                "[scanner] Go-UPC cosmetic enrichment failed after DSLD match",
                 {
                   developmentDetails: {
                     message:
@@ -427,49 +492,19 @@ export const useScannerStore = create((set, get) => ({
                 }
               );
             }
-
-            if (!product) {
-              throw openFoodFactsError;
-            }
           }
-        }
-      }
-
-      if (product && shouldCheckDsld({
-        barcode: nextBarcode,
-        featureEnabled: ENABLE_DSLD_LOOKUP,
-        primaryProduct: product,
-        openFoodFactsQuality: offQuality,
-      })) {
-        const dsldResult = await maybeFetchDsldScanMatch({
-          barcode: nextBarcode,
-          barcodeType: nextBarcodeType,
-          productName: trimString(product?.productName),
-        });
-        dsldChecked = dsldResult.checked;
-        dsldCacheHit = dsldResult.cacheHit;
-        dsldConfidence = dsldResult.confidence;
-
-        if (dsldResult.dsldMatch) {
-          product = {
-            ...product,
-            dsldMatch: dsldResult.dsldMatch,
-          };
+          extractionSource = "dsld";
           logScannerSource("dsld", product);
         } else {
           try {
-            const goUpcProduct = await fetchGoUpcProduct(
-              nextBarcode,
-              nextBarcodeType
-            );
-            if (goUpcProduct) {
-              const persistedGoUpcProduct =
-                await persistProvisionalGoUpcProduct(
-                  goUpcProduct,
-                  nextBarcodeType
-                );
+            product = await fetchGoUpcProduct(nextBarcode, nextBarcodeType);
+            if (product) {
+              product = await persistProvisionalGoUpcProduct(
+                product,
+                nextBarcodeType
+              );
               product = {
-                ...persistedGoUpcProduct,
+                ...product,
                 hasIncompleteDetails: true,
               };
               extractionSource = "go_upc";
@@ -492,6 +527,38 @@ export const useScannerStore = create((set, get) => ({
         }
       }
 
+      if (!product) {
+        try {
+          product = await fetchOffProductsBarcodeScanProduct(
+            nextBarcode,
+            nextBarcodeType
+          );
+          offFound = Boolean(product);
+          extractionSource = trimString(product?.scanDataSource) || null;
+          if (product) {
+            logScannerSource("off_products", product);
+          }
+        } catch (offProductsError) {
+          offFound = false;
+          logBuildAwareDiagnostic(
+            "warn",
+            "[scanner] off_products lookup failed after DSLD and Go-UPC",
+            {
+              developmentDetails: {
+                message:
+                  typeof offProductsError?.message === "string"
+                    ? offProductsError.message
+                    : "Unknown error",
+              },
+            }
+          );
+        }
+      }
+
+      if (!product) {
+        throw { code: "product_not_found" };
+      }
+
       const ingredients = shouldUseStructuredLocalIngredients(product)
         ? extractIngredientCandidatesFromList(product.sourceIngredients)
         : extractBestIngredientCandidates(product);
@@ -511,7 +578,9 @@ export const useScannerStore = create((set, get) => ({
             ? trimString(product.scanDataSource)
             : trimString(product?.scanDataSource) === "go_upc"
               ? "go_upc"
-              : trimString(product?.dsldMatch?.source)
+              : trimString(product?.scanDataSource) === "dsld"
+                ? "dsld"
+                : trimString(product?.dsldMatch?.source)
                 ? "open_food_facts_with_dsld"
                 : trimString(product?.scanDataSource) === "open_food_facts"
                   ? "open_food_facts"

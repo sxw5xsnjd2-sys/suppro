@@ -2278,6 +2278,7 @@ async function replaceCanonicalRows({
           barcode: trimString(barcode) || null,
           display_name: displayName,
           serving_size_text: servingSizeText,
+          verification_status: "photo_verified",
           name_source: "photo_rescue_ai",
           naming_confidence:
             typeof namingConfidence === "number" ? namingConfidence : null,
