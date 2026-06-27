@@ -21,8 +21,66 @@ const OPENAI_MODEL = "gpt-4.1-mini";
 const OPENAI_SEARCH_TIMEOUT_MS = 15_000;
 const OPENAI_SEARCH_MAX_OUTPUT_TOKENS = 1_200;
 const OPENAI_WEB_SEARCH_TOOL_TYPES = ["web_search", "web_search_preview"];
-const VERIFICATION_STATUS = "ai_web_search_provisional";
+const VERIFICATION_STATUS = "openai_unverified";
 const nullableStringSchema = { anyOf: [{ type: "string" }, { type: "null" }] };
+const BROAD_FALLBACK_NOISE_WORDS = new Set([
+  "capsule",
+  "capsules",
+  "tablet",
+  "tablets",
+  "sachet",
+  "sachets",
+  "softgel",
+  "softgels",
+  "gummy",
+  "gummies",
+  "pack",
+  "packs",
+  "expiry",
+  "flavour",
+  "flavor",
+  "vegan",
+  "vegetarian",
+]);
+const FLAVOR_WORDS = new Set([
+  "peach",
+  "berry",
+  "orange",
+  "lemon",
+  "lime",
+  "cherry",
+  "apple",
+  "mango",
+  "vanilla",
+  "chocolate",
+  "mint",
+  "raspberry",
+  "strawberry",
+  "banana",
+  "grape",
+  "watermelon",
+  "natural",
+  "unflavoured",
+  "unflavored",
+]);
+const LIKELY_ACTIVE_INGREDIENT_WORDS = new Set([
+  "collagen",
+  "magnesium",
+  "turmeric",
+  "berberine",
+  "vitamin",
+  "zinc",
+  "iron",
+  "omega",
+  "creatine",
+  "ashwagandha",
+  "probiotic",
+  "electrolyte",
+  "protein",
+  "b12",
+  "d3",
+  "multivitamin",
+]);
 
 const adminSupabase = supabaseUrl && supabaseServiceRoleKey
   ? createClient(supabaseUrl, supabaseServiceRoleKey)
@@ -79,6 +137,7 @@ const barcodeSearchResponseSchema = {
 };
 
 type Confidence = "low" | "medium" | "high";
+type SearchMode = "barcode" | "product_name_exact" | "product_name_broad";
 
 type Ingredient = {
   name: string | null;
@@ -100,6 +159,24 @@ type BarcodeSearchResult = {
   verification_status: typeof VERIFICATION_STATUS;
   persisted: boolean;
   persistence_error?: string;
+};
+
+type SanitizedSearchResult = {
+  result: BarcodeSearchResult;
+  reason: string | null;
+};
+
+type SearchAttemptResult = {
+  result: BarcodeSearchResult | null;
+  emptyReason: string | null;
+  mode: SearchMode;
+};
+
+type SearchContext = {
+  barcode: string;
+  rawProductName: string;
+  cleanedProductName: string;
+  brand: string;
 };
 
 function jsonResponse(
@@ -127,6 +204,16 @@ function normalizeWhitespace(value: unknown): string {
 
 function normalizeBarcode(value: unknown): string {
   return trimString(value).replace(/[\s-]+/g, "");
+}
+
+function normalizeSearchTokenCase(value: string) {
+  return value.replace(/\b[A-Z]{3,}\b/g, (token) => {
+    if (!/^[A-Z]+$/.test(token)) {
+      return token;
+    }
+
+    return `${token.slice(0, 1)}${token.slice(1).toLowerCase()}`;
+  });
 }
 
 function isValidBarcode(value: string): boolean {
@@ -221,6 +308,231 @@ function sanitizeUrl(value: unknown) {
   }
 }
 
+function cleanProductNameForSearch(value: unknown) {
+  const stripped = normalizeWhitespace(value)
+    .replace(
+      /\b(?:exp(?:iry)?|best before|use by|bb(?:e)?)\b[\s:.-]*\d{1,2}[/-]\d{2,4}\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:exp(?:iry)?|best before|use by|bb(?:e)?)\b[\s:.-]*[A-Za-z]{3,9}\s+\d{4}\b/gi,
+      " ",
+    )
+    .replace(/\s*[-–—]+\s*/g, " ")
+    .replace(/[|_/]+/g, " ")
+    .replace(/[()]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return normalizeSearchTokenCase(stripped).slice(0, 180);
+}
+
+function removePackSizeText(value: string) {
+  return normalizeWhitespace(
+    value.replace(
+      /\b\d+\s*(?:x\s*)?(?:sachets?|capsules?|tablets?|softgels?|gummies|servings?|packs?|ct|count)\b/gi,
+      " ",
+    ),
+  ).trim();
+}
+
+function removeFlavorWordsForBroadFallback(value: string) {
+  const tokens = normalizeWhitespace(value).split(" ").filter(Boolean);
+  if (tokens.length < 4) {
+    return value;
+  }
+
+  const filtered = tokens.filter((token, index) => {
+    const normalized = token.toLowerCase();
+    if (!FLAVOR_WORDS.has(normalized)) {
+      return true;
+    }
+
+    return index < 2;
+  });
+
+  return normalizeWhitespace(filtered.join(" "));
+}
+
+function removeBroadFallbackNoise(value: string) {
+  return normalizeWhitespace(
+    value
+      .replace(/\bhigh\s+strength\b/gi, " ")
+      .replace(
+        /\b(?:flavour|flavor)\s+[A-Za-z]+\b/gi,
+        " ",
+      )
+      .replace(
+        /\b(?:capsules?|tablets?|sachets?|softgels?|gummies|packs?|vegan|vegetarian|expiry)\b/gi,
+        " ",
+      ),
+  ).trim();
+}
+
+function sanitizeQueryToken(value: string) {
+  return normalizeSearchTokenCase(
+    value.replace(/^[^A-Za-z0-9+]+|[^A-Za-z0-9+]+$/g, ""),
+  );
+}
+
+function buildMeaningfulProductTokens(value: string) {
+  const tokens = normalizeWhitespace(value).split(" ").filter(Boolean);
+  const result: string[] = [];
+  let previousNormalized = "";
+
+  for (const token of tokens) {
+    const cleanedToken = sanitizeQueryToken(token);
+    const normalized = cleanedToken.toLowerCase();
+    if (!cleanedToken) {
+      previousNormalized = normalized;
+      continue;
+    }
+    if (/^\d+$/.test(normalized)) {
+      previousNormalized = normalized;
+      continue;
+    }
+    if (BROAD_FALLBACK_NOISE_WORDS.has(normalized)) {
+      previousNormalized = normalized;
+      continue;
+    }
+
+    const keepShortVitaminSuffix =
+      previousNormalized === "vitamin" && /^[a-z0-9]{1,3}$/i.test(normalized);
+    const isLikelyIngredient = LIKELY_ACTIVE_INGREDIENT_WORDS.has(normalized);
+    if (
+      cleanedToken.length <= 2 &&
+      !keepShortVitaminSuffix &&
+      !isLikelyIngredient
+    ) {
+      previousNormalized = normalized;
+      continue;
+    }
+
+    result.push(cleanedToken);
+    previousNormalized = normalized;
+  }
+
+  return result;
+}
+
+function capQueryTokens(tokens: string[], maxTokens: number, maxChars: number) {
+  const result: string[] = [];
+  let length = 0;
+
+  for (const token of tokens) {
+    const nextLength = length === 0 ? token.length : length + token.length + 1;
+    if (result.length >= maxTokens || nextLength > maxChars) {
+      break;
+    }
+    result.push(token);
+    length = nextLength;
+  }
+
+  return result;
+}
+
+function buildBroadSearchText(cleanedProductName: string) {
+  const broadBase = removeBroadFallbackNoise(
+    removeFlavorWordsForBroadFallback(removePackSizeText(cleanedProductName)),
+  );
+  const tokens = buildMeaningfulProductTokens(broadBase);
+
+  return capQueryTokens(tokens, 8, 64).join(" ");
+}
+
+function buildIngredientSignalText(cleanedProductName: string, brand: string) {
+  const tokens = buildMeaningfulProductTokens(
+    removeBroadFallbackNoise(removePackSizeText(cleanedProductName)),
+  );
+  const ingredientTokens = tokens.filter((token, index) => {
+    const normalized = token.toLowerCase();
+    return LIKELY_ACTIVE_INGREDIENT_WORDS.has(normalized) ||
+      (index > 0 && tokens[index - 1].toLowerCase() === "vitamin");
+  });
+  const mergedTokens = ingredientTokens.length > 0
+    ? ingredientTokens
+    : tokens;
+  const capped = capQueryTokens(mergedTokens, 6, 48).join(" ");
+
+  if (!brand) {
+    return capped;
+  }
+
+  return capped.toLowerCase().startsWith(brand.toLowerCase())
+    ? capped
+    : `${brand} ${capped}`.trim();
+}
+
+function buildBrandQueryPrefix(brand: string, broadSearchText: string) {
+  if (!brand) {
+    return broadSearchText;
+  }
+
+  return broadSearchText.toLowerCase().startsWith(brand.toLowerCase())
+    ? broadSearchText
+    : `${brand} ${broadSearchText}`.trim();
+}
+
+function buildLikelySiteQuery(brand: string, broadSearchText: string) {
+  const domainToken = brand.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (!domainToken || !broadSearchText) {
+    return "";
+  }
+
+  return `site:${domainToken}.com ${broadSearchText}`;
+}
+
+function buildBroadProductNameQueries(
+  cleanedProductName: string,
+  brand: string,
+) {
+  const broadSearchText = buildBroadSearchText(cleanedProductName);
+  const brandQueryPrefix = buildBrandQueryPrefix(brand, broadSearchText);
+  const ingredientSignalText = buildIngredientSignalText(
+    cleanedProductName,
+    brand,
+  );
+
+  return [
+    cleanedProductName ? `${cleanedProductName} ingredients` : "",
+    brandQueryPrefix ? `${brandQueryPrefix} ingredients` : "",
+    ingredientSignalText ? `${ingredientSignalText} ingredients` : "",
+    brandQueryPrefix ? `${brandQueryPrefix} active ingredients` : "",
+    brandQueryPrefix ? `${brandQueryPrefix} nutrition` : "",
+    buildLikelySiteQuery(brand, broadSearchText),
+  ];
+}
+
+function buildSearchQueries(
+  { barcode, cleanedProductName, brand }: SearchContext,
+  mode: SearchMode,
+) {
+  const queries = mode === "barcode"
+    ? [
+      `"${barcode}" supplement`,
+      cleanedProductName ? `"${barcode}" "${cleanedProductName}"` : "",
+      cleanedProductName
+        ? `${barcode} ${cleanedProductName} ingredients`
+        : `${barcode} supplement ingredients`,
+    ]
+    : mode === "product_name_exact"
+    ? [
+      cleanedProductName ? `"${cleanedProductName}" ingredients` : "",
+      cleanedProductName ? `"${cleanedProductName}" supplement facts` : "",
+      cleanedProductName && brand &&
+          !cleanedProductName.toLowerCase().includes(brand.toLowerCase())
+        ? `"${brand}" "${cleanedProductName}" ingredients`
+        : "",
+    ]
+    : [
+      ...buildBroadProductNameQueries(cleanedProductName, brand),
+    ];
+
+  return Array.from(
+    new Set(queries.map((query) => normalizeWhitespace(query)).filter(Boolean)),
+  );
+}
+
 function collectSourceUrls(value: unknown, urls = new Set<string>()) {
   if (!value) return urls;
   if (typeof value === "string") {
@@ -310,6 +622,15 @@ function resolveConfidence(result: BarcodeSearchResult): Confidence {
   return result.confidence;
 }
 
+function hasStructuredIngredientEvidence(result: BarcodeSearchResult) {
+  return Boolean(
+    (result.product_name || result.brand) &&
+      result.ingredients.some((ingredient) =>
+        Boolean(trimString(ingredient.name) || trimString(ingredient.raw_text))
+      ),
+  );
+}
+
 function buildDisplayName(result: BarcodeSearchResult) {
   const productName = trimString(result.product_name);
   const brand = trimString(result.brand);
@@ -382,6 +703,10 @@ function withPersistenceResult(
     persisted,
     ...(persistenceError ? { persistence_error: persistenceError } : {}),
   };
+}
+
+function isEmptySearchResult(result: BarcodeSearchResult) {
+  return !result.product_name && !result.brand && result.ingredients.length === 0;
 }
 
 async function fetchExistingMasterByBarcode(barcode: string) {
@@ -535,9 +860,13 @@ function sanitizeSearchResult(
   value: unknown,
   barcode: string,
   responseSources: string[],
-): BarcodeSearchResult {
+  mode: SearchMode,
+): SanitizedSearchResult {
   if (!value || typeof value !== "object") {
-    return emptyResult(barcode);
+    return {
+      result: emptyResult(barcode),
+      reason: "non_object_response",
+    };
   }
 
   const record = value as Record<string, unknown>;
@@ -554,10 +883,6 @@ function sanitizeSearchResult(
     ),
   ).slice(0, 12);
 
-  if (sourceUrls.length === 0) {
-    return emptyResult(barcode);
-  }
-
   const result: BarcodeSearchResult = {
     barcode,
     product_name: sanitizeNullableString(record.product_name, 180),
@@ -572,44 +897,112 @@ function sanitizeSearchResult(
   };
 
   result.confidence = resolveConfidence(result);
-
-  if (
-    !result.product_name && !result.brand && result.ingredients.length === 0
-  ) {
-    return emptyResult(barcode);
+  if (mode !== "barcode" && result.confidence === "high") {
+    result.confidence = "medium";
   }
 
-  return result;
+  if (sourceUrls.length > 0 && result.ingredients.length === 0) {
+    return {
+      result,
+      reason: "sources_found_no_ingredients",
+    };
+  }
+
+  if (sourceUrls.length === 0 && !hasStructuredIngredientEvidence(result)) {
+    return {
+      result: emptyResult(barcode),
+      reason: "no_source_urls",
+    };
+  }
+
+  if (sourceUrls.length === 0 && result.confidence === "high") {
+    result.confidence = "medium";
+  }
+
+  if (isEmptySearchResult(result)) {
+    return {
+      result: emptyResult(barcode),
+      reason: "no_product_identity_or_ingredients",
+    };
+  }
+
+  if (result.ingredients.length === 0) {
+    return {
+      result,
+      reason: "no_ingredients_found",
+    };
+  }
+
+  return {
+    result,
+    reason: null,
+  };
 }
 
-function buildOpenAiRequestBody(barcode: string, toolType: string) {
+function buildOpenAiRequestBody(
+  searchContext: SearchContext,
+  toolType: string,
+  mode: SearchMode,
+) {
+  const queries = buildSearchQueries(searchContext, mode);
+  const isProductNameMode = mode !== "barcode";
+  const isBroadProductNameMode = mode === "product_name_broad";
+
   return {
     model: OPENAI_MODEL,
     max_output_tokens: OPENAI_SEARCH_MAX_OUTPUT_TOKENS,
     instructions: [
-      "You search the public web for exact supplement product matches by barcode.",
+      isProductNameMode
+        ? "You search the public web for a credible supplement product match by product name when barcode search did not find usable ingredients."
+        : "You search the public web for exact supplement product matches by barcode.",
       "Use only visible information from web pages returned by web search.",
       "Never guess, infer from similar products, or copy data from near-matches, alternate flavours, alternate sizes, or lookalike labels.",
-      "Accept a source only when the page visibly identifies the exact barcode or the exact same product identity with enough evidence to avoid a near-match.",
+      isProductNameMode
+        ? "If the barcode is not visible on the page, you may still accept a credible retailer or manufacturer source when the brand and core product identity match. Do not require an exact flavour or pack-size match for provisional ingredient extraction."
+        : "Accept a source only when the page visibly identifies the exact barcode or the exact same product identity with enough evidence to avoid a near-match.",
+      isProductNameMode
+        ? "A manufacturer page, brand page, pharmacy, or reputable retailer listing that matches the core product identity is enough for provisional ingredient extraction even without barcode confirmation."
+        : "Prefer barcode-confirmed sources whenever possible.",
       "Only return supplement product data. If the barcode resolves to a non-supplement or no reliable exact match, return null fields and empty arrays.",
       "Return dosage amounts only when explicitly visible in a source. Do not infer serving size or dosage from product names.",
       "Include only source URLs that you used for the returned fields.",
+      isProductNameMode
+        ? "Extract only ingredients that are explicitly visible in the searched page or web-search context. If sources are found but no ingredients are visible, return empty ingredients."
+        : "Extract only ingredients that are explicitly visible in the barcode-confirmed source.",
+      isProductNameMode
+        ? "For this fallback mode, return provisional ingredients when a credible product-name match is found, even if the barcode itself is not shown."
+        : "If no reliable barcode-confirmed result exists, return empty fields and arrays.",
+      isBroadProductNameMode
+        ? "These broader queries intentionally drop strict quoting. Use them to find a credible brand page or retailer listing for the same product identity."
+        : "Prefer exact quoted identity matches when they are available.",
       "Return JSON only and follow the schema exactly.",
     ].join(" "),
     input: JSON.stringify(
       {
-        task:
-          "Find provisional supplement product data for this scanned barcode.",
-        barcode,
-        required_output_shape: emptyOpenAiResultShape(barcode),
+        task: isBroadProductNameMode
+          ? "Find provisional supplement product data for this scanned supplement using broader product-name queries after exact quoted searches failed to find usable ingredients."
+          : isProductNameMode
+          ? "Find provisional supplement product data for this scanned supplement using the cleaned product name after barcode search failed to find usable ingredients."
+          : "Find provisional supplement product data for this scanned barcode.",
+        barcode: searchContext.barcode,
+        product_name_from_scan: searchContext.cleanedProductName || null,
+        original_product_name_from_scan: searchContext.rawProductName || null,
+        brand_from_scan: searchContext.brand || null,
+        suggested_search_queries: queries,
+        required_output_shape: emptyOpenAiResultShape(searchContext.barcode),
         confidence_rules: {
           high:
-            "Only when product name, brand, ingredients, and dosage amounts are confirmed from a reliable source.",
+            "Only when product name, brand, ingredients, and dosage amounts are confirmed from a reliable source, ideally with barcode confirmation.",
           medium:
-            "Use when product name and brand are found but ingredients or dosages are incomplete.",
+            isProductNameMode
+              ? "Use when the cleaned product name credibly matches a product page and ingredients are visible, even if the barcode is absent."
+              : "Use when product name and brand are found but ingredients or dosages are incomplete.",
           low:
-            "Use when only partial product identity is found or nothing reliable is found.",
+            isProductNameMode
+              ? "Use when a likely product-name match is found with partial ingredient data."
+              : "Use when only partial product identity is found or nothing reliable is found.",
         },
+        verification_status: VERIFICATION_STATUS,
       },
       null,
       2,
@@ -628,13 +1021,25 @@ function buildOpenAiRequestBody(barcode: string, toolType: string) {
   };
 }
 
-async function requestBarcodeSearch(barcode: string) {
+async function requestOpenAiSearch(
+  searchContext: SearchContext,
+  mode: SearchMode,
+): Promise<SearchAttemptResult> {
   for (const toolType of OPENAI_WEB_SEARCH_TOOL_TYPES) {
     const controller = new AbortController();
     const timeoutId = setTimeout(
       () => controller.abort(),
       OPENAI_SEARCH_TIMEOUT_MS,
     );
+    const searchQueries = buildSearchQueries(searchContext, mode);
+
+    console.log("[search-barcode-with-openai] OpenAI search request", {
+      barcode: searchContext.barcode,
+      mode,
+      toolType,
+      cleanedProductName: searchContext.cleanedProductName || null,
+      searchQueries,
+    });
 
     try {
       const response = await fetch("https://api.openai.com/v1/responses", {
@@ -644,7 +1049,9 @@ async function requestBarcodeSearch(barcode: string) {
           "Content-Type": "application/json",
         },
         signal: controller.signal,
-        body: JSON.stringify(buildOpenAiRequestBody(barcode, toolType)),
+        body: JSON.stringify(
+          buildOpenAiRequestBody(searchContext, toolType, mode),
+        ),
       });
 
       if (!response.ok) {
@@ -662,37 +1069,171 @@ async function requestBarcodeSearch(barcode: string) {
           continue;
         }
 
-        return null;
+        return {
+          result: null,
+          emptyReason: `request_failed_${response.status}`,
+          mode,
+        };
       }
 
       const data = await response.json();
       const text = extractResponseText(data);
       const responseSources = Array.from(collectSourceUrls(data)).slice(0, 12);
       if (!text) {
-        return emptyResult(barcode);
+        console.log("[search-barcode-with-openai] returning empty result", {
+          barcode: searchContext.barcode,
+          mode,
+          toolType,
+          reason: "no_output_text",
+          sourceUrls: responseSources,
+        });
+        return {
+          result: emptyResult(searchContext.barcode),
+          emptyReason: "no_output_text",
+          mode,
+        };
       }
 
       try {
-        return sanitizeSearchResult(JSON.parse(text), barcode, responseSources);
+        const sanitized = sanitizeSearchResult(
+          JSON.parse(text),
+          searchContext.barcode,
+          responseSources,
+          mode,
+        );
+        console.log("[search-barcode-with-openai] OpenAI search result", {
+          barcode: searchContext.barcode,
+          mode,
+          toolType,
+          sourceUrls: sanitized.result.source_urls,
+          productName: sanitized.result.product_name,
+          brand: sanitized.result.brand,
+          ingredientCount: sanitized.result.ingredients.length,
+          confidence: sanitized.result.confidence,
+          emptyReason: sanitized.reason,
+        });
+        if (sanitized.reason) {
+          console.log("[search-barcode-with-openai] returning empty result", {
+            barcode: searchContext.barcode,
+            mode,
+            toolType,
+            reason: sanitized.reason,
+            sourceUrls: sanitized.result.source_urls,
+            productName: sanitized.result.product_name,
+            brand: sanitized.result.brand,
+            ingredientCount: sanitized.result.ingredients.length,
+          });
+        }
+        return {
+          result: sanitized.result,
+          emptyReason: sanitized.reason,
+          mode,
+        };
       } catch (error) {
         console.error("[search-barcode-with-openai] Invalid OpenAI JSON", {
           toolType,
+          mode,
           message: error instanceof Error ? error.message : String(error),
         });
-        return emptyResult(barcode);
+        return {
+          result: emptyResult(searchContext.barcode),
+          emptyReason: "invalid_json",
+          mode,
+        };
       }
     } catch (error) {
       console.error("[search-barcode-with-openai] OpenAI request failed", {
         toolType,
+        mode,
         message: error instanceof Error ? error.message : String(error),
       });
-      return null;
+      return {
+        result: null,
+        emptyReason: "request_exception",
+        mode,
+      };
     } finally {
       clearTimeout(timeoutId);
     }
   }
 
-  return null;
+  return {
+    result: null,
+    emptyReason: "unsupported_search_tool",
+    mode,
+  };
+}
+
+function shouldUseProductNameFallback(
+  result: BarcodeSearchResult,
+  cleanedProductName: string,
+) {
+  return Boolean(cleanedProductName) &&
+    (isEmptySearchResult(result) || result.ingredients.length === 0);
+}
+
+async function requestBarcodeSearch(searchContext: SearchContext) {
+  const barcodeAttempt = await requestOpenAiSearch(searchContext, "barcode");
+  if (!barcodeAttempt.result) {
+    return barcodeAttempt;
+  }
+
+  if (
+    !shouldUseProductNameFallback(
+      barcodeAttempt.result,
+      searchContext.cleanedProductName,
+    )
+  ) {
+    return barcodeAttempt;
+  }
+
+  console.log("[search-barcode-with-openai] falling back to cleaned product-name search", {
+    barcode: searchContext.barcode,
+    cleanedProductName: searchContext.cleanedProductName || null,
+    reason: barcodeAttempt.emptyReason || "barcode_search_returned_no_ingredients",
+  });
+
+  const productNameExactAttempt = await requestOpenAiSearch(
+    searchContext,
+    "product_name_exact",
+  );
+  if (!productNameExactAttempt.result) {
+    return barcodeAttempt;
+  }
+
+  if (!productNameExactAttempt.emptyReason) {
+    return productNameExactAttempt;
+  }
+
+  console.log("[search-barcode-with-openai] broadening product-name search", {
+    barcode: searchContext.barcode,
+    cleanedProductName: searchContext.cleanedProductName || null,
+    reason:
+      productNameExactAttempt.emptyReason ||
+      "exact_product_name_search_returned_no_ingredients",
+  });
+
+  const productNameBroadAttempt = await requestOpenAiSearch(
+    searchContext,
+    "product_name_broad",
+  );
+  if (productNameBroadAttempt.result && !productNameBroadAttempt.emptyReason) {
+    return productNameBroadAttempt;
+  }
+  if (
+    productNameBroadAttempt.result &&
+    productNameBroadAttempt.emptyReason === "sources_found_no_ingredients"
+  ) {
+    return productNameBroadAttempt;
+  }
+  if (
+    productNameExactAttempt.result &&
+    productNameExactAttempt.emptyReason === "sources_found_no_ingredients"
+  ) {
+    return productNameExactAttempt;
+  }
+
+  return barcodeAttempt;
 }
 
 Deno.serve(async (request) => {
@@ -754,13 +1295,31 @@ Deno.serve(async (request) => {
     );
   }
 
-  const result = await requestBarcodeSearch(barcode);
-  if (!result) {
+  const rawProductName = trimString(body?.productName);
+  const brand = trimString(body?.brand);
+  const cleanedProductName = cleanProductNameForSearch(rawProductName);
+
+  console.log("[search-barcode-with-openai] cleaned product context", {
+    barcode,
+    rawProductName: rawProductName || null,
+    cleanedProductName: cleanedProductName || null,
+    brand: brand || null,
+  });
+
+  const searchOutcome = await requestBarcodeSearch({
+    barcode,
+    rawProductName,
+    cleanedProductName,
+    brand,
+  });
+  if (!searchOutcome.result) {
     return jsonResponse(
       { error: "AI service unavailable.", code: "ai_service_unavailable" },
       502,
     );
   }
+
+  const result = searchOutcome.result;
 
   try {
     const persistence = await persistSearchResult(result);

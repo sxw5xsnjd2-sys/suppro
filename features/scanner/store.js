@@ -669,6 +669,12 @@ async function maybeEnrichIncompleteGoUpcProduct(
     const openAiProduct = await searchBarcodeWithOpenAi(barcode, {
       barcodeType,
       fallbackSource: "go_upc_incomplete",
+      productName:
+        trimString(product?.productName) ||
+        trimString(product?.displayName) ||
+        trimString(product?.name) ||
+        null,
+      brand: trimString(product?.brand) || null,
     });
     const mergedProduct = mergeGoUpcWithOpenAiProduct(product, openAiProduct);
 

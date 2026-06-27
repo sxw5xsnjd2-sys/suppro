@@ -121,17 +121,19 @@ function mapOpenAiBarcodeResult(data, fallbackBarcode) {
     source: "openai_web_search",
     sourceUrls: Array.isArray(data.source_urls) ? data.source_urls : [],
     confidence: trimString(data.confidence) || "low",
-    verificationStatus: "go_upc_unverified",
+    verificationStatus:
+      trimString(data.verification_status) || "openai_unverified",
     verification_status:
-      trimString(data.verification_status) || "ai_web_search_provisional",
+      trimString(data.verification_status) || "openai_unverified",
     hasIncompleteDetails: true,
     persisted: data.persisted === true,
   };
 }
 
 export async function searchBarcodeWithOpenAi(barcode, options = {}) {
-  const barcodeType =
-    options && typeof options === "object" ? options.barcodeType : options;
+  const resolvedOptions =
+    options && typeof options === "object" ? options : { barcodeType: options };
+  const barcodeType = resolvedOptions.barcodeType;
   const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
 
   if (
@@ -151,6 +153,8 @@ export async function searchBarcodeWithOpenAi(barcode, options = {}) {
         },
         body: {
           barcode: normalizedBarcode,
+          productName: trimString(resolvedOptions.productName) || null,
+          brand: trimString(resolvedOptions.brand) || null,
         },
       }
     );
