@@ -83,15 +83,30 @@ function loadPersistGoUpcHelpers() {
         /const seenIngredients = new Set<string>\(\);/,
         "const seenIngredients = new Set();",
       ),
+    extractFunctionSource(source, "sanitizeDsldActiveIngredients")
+      .replace(
+        /function sanitizeDsldActiveIngredients\(value: unknown\) \{/,
+        "function sanitizeDsldActiveIngredients(value) {",
+      )
+      .replace(/const seenIngredients = new Set<string>\(\);/, "const seenIngredients = new Set();")
+      .replace(/const row = item as Record<string, unknown>;/, "const row = item;"),
+    extractFunctionSource(source, "getVerificationStatusRank").replace(
+      /function getVerificationStatusRank\(value: unknown\) \{/,
+      "function getVerificationStatusRank(value) {",
+    ),
   ].join("\n\n");
 
   return new Function(
-    `${transformed}\nreturn { buildProvisionalActiveIngredients, parseProvisionalIngredient };`,
+    `${transformed}\nreturn { buildProvisionalActiveIngredients, parseProvisionalIngredient, sanitizeDsldActiveIngredients, getVerificationStatusRank };`,
   )();
 }
 
-const { buildProvisionalActiveIngredients, parseProvisionalIngredient } =
-  loadPersistGoUpcHelpers();
+const {
+  buildProvisionalActiveIngredients,
+  getVerificationStatusRank,
+  parseProvisionalIngredient,
+  sanitizeDsldActiveIngredients,
+} = loadPersistGoUpcHelpers();
 
 test("provisional ingredient extraction strips marketing text, invisible unicode, and keeps clean names", () => {
   const ingredients = buildProvisionalActiveIngredients(
@@ -163,4 +178,67 @@ test("single provisional ingredient parsing removes filler words at the start", 
     },
     carriesVitaminContext: false,
   });
+});
+
+test("DSLD ingredient sanitizer keeps canonical fields and deduplicates rows", () => {
+  const ingredients = sanitizeDsldActiveIngredients([
+    {
+      name: " Melatonin ",
+      dosageValue: 5,
+      dosageUnit: "mg",
+      dosageDisplay: "5mg",
+      ingredientType: "active_with_disclosed_dose",
+      parentBlend: "",
+      ignored: "not persisted",
+    },
+    {
+      name: "Melatonin",
+      dosageValue: 5,
+      dosageUnit: "mg",
+      dosageDisplay: "5mg",
+      ingredientType: "active_with_disclosed_dose",
+    },
+    {
+      name: " Proprietary blend ",
+      dosageValue: null,
+      dosageUnit: "",
+      dosageDisplay: "",
+      ingredientType: "proprietary_blend",
+      parentBlend: "Sleep blend",
+    },
+  ]);
+
+  assert.deepEqual(ingredients, [
+    {
+      name: "Melatonin",
+      dosageValue: 5,
+      dosageUnit: "mg",
+      dosageDisplay: "5mg",
+      ingredientType: "active_with_disclosed_dose",
+      parentBlend: null,
+    },
+    {
+      name: "Proprietary blend",
+      dosageValue: null,
+      dosageUnit: null,
+      dosageDisplay: null,
+      ingredientType: "proprietary_blend",
+      parentBlend: "Sleep blend",
+    },
+  ]);
+});
+
+test("verification status ranking lets DSLD replace only lower-quality rows", () => {
+  assert.ok(
+    getVerificationStatusRank("dsld_verified") >
+      getVerificationStatusRank("go_upc_unverified"),
+  );
+  assert.ok(
+    getVerificationStatusRank("verified") >
+      getVerificationStatusRank("dsld_verified"),
+  );
+  assert.ok(
+    getVerificationStatusRank("photo_verified") >
+      getVerificationStatusRank("dsld_verified"),
+  );
 });

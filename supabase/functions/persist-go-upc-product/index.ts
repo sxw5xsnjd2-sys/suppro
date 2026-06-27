@@ -269,6 +269,77 @@ function buildProvisionalActiveIngredients(
   return parsedIngredients.slice(0, 80);
 }
 
+function sanitizeDsldActiveIngredients(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seenIngredients = new Set<string>();
+  const ingredients = [];
+
+  value.forEach((item) => {
+    if (!item || typeof item !== "object") {
+      return;
+    }
+
+    const row = item as Record<string, unknown>;
+    const name = normalizeProvisionalIngredientText(row.name);
+    if (!name) {
+      return;
+    }
+
+    const dosageValueRaw = row.dosageValue;
+    const dosageValue = typeof dosageValueRaw === "number" &&
+        Number.isFinite(dosageValueRaw)
+      ? dosageValueRaw
+      : null;
+    const dosageUnit = trimString(row.dosageUnit) || null;
+    const dosageDisplay = trimString(row.dosageDisplay) ||
+      (Number.isFinite(dosageValue) && dosageUnit
+        ? `${dosageValue} ${dosageUnit}`
+        : null);
+    const ingredientType = trimString(row.ingredientType) || null;
+    const parentBlend = trimString(row.parentBlend) || null;
+    const key = [
+      name.toLowerCase(),
+      dosageDisplay ?? "",
+      ingredientType ?? "",
+      parentBlend ?? "",
+    ].join("|");
+
+    if (seenIngredients.has(key)) {
+      return;
+    }
+
+    seenIngredients.add(key);
+    ingredients.push({
+      name,
+      dosageValue,
+      dosageUnit,
+      dosageDisplay,
+      ingredientType,
+      parentBlend,
+    });
+  });
+
+  return ingredients.slice(0, 120);
+}
+
+function getVerificationStatusRank(value: unknown) {
+  switch (trimString(value)) {
+    case "go_upc_unverified":
+      return 10;
+    case "dsld_verified":
+      return 80;
+    case "photo_verified":
+      return 90;
+    case "verified":
+      return 100;
+    default:
+      return 0;
+  }
+}
+
 const RETAIL_BARCODE_TYPES = new Set(["ean13", "ean8", "upc_a", "upc_e"]);
 const ALPHANUMERIC_BARCODE_TYPES = new Set(["code128", "code39", "code93"]);
 const SAFE_ALPHANUMERIC_BARCODE_PATTERN = /^[A-Za-z0-9._-]{4,40}$/;
@@ -647,11 +718,17 @@ Deno.serve(async (request) => {
 
   const barcodeType = canonicalizeBarcodeType(body?.barcodeType);
   const barcode = normalizeBarcodeValue(body?.barcode, barcodeType);
+  const source = trimString(body?.source).toLowerCase() === "dsld"
+    ? "dsld"
+    : "go_upc";
   const productName = trimString(body?.productName);
   const brand = trimString(body?.brand);
+  const servingSizeText = trimString(body?.servingSizeText);
   let ingredientsText = trimString(body?.ingredientsText);
   const imageUrl = trimString(body?.imageUrl);
   const imageSourceUrl = trimString(body?.imageSourceUrl) || imageUrl;
+  const imageProvider = trimString(body?.imageProvider) ||
+    (imageUrl ? "go_upc" : "");
 
   if (!barcode || !productName || !isValidBarcode(barcode, barcodeType)) {
     return jsonResponse(
@@ -663,7 +740,28 @@ Deno.serve(async (request) => {
     );
   }
 
-  if (!ingredientsText) {
+  const dsldActiveIngredients = source === "dsld"
+    ? sanitizeDsldActiveIngredients(body?.sourceIngredients)
+    : [];
+  const dsldConfidence = trimString(body?.dsldConfidence).toLowerCase();
+  const hasExactDsldBarcodeMatch = body?.exactBarcodeMatch === true ||
+    dsldConfidence === "high";
+
+  if (
+    source === "dsld" &&
+    (!hasExactDsldBarcodeMatch || dsldActiveIngredients.length === 0)
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "DSLD persistence requires an exact high-confidence match with structured ingredients.",
+        code: "invalid_request_payload",
+      },
+      400,
+    );
+  }
+
+  if (source === "go_upc" && !ingredientsText) {
     ingredientsText = await enrichIngredientsWithOpenAI({
       barcode,
       productName,
@@ -671,7 +769,7 @@ Deno.serve(async (request) => {
     });
   }
 
-  if (ingredientsText) {
+  if (source === "go_upc" && ingredientsText) {
     console.log(
       "[go-upc-persist] Ingredients available for provisional product",
       {
@@ -682,10 +780,12 @@ Deno.serve(async (request) => {
     );
   }
 
-  const provisionalActiveIngredients = buildProvisionalActiveIngredients(
-    body?.sourceIngredients,
-    ingredientsText,
-  );
+  const provisionalActiveIngredients = source === "go_upc"
+    ? buildProvisionalActiveIngredients(
+      body?.sourceIngredients,
+      ingredientsText,
+    )
+    : [];
 
   try {
     const productResolution = await resolveOrCreateProduct({
@@ -710,6 +810,21 @@ Deno.serve(async (request) => {
       );
     }
 
+    const existingVerificationStatus = trimString(
+      existingMaster?.verification_status,
+    );
+    const incomingVerificationStatus = source === "dsld"
+      ? "dsld_verified"
+      : "go_upc_unverified";
+    const existingQualityRank = getVerificationStatusRank(
+      existingVerificationStatus,
+    );
+    const incomingQualityRank = getVerificationStatusRank(
+      incomingVerificationStatus,
+    );
+    const shouldPreserveHigherQualityExisting =
+      Boolean(existingMaster?.product_id) &&
+      existingQualityRank > incomingQualityRank;
     const shouldPreserveCanonicalStatus =
       hasCanonicalIngredients(existingMaster?.active_ingredients_json) &&
       trimString(existingMaster?.verification_status) !== "go_upc_unverified";
@@ -719,27 +834,41 @@ Deno.serve(async (request) => {
       Boolean(existingNameSource) &&
       existingNameSource !== "go_upc";
 
-    const verificationStatus = shouldPreserveCanonicalStatus
-      ? trimString(existingMaster?.verification_status) || "verified"
+    const verificationStatus = shouldPreserveHigherQualityExisting
+      ? existingVerificationStatus || "verified"
+      : source === "dsld"
+      ? "dsld_verified"
+      : shouldPreserveCanonicalStatus
+      ? existingVerificationStatus || "verified"
       : "go_upc_unverified";
-    const resolvedDisplayName = shouldPreserveExistingName
+    const resolvedDisplayName = shouldPreserveHigherQualityExisting ||
+        (source === "go_upc" && shouldPreserveExistingName)
       ? existingDisplayName
       : productName;
-    const resolvedNameSource = shouldPreserveExistingName
+    const resolvedNameSource = shouldPreserveHigherQualityExisting ||
+        (source === "go_upc" && shouldPreserveExistingName)
       ? existingNameSource
-      : "go_upc";
-    const resolvedNamingConfidence = shouldPreserveExistingName &&
-        typeof existingMaster?.naming_confidence === "number" &&
-        Number.isFinite(existingMaster.naming_confidence)
-      ? existingMaster.naming_confidence
+      : source;
+    const resolvedNamingConfidence = shouldPreserveHigherQualityExisting ||
+        (source === "go_upc" && shouldPreserveExistingName)
+      ? shouldPreserveExistingName &&
+          typeof existingMaster?.naming_confidence === "number" &&
+          Number.isFinite(existingMaster.naming_confidence)
+        ? existingMaster.naming_confidence
+        : null
+      : source === "dsld" && hasExactDsldBarcodeMatch
+      ? 1
       : null;
     const existingActiveIngredients = Array.isArray(
         existingMaster?.active_ingredients_json,
       )
       ? existingMaster.active_ingredients_json
       : [];
-    const resolvedActiveIngredients = existingActiveIngredients.length > 0
+    const resolvedActiveIngredients = shouldPreserveHigherQualityExisting ||
+        (source === "go_upc" && existingActiveIngredients.length > 0)
       ? existingActiveIngredients
+      : source === "dsld"
+      ? dsldActiveIngredients
       : provisionalActiveIngredients;
     const resolvedIngredientCount = resolvedActiveIngredients.length;
     const processedAt = new Date().toISOString();
@@ -748,11 +877,15 @@ Deno.serve(async (request) => {
     const resolvedImageSourceUrl = imageSourceUrl ||
       trimString(existingMaster?.image_source_url) || null;
     const resolvedImageProvider = imageUrl
-      ? "go_upc"
+      ? imageProvider || "go_upc"
       : trimString(existingMaster?.image_provider) || null;
     const resolvedImageStatus = resolvedImageUrl
       ? "found"
       : trimString(existingMaster?.image_status) || "missing";
+    const resolvedServingSizeText = shouldPreserveHigherQualityExisting ||
+        source === "go_upc"
+      ? trimString(existingMaster?.serving_size_text) || null
+      : servingSizeText || null;
 
     const { error: masterWriteError } = await adminSupabase!
       .from(TABLES.supplementProducts)
@@ -763,8 +896,7 @@ Deno.serve(async (request) => {
           display_name: resolvedDisplayName,
           name_source: resolvedNameSource,
           naming_confidence: resolvedNamingConfidence,
-          serving_size_text: trimString(existingMaster?.serving_size_text) ||
-            null,
+          serving_size_text: resolvedServingSizeText,
           active_ingredients_json: resolvedActiveIngredients,
           ingredient_count: resolvedIngredientCount,
           processed_at: processedAt,
@@ -785,12 +917,14 @@ Deno.serve(async (request) => {
       );
     }
 
-    console.log("[go-upc-persist] persisted provisional product", {
+    console.log("[go-upc-persist] persisted product", {
       barcode,
       productId: productResolution.productId,
+      source,
       displayName: resolvedDisplayName,
       nameSource: resolvedNameSource,
       verificationStatus,
+      preservedHigherQualityExisting: shouldPreserveHigherQualityExisting,
       createdProduct: productResolution.createdProduct,
       hasImage: Boolean(resolvedImageUrl),
     });
@@ -806,12 +940,13 @@ Deno.serve(async (request) => {
       imageStatus: resolvedImageStatus,
       verificationStatus,
       isProvisional: verificationStatus === "go_upc_unverified",
+      preservedHigherQualityExisting: shouldPreserveHigherQualityExisting,
     });
   } catch (error) {
     console.error("[go-upc-persist] failed", error);
     return jsonResponse(
       {
-        error: "Failed to persist Go-UPC product.",
+        error: "Failed to persist product.",
         details: error instanceof Error ? error.message : String(error),
       },
       500,

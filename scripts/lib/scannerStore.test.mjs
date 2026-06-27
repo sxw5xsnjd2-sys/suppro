@@ -44,6 +44,7 @@ function loadScannerStoreModule(overrides = {}) {
     "buildScanDebugMetadata",
     "maybeFetchDsldScanMatch",
     "fetchGoUpcProduct",
+    "persistDsldProduct",
     "persistGoUpcProduct",
     "fetchIngredientMatchCatalog",
     "queueMissingActiveIngredients",
@@ -127,6 +128,7 @@ return { useScannerStore };`
         dsldMatch: null,
       })),
     overrides.fetchGoUpcProduct ?? (async () => null),
+    overrides.persistDsldProduct ?? (async () => null),
     overrides.persistGoUpcProduct ?? (async () => null),
     overrides.fetchIngredientMatchCatalog ?? (async () => []),
     overrides.queueMissingActiveIngredients ?? (async () => {}),
@@ -217,6 +219,8 @@ test("scanner barcode orchestration checks supplement master before fallbacks", 
 
 test("scanner barcode orchestration checks DSLD before Go-UPC and off_products after master misses", async () => {
   const sequence = [];
+  let persistedDsldPayload = null;
+  let persistedDsldBarcodeType = null;
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
     normalizeBarcode: (value) => value.replace(/\D/g, ""),
@@ -257,6 +261,15 @@ test("scanner barcode orchestration checks DSLD before Go-UPC and off_products a
         scanDataSource: "go_upc",
       };
     },
+    persistDsldProduct: async (product, barcodeType) => {
+      sequence.push("persist_dsld");
+      persistedDsldPayload = product;
+      persistedDsldBarcodeType = barcodeType;
+      return {
+        productId: "prod_dsld",
+        verificationStatus: "dsld_verified",
+      };
+    },
     extractIngredientCandidatesFromList: (ingredients) => ingredients,
     matchIngredientsToCatalog: () => ({
       matchedIngredients: [],
@@ -269,9 +282,11 @@ test("scanner barcode orchestration checks DSLD before Go-UPC and off_products a
     .getState()
     .processBarcode("0474690758590", "ean13");
 
-  assert.deepEqual(sequence, ["local", "dsld", "go_upc"]);
+  assert.deepEqual(sequence, ["local", "dsld", "go_upc", "persist_dsld"]);
   assert.equal(state.status, "success");
   assert.equal(state.product.scanDataSource, "dsld");
+  assert.equal(state.product.productId, "prod_dsld");
+  assert.equal(state.product.verificationStatus, "dsld_verified");
   assert.equal(state.product.productName, "Natrol Melatonin 5 mg");
   assert.deepEqual(state.product.dsldMatch, {
     source: "dsld",
@@ -295,6 +310,24 @@ test("scanner barcode orchestration checks DSLD before Go-UPC and off_products a
   assert.equal(state.product.imageDataSource, "go_upc");
   assert.equal(state.product.imageProvider, "go_upc");
   assert.equal(state.product.displayName, "Go-UPC Melatonin Display");
+  assert.equal(persistedDsldBarcodeType, "ean13");
+  assert.deepEqual(persistedDsldPayload.sourceIngredients, [
+    {
+      ingredient_name: "Melatonin",
+      amount_per_serving: "5",
+      amount_unit: "mg",
+      name: "Melatonin",
+      amount: 5,
+      unit: "mg",
+      dosageValue: 5,
+      dosageUnit: "mg",
+      dosageDisplay: "5mg",
+      ingredientType: "active_with_disclosed_dose",
+      ingredient_type: "active_with_disclosed_dose",
+      parentBlend: null,
+      parent_blend: null,
+    },
+  ]);
   assert.deepEqual(state.product.sourceIngredients, [
     {
       ingredient_name: "Melatonin",

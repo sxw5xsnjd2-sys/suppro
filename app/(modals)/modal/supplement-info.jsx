@@ -119,6 +119,8 @@ const BENEFIT_SCORE_TOOLTIP_COPY = {
 };
 const REFERENCES_DISCLAIMER =
   "Suppro provides educational information only and is not medical advice. Always speak to a doctor, pharmacist, or qualified healthcare professional before starting supplements, especially if pregnant, taking medication, or managing a medical condition.";
+// Temporarily hidden by product decision. Set SHOW_PROVISIONAL_DATA_WARNING to true to restore.
+const SHOW_PROVISIONAL_DATA_WARNING = false;
 
 function getDoseTooltipMessage(item) {
   const summary =
@@ -1444,6 +1446,8 @@ export default function SupplementInfoModal() {
       data?.verificationStatus === "go_upc_unverified" ||
       data?.verification_status === "go_upc_unverified",
   );
+  const shouldShowProvisionalDataWarning =
+    SHOW_PROVISIONAL_DATA_WARNING && hasIncompleteDetailsWarning;
   const isVerified = Boolean(data?.verified);
   const canAddSupplement = Boolean(
     (!isScanFailure && isLiveScanSource && fallbackName) ||
@@ -1453,7 +1457,7 @@ export default function SupplementInfoModal() {
     isLiveScanSource && isCurrentScanSession,
   );
   const canImproveScanWithPhotosInHeader =
-    canImproveScanWithPhotos && !hasIncompleteDetailsWarning;
+    canImproveScanWithPhotos && !shouldShowProvisionalDataWarning;
   const hasReferenceItems = referenceItems.length > 0;
   const showShareAction = !isScanFailure;
   const showRanking = !useProductSupportBar;
@@ -2291,7 +2295,7 @@ export default function SupplementInfoModal() {
                   styles.summaryCardNotRecognized,
               ]}
             >
-              {hasIncompleteDetailsWarning ? (
+              {shouldShowProvisionalDataWarning ? (
                 <View style={styles.incompleteScanWarning}>
                   <View style={styles.incompleteScanWarningHeader}>
                     <View style={styles.incompleteScanWarningIconWrap}>

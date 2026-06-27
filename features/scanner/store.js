@@ -15,7 +15,10 @@ import {
 import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
 import { fetchGoUpcProduct } from "@src/data/getGoUpcProduct";
 import { fetchIngredientMatchCatalog } from "@src/data/getIngredientMatchCatalog";
-import { persistGoUpcProduct } from "@src/data/persistGoUpcProduct";
+import {
+  persistDsldProduct,
+  persistGoUpcProduct,
+} from "@src/data/persistGoUpcProduct";
 import { queueMissingActiveIngredients } from "@src/data/queueMissingActiveIngredients";
 import { scanSupplementPhotos } from "@src/data/scanSupplementPhotos";
 import {
@@ -298,6 +301,23 @@ function enrichDsldProductWithGoUpcCosmetics(product, goUpcProduct) {
   };
 }
 
+async function persistCanonicalDsldProduct(product, barcodeType) {
+  const persisted = await persistDsldProduct(product, barcodeType);
+  if (!persisted || typeof persisted !== "object") {
+    return product;
+  }
+
+  return {
+    ...product,
+    productId: trimString(persisted.productId) || trimString(product?.productId) || null,
+    verificationStatus:
+      trimString(persisted.verificationStatus) ||
+      trimString(product?.verificationStatus) ||
+      "dsld_verified",
+    hasIncompleteDetails: false,
+  };
+}
+
 function logScannerSource(source, product) {
   logDevelopmentDiagnostic("log", "[scanner-source]", {
     source,
@@ -493,6 +513,7 @@ export const useScannerStore = create((set, get) => ({
               );
             }
           }
+          product = await persistCanonicalDsldProduct(product, nextBarcodeType);
           extractionSource = "dsld";
           logScannerSource("dsld", product);
         } else {
