@@ -6,7 +6,9 @@ import React, {
   useState,
 } from "react";
 import {
+  Image,
   Keyboard,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -21,7 +23,12 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
-import { AppButton, AppHeader, PrimaryCard } from "@/components/common/ui";
+import {
+  AppButton,
+  AppHeader,
+  GradientHeader,
+  PrimaryCard,
+} from "@/components/common/ui";
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { appTheme, spacing, typography } from "@/theme";
@@ -49,7 +56,12 @@ const CHAT_WINDOW_DAYS = 30;
 const MAX_CONTEXT_ENTRIES = 200;
 const MAX_CONVERSATION_MESSAGES = 12;
 const MAX_SUPPLEMENTS_PER_BENEFIT = 5;
-const CHAT_ACTION_BAR_HEIGHT = 40;
+const SUGGESTED_PROMPTS = [
+  "What did I miss this week?",
+  "How consistent has my supplement routine been?",
+  "Summarize my adherence trend",
+  "Any supplements I haven't logged today?",
+];
 const BENEFIT_TONE_RANK = {
   gold: 0,
   silver: 1,
@@ -318,32 +330,6 @@ function buildChatStatsInput(
   };
 }
 
-function IntroCard() {
-  return (
-    <PrimaryCard style={styles.introCard}>
-      <View pointerEvents="none" style={styles.introGradientWrap}>
-        <LinearGradient
-          colors={[...appTheme.tabBar.fabGradient, "#FFFFFF"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.introGradient}
-        />
-      </View>
-
-      <Text style={styles.introTitle}>Ask about your supplement data</Text>
-      <Text style={styles.introBody}>
-        Get quick answers using your saved schedule, adherence history, and
-        tracked health metrics.
-      </Text>
-      <Text style={styles.introDisclaimer}>
-        This information is educational only and not medical advice. Talk to a
-        qualified clinician before starting or changing supplements. AI can make
-        mistakes.
-      </Text>
-    </PrimaryCard>
-  );
-}
-
 function MessageBubble({ message }) {
   const isUser = message.role === "user";
   const displayContent = isUser
@@ -352,8 +338,7 @@ function MessageBubble({ message }) {
 
   return (
     <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
-      <PrimaryCard
-        variant={isUser ? "accent" : "default"}
+      <View
         style={[
           styles.messageBubble,
           isUser ? styles.messageBubbleUser : styles.messageBubbleAssistant,
@@ -363,7 +348,7 @@ function MessageBubble({ message }) {
           {isUser ? "You" : "Suppro AI"}
         </Text>
         <Text style={styles.messageText}>{displayContent}</Text>
-      </PrimaryCard>
+      </View>
     </View>
   );
 }
@@ -395,6 +380,7 @@ export function AiChatScreen({ presentation = "screen" }) {
   const clearMessages = useChatStore((s) => s.clearMessages);
 
   const [draft, setDraft] = useState("");
+  const [clearConfirmVisible, setClearConfirmVisible] = useState(false);
   const [evidenceCatalog, setEvidenceCatalog] = useState({
     topOverall: [],
     byBenefit: {},
@@ -526,12 +512,21 @@ export function AiChatScreen({ presentation = "screen" }) {
     };
   }, [insets.bottom, windowHeight]);
 
-  const sendMessage = useCallback(async () => {
+  const navigateBack = useCallback(() => {
+    if (safeBackAction.type === "back") {
+      router.back();
+      return;
+    }
+
+    router.replace(safeBackAction.href);
+  }, [safeBackAction]);
+
+  const sendQuestion = useCallback(async (questionInput) => {
     if (!requireSubscriptionAccess("ai_chat")) {
       return;
     }
 
-    const question = draft.trim();
+    const question = String(questionInput ?? "").trim();
     if (!question || status === "loading") return;
 
     setDraft("");
@@ -605,14 +600,40 @@ export function AiChatScreen({ presentation = "screen" }) {
   }, [
     addMessage,
     chatStatsInput,
-    draft,
     requireSubscriptionAccess,
     messages,
     setStatus,
     status,
   ]);
 
+  const sendMessage = useCallback(() => {
+    sendQuestion(draft);
+  }, [draft, sendQuestion]);
+
+  const openClearConfirmation = useCallback(() => {
+    Keyboard.dismiss();
+    setClearConfirmVisible(true);
+  }, []);
+
+  const closeClearConfirmation = useCallback(() => {
+    setClearConfirmVisible(false);
+  }, []);
+
+  const confirmClearMessages = useCallback(() => {
+    clearMessages();
+    setClearConfirmVisible(false);
+  }, [clearMessages]);
+
+  const sendSuggestedPrompt = useCallback(
+    (prompt) => {
+      setDraft(prompt);
+      sendQuestion(prompt);
+    },
+    [sendQuestion]
+  );
+
   const isLoading = status === "loading";
+  const hasMessages = messages.length > 0;
   const canSend = draft.trim().length > 0 && !isLoading;
   const composerBottomSpacing = isModal
     ? Math.max(insets.bottom, spacing.sm)
@@ -626,258 +647,487 @@ export function AiChatScreen({ presentation = "screen" }) {
   }
 
   return (
-    <BackdropScreen
-      scrollable={false}
-      bottomInsetOffset={0}
-      minBottomPadding={0}
-      contentStyle={styles.screenContent}
-      header={
-        <AppHeader
-          insetPreset={isModal ? "modal" : "screen"}
-          leftSlot={
-            isModal ? (
-              <AppButton
-                onPress={() => {
-                  if (safeBackAction.type === "back") {
-                    router.back();
-                    return;
-                  }
-
-                  router.replace(safeBackAction.href);
-                }}
-                variant="overlay"
-                size="icon"
-                accessibilityLabel="Close AI chat"
-              >
-                <Ionicons
-                  name="close"
-                  size={20}
-                  color={appTheme.colors.textStrong}
-                />
-              </AppButton>
-            ) : null
-          }
-          title="SUPPRO AI"
-          titleStyle={styles.headerTitle}
-          bottomSlot={
-            <Text style={styles.headerSubtitle}>
-              Ask about your supplements and tracked data.
-            </Text>
-          }
-          bottomSlotStyle={styles.headerBottom}
-        />
-      }
-    >
-      <View style={styles.chatShell}>
-        <View style={styles.messagesArea}>
-          <View style={styles.actionBar}>
-            <Pressable
-              onPress={clearMessages}
-              accessibilityRole="button"
-              accessibilityLabel="Clear conversation"
-              hitSlop={8}
-              style={({ pressed }) => [
-                styles.headerAction,
-                pressed && styles.headerActionPressed,
-              ]}
+    <>
+      <BackdropScreen
+        scrollable={false}
+        bottomInsetOffset={0}
+        minBottomPadding={0}
+        contentStyle={styles.screenContent}
+        header={
+          hasMessages ? (
+            <GradientHeader
+              insetPreset={isModal ? "modal" : "screen"}
+              topInsetOffset={2}
+              bottomPadding={4}
             >
-              <Text style={styles.headerActionText}>Clear</Text>
-            </Pressable>
-          </View>
+              <View style={styles.conversationHeaderRow}>
+                {isTab ? (
+                  <View style={styles.headerSide} />
+                ) : (
+                  <View style={styles.headerSide}>
+                    <Pressable
+                      onPress={navigateBack}
+                      accessibilityRole="button"
+                      accessibilityLabel="Go back"
+                      hitSlop={8}
+                      style={({ pressed }) => [
+                        styles.backButton,
+                        pressed && styles.backButtonPressed,
+                      ]}
+                    >
+                      <Ionicons
+                        name="chevron-back"
+                        size={21}
+                        color="#1E2C4A"
+                      />
+                    </Pressable>
+                  </View>
+                )}
 
-          <ScrollView
-            ref={scrollRef}
-            style={styles.messagesScroll}
-            contentContainerStyle={[
-              styles.messagesContent,
+                <View pointerEvents="none" style={styles.conversationHeaderTitleWrap}>
+                  <Text style={styles.conversationHeaderTitle}>Suppro AI</Text>
+                </View>
+
+                <View style={[styles.headerSide, styles.headerSideEnd]}>
+                  <Pressable
+                    onPress={openClearConfirmation}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear conversation"
+                    hitSlop={16}
+                    pressRetentionOffset={16}
+                    style={({ pressed }) => [
+                      styles.headerAction,
+                      pressed && styles.headerActionPressed,
+                    ]}
+                  >
+                    <Text style={styles.headerActionText}>Clear</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </GradientHeader>
+          ) : (
+            <AppHeader
+              insetPreset={isModal ? "modal" : "screen"}
+              leftSlot={
+                isTab ? null : (
+                  <Pressable
+                    onPress={navigateBack}
+                    accessibilityRole="button"
+                    accessibilityLabel="Go back"
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.backButton,
+                      pressed && styles.backButtonPressed,
+                    ]}
+                  >
+                    <Ionicons
+                      name="chevron-back"
+                      size={21}
+                      color="#1E2C4A"
+                    />
+                  </Pressable>
+                )
+              }
+              title={null}
+              titleAccessory={
+                null
+              }
+              titleStyle={styles.headerTitle}
+              bottomPadding={12}
+            />
+          )
+        }
+      >
+        <View style={styles.chatShell}>
+          {hasMessages ? (
+            <ScrollView
+              ref={scrollRef}
+              style={styles.messagesScroll}
+              contentContainerStyle={[
+                styles.messagesContent,
+                {
+                  paddingBottom: composerReservedSpace,
+                },
+              ]}
+              keyboardShouldPersistTaps="never"
+              keyboardDismissMode={
+                Platform.OS === "ios" ? "interactive" : "on-drag"
+              }
+              showsVerticalScrollIndicator={false}
+            >
+              {messages.map((message) => (
+                <MessageBubble key={message.id} message={message} />
+              ))}
+
+              {isLoading ? (
+                <MessageBubble
+                  message={{
+                    id: "thinking",
+                    role: "assistant",
+                    content: "Thinking…",
+                  }}
+                />
+              ) : null}
+            </ScrollView>
+          ) : (
+            <Pressable
+              onPress={Keyboard.dismiss}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss keyboard"
+              style={styles.emptyStatePressable}
+            >
+              <View style={styles.emptyState}>
+                <LinearGradient
+                  colors={appTheme.tabBar.fabGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.heroMark}
+                >
+                  <Image
+                    source={require("@/assets/icons/Supprologo.png")}
+                    style={styles.heroLogo}
+                    resizeMode="contain"
+                  />
+                </LinearGradient>
+                <Text style={styles.heroTitle}>Ask Suppro AI</Text>
+                <Text style={styles.heroSubtitle}>
+                  Get quick answers using your saved schedule, adherence history,
+                  and tracked health metrics.
+                </Text>
+
+                <View style={styles.promptStack}>
+                  {SUGGESTED_PROMPTS.map((prompt) => (
+                    <Pressable
+                      key={prompt}
+                      onPress={() => sendSuggestedPrompt(prompt)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Ask: ${prompt}`}
+                      style={({ pressed }) => [
+                        styles.promptChip,
+                        pressed && styles.promptChipPressed,
+                      ]}
+                    >
+                      <Text style={styles.promptText}>{prompt}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <Text style={styles.heroDisclaimer}>
+                  Educational only, not medical advice. Talk to a clinician
+                  before starting or changing supplements. AI can make mistakes.
+                </Text>
+              </View>
+            </Pressable>
+          )}
+
+          <View
+            onLayout={(event) => {
+              const nextHeight = event.nativeEvent.layout.height;
+              if (nextHeight !== composerHeight) {
+                setComposerHeight(nextHeight);
+              }
+            }}
+            style={[
+              styles.composerCard,
+              styles.composerCardFloating,
+              isTab && styles.composerCardTab,
               {
-                paddingBottom: composerReservedSpace,
+                bottom: composerBottomOffset,
               },
             ]}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={
-              Platform.OS === "ios" ? "interactive" : "on-drag"
-            }
-            showsVerticalScrollIndicator={false}
           >
-            {messages.length === 0 ? <IntroCard /> : null}
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-            {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
-            ))}
-
-            {isLoading ? (
-              <MessageBubble
-                message={{
-                  id: "thinking",
-                  role: "assistant",
-                  content: "Thinking...",
-                }}
-              />
-            ) : null}
-          </ScrollView>
-        </View>
-
-        <View
-          onLayout={(event) => {
-            const nextHeight = event.nativeEvent.layout.height;
-            if (nextHeight !== composerHeight) {
-              setComposerHeight(nextHeight);
-            }
-          }}
-          style={[
-            styles.composerCard,
-            styles.composerCardFloating,
-            isTab && styles.composerCardTab,
-            {
-              bottom: composerBottomOffset,
-            },
-          ]}
-        >
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-          <View style={styles.composerRow}>
-            <View style={styles.composerField}>
-              <TextInput
-                value={draft}
-                onChangeText={setDraft}
-                placeholder="Ask a question..."
-                placeholderTextColor={appTheme.input.placeholder}
-                multiline
-                maxLength={700}
-                style={styles.input}
-                textAlignVertical="center"
-                onFocus={() => {
-                  requestAnimationFrame(() => {
-                    scrollRef.current?.scrollToEnd({ animated: true });
-                  });
-                }}
-              />
-              <Pressable
-                onPress={sendMessage}
-                disabled={!canSend}
-                accessibilityRole="button"
-                accessibilityLabel="Send message"
-                style={({ pressed }) => [
-                  styles.sendButton,
-                  !canSend && styles.sendButtonDisabled,
-                  pressed && canSend && styles.sendButtonPressed,
-                ]}
-              >
-                {isLoading ? (
-                  <Text style={styles.sendButtonText}>...</Text>
-                ) : (
-                  <Ionicons
-                    name="arrow-up"
-                    size={18}
-                    color={canSend ? "#FFFFFF" : appTheme.colors.textMuted}
-                  />
-                )}
-              </Pressable>
+            <View style={styles.composerRow}>
+              <View style={styles.composerField}>
+                <TextInput
+                  value={draft}
+                  onChangeText={setDraft}
+                  placeholder="Ask a question…"
+                  placeholderTextColor={appTheme.input.placeholder}
+                  multiline
+                  maxLength={700}
+                  style={styles.input}
+                  textAlignVertical="center"
+                  onFocus={() => {
+                    requestAnimationFrame(() => {
+                      scrollRef.current?.scrollToEnd({ animated: true });
+                    });
+                  }}
+                />
+                <Pressable
+                  onPress={sendMessage}
+                  disabled={!canSend}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send message"
+                  style={({ pressed }) => [
+                    styles.sendButton,
+                    !canSend && styles.sendButtonDisabled,
+                    pressed && canSend && styles.sendButtonPressed,
+                  ]}
+                >
+                  {isLoading ? (
+                    <Text style={styles.sendButtonText}>…</Text>
+                  ) : (
+                    <Ionicons
+                      name="arrow-up"
+                      size={18}
+                      color={canSend ? "#FFFFFF" : appTheme.colors.textMuted}
+                    />
+                  )}
+                </Pressable>
+              </View>
             </View>
           </View>
         </View>
-      </View>
-    </BackdropScreen>
+      </BackdropScreen>
+
+      <Modal
+        visible={clearConfirmVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeClearConfirmation}
+      >
+        <View style={styles.confirmModalRoot}>
+          <Pressable
+            style={styles.confirmModalBackdrop}
+            onPress={closeClearConfirmation}
+            accessibilityRole="button"
+            accessibilityLabel="Close clear chat confirmation"
+          />
+          <View style={styles.confirmModalContent}>
+            <PrimaryCard style={styles.confirmModalCard}>
+            <Text style={styles.confirmModalTitle}>
+              Are you sure you want to clear your chat history?
+            </Text>
+            <Text style={styles.confirmModalBody}>
+              This removes the current conversation from this device.
+            </Text>
+            <View style={styles.confirmModalActions}>
+              <AppButton
+                label="Cancel"
+                onPress={closeClearConfirmation}
+                variant="overlay"
+                size="sm"
+                style={styles.confirmModalButton}
+              />
+              <AppButton
+                label="Clear"
+                onPress={confirmClearMessages}
+                variant="primary"
+                size="sm"
+                style={styles.confirmModalButton}
+              />
+            </View>
+            </PrimaryCard>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
 export default function AiChatModal() {
-  return <AiChatScreen presentation="modal" />;
+  return <AiChatScreen presentation="screen" />;
 }
 
 const styles = StyleSheet.create({
   screenContent: {
     flex: 1,
   },
+  backButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.6)",
+  },
+  backButtonPressed: {
+    opacity: 0.72,
+  },
   headerTitle: {
     color: appTheme.colors.textPrimary,
-    fontSize: 24,
-    lineHeight: 22,
-    letterSpacing: -0.43,
-    fontFamily: typography.fontFamily.headingBlack,
-    fontWeight: "900",
-  },
-  headerBottom: {
-    marginTop: 6,
-  },
-  headerPill: {
-    backgroundColor: "rgba(255,255,255,0.42)",
-  },
-  headerSubtitle: {
-    marginTop: 8,
-    fontSize: 14,
+    fontSize: 16,
     lineHeight: 20,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textBody,
+    letterSpacing: 0,
+    fontFamily: typography.fontFamily.heading,
+    fontWeight: "800",
+  },
+  conversationHeaderRow: {
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerSide: {
+    minWidth: 56,
+    alignItems: "flex-start",
+    justifyContent: "center",
+  },
+  headerSideEnd: {
+    alignItems: "flex-end",
+  },
+  conversationHeaderTitleWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  conversationHeaderTitle: {
+    color: appTheme.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 20,
+    letterSpacing: 0,
+    fontFamily: typography.fontFamily.heading,
+    fontWeight: "800",
   },
   headerAction: {
     minHeight: 32,
+    minWidth: 56,
     justifyContent: "center",
-    paddingHorizontal: 4,
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   headerActionPressed: {
     opacity: 0.72,
   },
   headerActionText: {
-    fontSize: 16,
+    fontSize: 13,
     fontFamily: typography.fontFamily.headingSemiBold,
     color: appTheme.colors.textStrong,
+  },
+  confirmModalRoot: {
+    flex: 1,
+  },
+  confirmModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  confirmModalContent: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: appTheme.modal.sidePadding,
+    paddingVertical: appTheme.modal.sidePadding,
+  },
+  confirmModalCard: {
+    width: "100%",
+    maxWidth: appTheme.modal.maxWidth,
+    alignSelf: "center",
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+  },
+  confirmModalTitle: {
+    fontSize: 20,
+    lineHeight: 26,
+    fontFamily: typography.fontFamily.heading,
+    color: appTheme.colors.textPrimary,
+    textAlign: "center",
+  },
+  confirmModalBody: {
+    marginTop: spacing.sm,
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textBody,
+    textAlign: "center",
+  },
+  confirmModalActions: {
+    flexDirection: "row",
+    width: "100%",
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    alignItems: "stretch",
+  },
+  confirmModalButton: {
+    flex: 1,
+    minWidth: 0,
+    alignSelf: "stretch",
   },
   chatShell: {
     flex: 1,
   },
-  messagesArea: {
-    flex: 1,
-  },
-  actionBar: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 2,
-    alignItems: "flex-end",
-    marginTop: spacing.xs,
-    backgroundColor: "transparent",
-  },
   messagesScroll: {
     flex: 1,
+    marginHorizontal: -appTheme.screen.sidePadding,
   },
   messagesContent: {
-    paddingTop: CHAT_ACTION_BAR_HEIGHT,
-    paddingBottom: spacing.sm,
+    paddingTop: 6,
+    paddingHorizontal: 20,
+    paddingBottom: spacing.lg,
   },
-  introCard: {
-    overflow: "hidden",
-    marginBottom: spacing.md,
-  },
-  introGradientWrap: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  introGradient: {
+  emptyState: {
     flex: 1,
-    opacity: 0.78,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingBottom: spacing.lg,
   },
-  introTitle: {
-    fontSize: 22,
-    lineHeight: 26,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textHeading,
-    letterSpacing: -0.45,
+  emptyStatePressable: {
+    flex: 1,
   },
-  introBody: {
-    marginTop: spacing.sm,
-    fontSize: 15,
-    lineHeight: 22,
+  heroMark: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    marginBottom: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroLogo: {
+    width: 34,
+    height: 34,
+    tintColor: "#000000",
+  },
+  heroTitle: {
+    fontSize: 25,
+    lineHeight: 31,
+    letterSpacing: -0.4,
+    fontFamily: typography.fontFamily.headingBlack,
+    fontWeight: "900",
+    color: appTheme.colors.textPrimary,
+    textAlign: "center",
+  },
+  heroSubtitle: {
+    maxWidth: 280,
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
+    textAlign: "center",
   },
-  introDisclaimer: {
-    marginTop: spacing.md,
-    fontSize: 13,
+  promptStack: {
+    width: "100%",
+    gap: 8,
+    marginTop: 22,
+  },
+  promptChip: {
+    width: "100%",
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: appTheme.colors.borderSubtle,
+    backgroundColor: appTheme.colors.surface,
+  },
+  promptChipPressed: {
+    opacity: 0.78,
+  },
+  promptText: {
+    fontSize: 14,
     lineHeight: 19,
+    fontFamily: typography.fontFamily.body,
+    color: "#1E2C4A",
+    textAlign: "left",
+  },
+  heroDisclaimer: {
+    maxWidth: 280,
+    marginTop: 20,
+    fontSize: 12,
+    lineHeight: 17,
     fontFamily: typography.fontFamily.bodyMedium,
     color: appTheme.colors.textSecondary,
+    textAlign: "center",
   },
   messageRow: {
     flexDirection: "row",
@@ -888,41 +1138,44 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   messageBubble: {
-    maxWidth: "88%",
-    paddingHorizontal: appTheme.card.paddingSpacious,
-    paddingVertical: appTheme.card.paddingSpacious,
+    maxWidth: "86%",
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(20,20,20,0.06)",
   },
   messageBubbleAssistant: {
     backgroundColor: appTheme.colors.surface,
   },
   messageBubbleUser: {
-    backgroundColor: appTheme.colors.surfaceAccent,
+    backgroundColor: "#F1EEF9",
   },
   messageEyebrow: {
-    marginBottom: 6,
-    fontSize: 12,
+    marginBottom: 5,
+    fontSize: 11,
+    lineHeight: 14,
     fontFamily: typography.fontFamily.heading,
-    letterSpacing: -0.2,
+    letterSpacing: 0,
     color: appTheme.colors.textTertiary,
   },
   messageText: {
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 21,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textStrong,
   },
   composerCard: {
-    left: 0,
-    right: 0,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs,
+    left: -appTheme.screen.sidePadding,
+    right: -appTheme.screen.sidePadding,
+    paddingTop: 12,
+    paddingHorizontal: 14,
+    paddingBottom: 20,
     backgroundColor: "#E7E1DD",
   },
   composerCardFloating: {
     position: "absolute",
   },
   composerCardTab: {
-    marginHorizontal: -appTheme.screen.sidePadding,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
   },
@@ -939,27 +1192,28 @@ const styles = StyleSheet.create({
   composerField: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 54,
+    minHeight: 50,
     maxHeight: 132,
     borderRadius: 26,
     backgroundColor: "#FFFFFF",
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    gap: spacing.sm,
+    paddingLeft: 16,
+    paddingRight: 6,
+    paddingVertical: 6,
+    gap: 8,
   },
   input: {
     flex: 1,
     minHeight: 30,
     maxHeight: 108,
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 20,
     fontFamily: typography.fontFamily.body,
     color: appTheme.input.text,
   },
   sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignSelf: "flex-end",
     alignItems: "center",
     justifyContent: "center",

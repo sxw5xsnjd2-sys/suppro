@@ -11,6 +11,7 @@ export default function ModalsLayout() {
       }}
     >
       <Stack.Screen name="modal/supplement" options={{ presentation: "card" }} />
+      <Stack.Screen name="modal/ai-chat" options={{ presentation: "card" }} />
     </Stack>
   );
 }

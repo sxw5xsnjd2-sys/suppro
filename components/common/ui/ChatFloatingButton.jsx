@@ -30,7 +30,7 @@ export function ChatFloatingButton({ style }) {
             return;
           }
 
-          router.push("/modal/ai-chat");
+          router.push("/ai-chat");
         }}
         style={({ pressed }) => [
           styles.button,

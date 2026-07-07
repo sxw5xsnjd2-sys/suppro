@@ -498,6 +498,7 @@ function RootNavigator() {
           name="(modals)"
           options={{ presentation: "modal", headerShown: false }}
         />
+        <Stack.Screen name="ai-chat" options={{ headerShown: false }} />
         <Stack.Screen name="scanner" options={{ headerShown: false }} />
         <Stack.Screen name="benefit-ranking" options={{ headerShown: false }} />
         <Stack.Screen name="account" options={{ headerShown: false }} />
