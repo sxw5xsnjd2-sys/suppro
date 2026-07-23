@@ -8,6 +8,7 @@ export * from "./AppTextInput";
 export * from "./ChatFloatingButton";
 export * from "./EmptyStateCard";
 export * from "./EvidenceDots";
+export * from "./EvidenceStatusDot";
 export * from "./GradientHeader";
 export * from "./PrimaryCard";
 export * from "./SelectableCard";

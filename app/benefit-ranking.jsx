@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Image, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
@@ -16,14 +16,121 @@ import {
   getBenefitColor,
   getBenefitIconComponent,
 } from "@/features/supplements/benefits";
+import { createSupplementProductCatalogId } from "@/features/supplements/catalog";
+import { formatProductBenefitScoreText } from "@/features/supplements/productBenefitScoring";
+import {
+  appendProductRankingPage,
+  BENEFIT_RANKING_ENTITY_TYPES,
+  resolveBenefitRankingEntityType,
+} from "@/features/supplements/productRankingContract";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { appTheme, spacing, typography } from "@/theme";
+import { getProductBenefitRankingPage } from "@src/data/getProductBenefitRankings";
 import { supabase } from "@src/lib/supabase";
 
 function normalizeParam(value) {
   if (Array.isArray(value)) return value[0] ?? "";
   return typeof value === "string" ? value : "";
+}
+
+function getProductRankingFailureCopy(reason) {
+  if (reason === "rpc_unavailable") {
+    return {
+      title: "Product rankings unavailable",
+      description:
+        "The product-ranking database contract is not available on this backend yet. Active ingredient rankings are still available.",
+    };
+  }
+  if (reason === "authentication") {
+    return {
+      title: "Sign-in required",
+      description:
+        "Your session could not access product rankings. Sign in again and retry.",
+    };
+  }
+  if (reason === "network") {
+    return {
+      title: "Product rankings offline",
+      description:
+        "The ranking service could not be reached. Check your connection and try again.",
+    };
+  }
+  return {
+    title: "Ranking unavailable",
+    description: "Could not load product rankings for this benefit.",
+  };
+}
+
+function ProductRankingCard({ item, requireSubscriptionAccess }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const scoreText = formatProductBenefitScoreText(item.productBenefitScore);
+  const benefitScoreText = [scoreText, item.benefitLabel]
+    .filter(Boolean)
+    .join(" ");
+  const productImageUrl = imageFailed ? null : item.productImageUrl;
+
+  return (
+    <PrimaryCard
+      accessibilityLabel={`${item.productName}, ${benefitScoreText}`}
+      accessibilityHint="Open canonical product details."
+      onPress={() => {
+        if (!requireSubscriptionAccess("supplement_info")) return;
+
+        router.push({
+          pathname: "/(modals)/modal/supplement-info",
+          params: {
+            id: createSupplementProductCatalogId(item.productId),
+            name: item.productName,
+          },
+        });
+      }}
+      style={styles.rankCard}
+      pressedStyle={styles.rankCardPressed}
+    >
+      <View style={styles.productHeadingRow}>
+        <View
+          accessible={!productImageUrl}
+          accessibilityLabel={
+            productImageUrl ? undefined : "Product image unavailable"
+          }
+          style={styles.productImageFrame}
+        >
+          {productImageUrl ? (
+            <Image
+              accessible
+              accessibilityLabel={`${item.productName} product image`}
+              source={{ uri: productImageUrl }}
+              style={styles.productImage}
+              resizeMode="contain"
+              onError={() => setImageFailed(true)}
+            />
+          ) : (
+            <Ionicons
+              name="cube-outline"
+              size={22}
+              color={appTheme.colors.textSecondary}
+            />
+          )}
+        </View>
+
+        <View style={styles.productCopy}>
+          <Text style={styles.rankName}>{item.productName}</Text>
+          {item.productBrand ? (
+            <Text style={styles.productBrand}>{item.productBrand}</Text>
+          ) : null}
+          <View style={styles.productBenefitRow}>
+            <Text style={styles.productBenefitScore}>{scoreText}</Text>
+            {item.benefitLabel ? (
+              <Text style={styles.productBenefitLabel}>
+                {item.benefitLabel}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </PrimaryCard>
+  );
 }
 
 export default function BenefitRankingScreen() {
@@ -35,23 +142,33 @@ export default function BenefitRankingScreen() {
   } = useSubscriptionAccess();
   const params = useLocalSearchParams();
   const benefitLabel = normalizeParam(params.label).trim();
+  const rankingEntity = resolveBenefitRankingEntityType(
+    normalizeParam(params.entity),
+  );
+  const isProductRanking =
+    rankingEntity === BENEFIT_RANKING_ENTITY_TYPES.PRODUCT;
   const [rankedSupplements, setRankedSupplements] = useState([]);
+  const [rankedProducts, setRankedProducts] = useState([]);
+  const [productCursor, setProductCursor] = useState(null);
+  const [productHasMore, setProductHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [paginationError, setPaginationError] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [productBackendIssue, setProductBackendIssue] = useState(null);
   const safeBackAction = resolveBackNavigationAction({
     canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
-    fallbackHref: "/(tabs)/supplements",
+    fallbackHref: "/rankings",
   });
 
   useEffect(() => {
-    if (hasActiveAccess || !isResolved) {
-      return;
-    }
-
+    if (hasActiveAccess || !isResolved) return;
     openSubscriptionPaywall({ replace: true });
   }, [hasActiveAccess, isResolved, openSubscriptionPaywall]);
 
   useEffect(() => {
+    if (isProductRanking) return;
+
     if (!hasActiveAccess) {
       setRankedSupplements([]);
       setLoading(false);
@@ -76,7 +193,7 @@ export default function BenefitRankingScreen() {
       const { data, error } = await supabase
         .from("supplements")
         .select(
-          "id, name, status, evidence_score, supplement_benefits!inner(id, supplement_name, label, icon, score, ranking_reason)"
+          "id, name, status, evidence_score, supplement_benefits!inner(id, supplement_name, label, icon, score, ranking_reason)",
         )
         .in("status", ["approved", "pending"])
         .eq("supplement_benefits.label", benefitLabel);
@@ -100,11 +217,93 @@ export default function BenefitRankingScreen() {
     return () => {
       active = false;
     };
-  }, [benefitLabel, hasActiveAccess]);
+  }, [benefitLabel, hasActiveAccess, isProductRanking]);
+
+  useEffect(() => {
+    if (!isProductRanking) return;
+
+    if (!hasActiveAccess) {
+      setRankedProducts([]);
+      setProductCursor(null);
+      setProductHasMore(false);
+      setLoading(false);
+      setErrorMessage("");
+      return;
+    }
+
+    let active = true;
+
+    const loadProductRankings = async () => {
+      setRankedProducts([]);
+      setProductCursor(null);
+      setProductHasMore(false);
+      setPaginationError("");
+      setProductBackendIssue(null);
+
+      if (!benefitLabel) {
+        setLoading(false);
+        setErrorMessage("No benefit was selected.");
+        return;
+      }
+
+      setLoading(true);
+      setErrorMessage("");
+      const result = await getProductBenefitRankingPage({ benefitLabel });
+      if (!active) return;
+
+      if (result.status === "unavailable") {
+        const failure = getProductRankingFailureCopy(result.reason);
+        setProductBackendIssue(failure);
+        setErrorMessage(failure.description);
+      } else if (result.status !== "ready") {
+        const failure = getProductRankingFailureCopy(result.reason);
+        setProductBackendIssue(failure);
+        setErrorMessage(failure.description);
+      } else {
+        setRankedProducts(result.items);
+        setProductCursor(result.nextCursor);
+        setProductHasMore(result.hasMore);
+      }
+      setLoading(false);
+    };
+
+    loadProductRankings();
+
+    return () => {
+      active = false;
+    };
+  }, [benefitLabel, hasActiveAccess, isProductRanking]);
+
+  const loadMoreProducts = async () => {
+    if (!isProductRanking || !productHasMore || !productCursor || loadingMore) {
+      return;
+    }
+
+    setLoadingMore(true);
+    setPaginationError("");
+    const result = await getProductBenefitRankingPage({
+      benefitLabel,
+      cursor: productCursor,
+    });
+    if (result.status === "ready") {
+      setRankedProducts((current) =>
+        appendProductRankingPage(current, result.items),
+      );
+      setProductCursor(result.nextCursor);
+      setProductHasMore(result.hasMore);
+    } else {
+      setPaginationError(
+        "Could not load more products. Your current rankings are still available.",
+      );
+    }
+    setLoadingMore(false);
+  };
 
   if (!hasActiveAccess) {
     return <BackdropScreen scrollable={false} />;
   }
+
+  const rankedItems = isProductRanking ? rankedProducts : rankedSupplements;
 
   return (
     <BackdropScreen
@@ -136,15 +335,19 @@ export default function BenefitRankingScreen() {
           title={benefitLabel || "Benefit"}
           titleStyle={styles.headerTitle}
           titleAccessory={
-            <StatusPill
-              label={`${rankedSupplements.length} supplements`}
-              tone="neutral"
-              style={styles.headerCount}
-            />
+            isProductRanking ? null : (
+              <StatusPill
+                label={`${rankedItems.length} supplements`}
+                tone="neutral"
+                style={styles.headerCount}
+              />
+            )
           }
           bottomSlot={
             <Text style={styles.headerSubtitle}>
-              All supplements currently ranked for this benefit
+              {isProductRanking
+                ? "All scanned products currently ranked for this benefit"
+                : "All supplements currently ranked for this benefit"}
             </Text>
           }
           bottomSlotStyle={styles.headerBottom}
@@ -153,25 +356,35 @@ export default function BenefitRankingScreen() {
     >
       {loading ? (
         <PrimaryCard style={styles.stateCard}>
-          <Text style={styles.stateText}>Loading ranked supplements...</Text>
+          <Text style={styles.stateText}>
+            {isProductRanking
+              ? "Loading ranked products..."
+              : "Loading ranked supplements..."}
+          </Text>
         </PrimaryCard>
       ) : null}
 
       {!loading && errorMessage ? (
         <EmptyStateCard
-          title="Ranking unavailable"
+          title={productBackendIssue?.title ?? "Ranking unavailable"}
           description={errorMessage}
         />
       ) : null}
 
-      {!loading && !errorMessage && rankedSupplements.length === 0 ? (
+      {!loading && !errorMessage && rankedItems.length === 0 ? (
         <EmptyStateCard
-          title="No ranked supplements"
-          description="No catalog supplements are currently ranked for this benefit."
+          title={
+            isProductRanking ? "No rated products yet" : "No ranked supplements"
+          }
+          description={
+            isProductRanking
+              ? "No eligible verified products have a valid dose-adjusted score for this benefit yet. Unrated products are not placed at zero."
+              : "No catalog supplements are currently ranked for this benefit."
+          }
         />
       ) : null}
 
-      {!loading && !errorMessage
+      {!loading && !errorMessage && !isProductRanking
         ? rankedSupplements.map((item) => {
             const itemIcon = getBenefitIconComponent(item.benefit?.label);
             const itemColor = getBenefitColor(item.benefit?.icon);
@@ -180,9 +393,7 @@ export default function BenefitRankingScreen() {
               <PrimaryCard
                 key={item.id}
                 onPress={() => {
-                  if (!requireSubscriptionAccess("supplement_info")) {
-                    return;
-                  }
+                  if (!requireSubscriptionAccess("supplement_info")) return;
 
                   router.push({
                     pathname: "/modal/supplement-info",
@@ -230,6 +441,37 @@ export default function BenefitRankingScreen() {
             );
           })
         : null}
+
+      {!loading && !errorMessage && isProductRanking
+        ? rankedProducts.map((item) => (
+            <ProductRankingCard
+              key={item.productId}
+              item={item}
+              requireSubscriptionAccess={requireSubscriptionAccess}
+            />
+          ))
+        : null}
+
+      {!loading && !errorMessage && isProductRanking && productHasMore ? (
+        <View style={styles.paginationFooter}>
+          {paginationError ? (
+            <Text accessibilityRole="alert" style={styles.paginationError}>
+              {paginationError}
+            </Text>
+          ) : null}
+          <AppButton
+            onPress={loadMoreProducts}
+            disabled={loadingMore}
+            label={loadingMore ? "Loading..." : "Load more products"}
+            accessibilityLabel={
+              loadingMore
+                ? "Loading more products"
+                : "Load more ranked products"
+            }
+            style={styles.loadMoreButton}
+          />
+        </View>
+      ) : null}
     </BackdropScreen>
   );
 }
@@ -306,6 +548,56 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textSecondary,
   },
+  productHeadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  productImageFrame: {
+    width: 58,
+    height: 58,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.62)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    overflow: "hidden",
+  },
+  productImage: {
+    width: 52,
+    height: 52,
+  },
+  productCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  productBrand: {
+    marginTop: 3,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  productBenefitRow: {
+    marginTop: 7,
+    flexDirection: "row",
+    alignItems: "baseline",
+    flexWrap: "wrap",
+    gap: 5,
+  },
+  productBenefitScore: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.headingSemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  productBenefitLabel: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
   scoreRow: {
     marginTop: 14,
     paddingTop: 14,
@@ -317,5 +609,19 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontFamily: typography.fontFamily.body,
     color: appTheme.colors.textBody,
+  },
+  paginationFooter: {
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  paginationError: {
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center",
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  loadMoreButton: {
+    alignSelf: "stretch",
   },
 });

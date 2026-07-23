@@ -220,7 +220,13 @@ export function AddMetricModal({ visible, onClose }) {
             <Text style={styles.title}>Pick metrics</Text>
             <Text style={styles.subtitle}>Choose daily inputs to log on the Health tab.</Text>
           </View>
-          <Pressable onPress={onClose} style={styles.closeButton} hitSlop={8}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close metric picker"
+            onPress={onClose}
+            style={styles.closeButton}
+            hitSlop={8}
+          >
             <Svg width={14} height={14} viewBox="0 0 16 16" fill="none">
               <Path d="M4 4l8 8M12 4l-8 8" stroke={appTheme.colors.textPrimary} strokeWidth={2} strokeLinecap="round" />
             </Svg>
@@ -251,7 +257,13 @@ export function AddMetricModal({ visible, onClose }) {
             style={styles.searchInput}
           />
           {query.length > 0 && (
-            <Pressable onPress={() => setQuery("")} style={styles.searchClear} hitSlop={8}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Clear metric search"
+              onPress={() => setQuery("")}
+              style={styles.searchClear}
+              hitSlop={8}
+            >
               <Text style={styles.searchClearText}>×</Text>
             </Pressable>
           )}

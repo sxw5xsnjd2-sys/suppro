@@ -17,11 +17,14 @@ function loadLocalDataCleanupModule() {
 return {
   AI_SUMMARY_CACHE_STORAGE_KEY,
   CHAT_STORAGE_KEY,
+  GUEST_SEARCH_HISTORY_STORAGE_KEY,
   GUEST_SUPPLEMENT_STORE_STORAGE_KEY,
   HEART_FLAGS_STORAGE_KEY,
   HEALTH_STORAGE_KEY,
   RECENT_SUPPLEMENT_SEARCHES_STORAGE_KEY,
+  SEARCH_HISTORY_STORAGE_KEY_PREFIX,
   getAccountScopedSupplementStoreStorageKeys,
+  getAccountSearchHistoryStorageKey,
   getDeleteAccountCleanupStorageKeys,
   getLegacySupplementStoreStorageKeys,
   SUPPLEMENTS_STORAGE_KEY_PREFIX,
@@ -36,11 +39,14 @@ return {
 const {
   AI_SUMMARY_CACHE_STORAGE_KEY,
   CHAT_STORAGE_KEY,
+  GUEST_SEARCH_HISTORY_STORAGE_KEY,
   GUEST_SUPPLEMENT_STORE_STORAGE_KEY,
   HEART_FLAGS_STORAGE_KEY,
   HEALTH_STORAGE_KEY,
   RECENT_SUPPLEMENT_SEARCHES_STORAGE_KEY,
+  SEARCH_HISTORY_STORAGE_KEY_PREFIX,
   getAccountScopedSupplementStoreStorageKeys,
+  getAccountSearchHistoryStorageKey,
   getDeleteAccountCleanupStorageKeys,
   getLegacySupplementStoreStorageKeys,
   SUPPLEMENTS_STORAGE_KEY_PREFIX,
@@ -91,7 +97,7 @@ test("collects only legacy supplement store keys", () => {
   );
 });
 
-test("normal sign-out removes global and legacy sensitive keys but preserves account-scoped supplement keys", () => {
+test("normal sign-out removes scoped history but preserves account supplement stores", () => {
   const onboardingKeys = [
     "suppro.onboarding.questionnaire.v1",
     "suppro.onboarding.signupCompleted.v1",
@@ -106,6 +112,7 @@ test("normal sign-out removes global and legacy sensitive keys but preserves acc
       `${SUPPLEMENTS_STORAGE_KEY_PREFIX}:account:user-a`,
     ],
     onboardingStorageKeys: onboardingKeys,
+    accountScopedUserId: "user-a",
   });
 
   assert.deepEqual(cleanupKeys, [
@@ -116,6 +123,8 @@ test("normal sign-out removes global and legacy sensitive keys but preserves acc
     HEART_FLAGS_STORAGE_KEY,
     AI_SUMMARY_CACHE_STORAGE_KEY,
     RECENT_SUPPLEMENT_SEARCHES_STORAGE_KEY,
+    GUEST_SEARCH_HISTORY_STORAGE_KEY,
+    getAccountSearchHistoryStorageKey("user-a"),
   ]);
 });
 
@@ -136,6 +145,7 @@ test("deduplicates keys when fixed and dynamic sets overlap", () => {
     HEART_FLAGS_STORAGE_KEY,
     AI_SUMMARY_CACHE_STORAGE_KEY,
     RECENT_SUPPLEMENT_SEARCHES_STORAGE_KEY,
+    GUEST_SEARCH_HISTORY_STORAGE_KEY,
   ]);
 });
 
@@ -160,6 +170,7 @@ test("can preserve the returning-user login gate marker on sign out", () => {
     HEART_FLAGS_STORAGE_KEY,
     AI_SUMMARY_CACHE_STORAGE_KEY,
     RECENT_SUPPLEMENT_SEARCHES_STORAGE_KEY,
+    GUEST_SEARCH_HISTORY_STORAGE_KEY,
   ]);
 });
 
@@ -184,5 +195,7 @@ test("delete-account cleanup removes the deleted user's account-scoped supplemen
     HEART_FLAGS_STORAGE_KEY,
     AI_SUMMARY_CACHE_STORAGE_KEY,
     RECENT_SUPPLEMENT_SEARCHES_STORAGE_KEY,
+    GUEST_SEARCH_HISTORY_STORAGE_KEY,
+    `${SEARCH_HISTORY_STORAGE_KEY_PREFIX}:account:user-a`,
   ]);
 });

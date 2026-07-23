@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { enqueueProductScoreRefresh } from "../_shared/product-score-refresh.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -992,6 +993,12 @@ Deno.serve(async (request) => {
         `[supabase:${TABLES.supplementProducts}] ${masterWriteError.message}`,
       );
     }
+
+    await enqueueProductScoreRefresh({
+      adminSupabase,
+      productId: productResolution.productId,
+      reason: "external_product_canonicalized",
+    });
 
     console.log("[go-upc-persist] persisted product", {
       barcode,

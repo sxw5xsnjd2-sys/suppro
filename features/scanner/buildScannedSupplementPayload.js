@@ -111,7 +111,7 @@ export function buildScannedSupplementFailurePayload(scanState) {
     id: null,
     name: buildScannedSupplementName(scanState),
     verified: false,
-    evidence_score: 0,
+    evidence_score: null,
     evidence: null,
     supplement_benefits: [],
     matchedIngredients: [],

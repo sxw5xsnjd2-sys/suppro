@@ -559,6 +559,7 @@ export async function clearLocalPersistedAppData(options = {}) {
   const cleanupOptions = {
     storageKeys,
     onboardingStorageKeys,
+    accountScopedUserId,
     excludeStorageKeys: preserveSignupCompleted
       ? [SIGNUP_COMPLETED_STORAGE_KEY]
       : [],

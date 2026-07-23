@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+function loadSourceModule(relativePath) {
+  const source = readFileSync(new URL(relativePath, import.meta.url), "utf8");
+  return import(
+    `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
+  );
+}
+
 function loadNavigationHandoffModule() {
   const source = readFileSync(
     new URL("../../src/lib/navigationHandoff.js", import.meta.url),
@@ -96,4 +103,129 @@ test("clearNavigationHandoff without a reason clears the current handoff and not
   assert.equal(notifications[0].reason, "auth_success");
   assert.equal(notifications[1], null);
   assert.equal(navigationHandoff.getNavigationHandoff(), null);
+});
+
+test("visible tabs preserve the centered scanner contract and feature order", async () => {
+  const routeCompatibility = await loadSourceModule(
+    "../../src/lib/routeCompatibility.js",
+  );
+  const layout = readFileSync(
+    new URL("../../app/(tabs)/_layout.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.deepEqual(routeCompatibility.VISIBLE_TAB_ROUTES, [
+    "index",
+    "search",
+    "rankings",
+    "profile",
+  ]);
+  assert.match(layout, /name="index"[\s\S]*?title: "Home"/u);
+  assert.match(layout, /name="search"[\s\S]*?title: "Search"/u);
+  assert.match(layout, /name="rankings"[\s\S]*?title: "Rankings"/u);
+  assert.match(layout, /name="profile"[\s\S]*?title: "Me"/u);
+  assert.match(layout, /accessibilityLabel="Scan product"/u);
+  assert.match(layout, /type: "tabPress"/u);
+  assert.match(layout, /type: "tabLongPress"/u);
+  assert.match(layout, /height: appTheme\.tabBar\.baseHeight \+ insets\.bottom/u);
+});
+
+test("legacy Supplements and standalone Search routes hand off by replacement", async () => {
+  const routeCompatibility = await loadSourceModule(
+    "../../src/lib/routeCompatibility.js",
+  );
+  const legacySupplementsRoute = readFileSync(
+    new URL("../../app/(tabs)/supplements.jsx", import.meta.url),
+    "utf8",
+  );
+  const standaloneSearchRoute = readFileSync(
+    new URL("../../app/supplement-search.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(legacySupplementsRoute, /<Redirect href="\/rankings" \/>/u);
+  assert.match(standaloneSearchRoute, /resolution\.kind === "handoff"/u);
+  assert.deepEqual(
+    routeCompatibility.resolveSupplementSearchRoute({
+      mode: "info",
+      initialQuery: " Vitamin D ",
+    }),
+    {
+      kind: "handoff",
+      action: "replace",
+      pathname: "/search",
+      params: { initialQuery: " Vitamin D " },
+    },
+  );
+  assert.deepEqual(
+    routeCompatibility.resolveSupplementSearchRoute({
+      mode: "picker",
+      initialQuery: "Magnesium",
+    }),
+    {
+      kind: "picker",
+      mode: "picker",
+      initialQuery: "Magnesium",
+    },
+  );
+});
+
+test("native intents keep compatibility deep links available to route files", async () => {
+  const nativeIntent = await loadSourceModule("../../app/+native-intent.js");
+  const supplementsLink = "suppro://supplements";
+  const searchLink =
+    "suppro://supplement-search?initialQuery=Vitamin%20D";
+  const statsLink = "suppro://stats";
+  const healthLink = "suppro://health";
+  const metricLink = "suppro://health/sleep";
+
+  assert.equal(
+    nativeIntent.redirectSystemPath({ path: supplementsLink }),
+    supplementsLink,
+  );
+  assert.equal(
+    nativeIntent.redirectSystemPath({ path: searchLink }),
+    searchLink,
+  );
+  assert.equal(nativeIntent.redirectSystemPath({ path: statsLink }), statsLink);
+  assert.equal(nativeIntent.redirectSystemPath({ path: healthLink }), healthLink);
+  assert.equal(nativeIntent.redirectSystemPath({ path: metricLink }), metricLink);
+});
+
+test("Rankings content remains and hidden Health and Stats routes hand off to Me", () => {
+  const rankings = readFileSync(
+    new URL("../../app/(tabs)/rankings.jsx", import.meta.url),
+    "utf8",
+  );
+  const health = readFileSync(
+    new URL("../../app/(tabs)/health.jsx", import.meta.url),
+    "utf8",
+  );
+  const stats = readFileSync(
+    new URL("../../app/(tabs)/stats.jsx", import.meta.url),
+    "utf8",
+  );
+  const benefitRanking = readFileSync(
+    new URL("../../app/benefit-ranking.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(rankings, /export default function RankingsScreen/u);
+  assert.match(rankings, /SUPPLEMENT RANKINGS/u);
+  assert.match(health, /HealthCompatibilityRoute/u);
+  assert.match(health, /getMeCompatibilityHref\("health"\)/u);
+  assert.match(stats, /StatsCompatibilityRoute/u);
+  assert.match(stats, /getMeCompatibilityHref\("stats"\)/u);
+  assert.match(benefitRanking, /fallbackHref: "\/rankings"/u);
+});
+
+test("Home removes the catalogue field but retains the empty-state Search action", () => {
+  const home = readFileSync(
+    new URL("../../app/(tabs)/index.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(home, /Search supplement catalog/u);
+  assert.match(home, />Search supplements<\/Text>/u);
+  assert.match(home, /router\.navigate\("\/search"\)/u);
 });

@@ -229,7 +229,7 @@ test("account-management routes remain allowed without entitlement", () => {
   assert.equal(profileRoute.allowsWithoutEntitlement, true);
 });
 
-test("no-entitlement user may still enter the main app shell", () => {
+test("Home and Rankings retain non-premium shell access", () => {
   const { getSubscriptionRouteAccessPolicy } = loadSubscriptionAccessModule();
 
   assert.equal(
@@ -239,6 +239,11 @@ test("no-entitlement user may still enter the main app shell", () => {
   );
   assert.equal(
     getSubscriptionRouteAccessPolicy(["(tabs)", "supplements"])
+      .requiresActiveEntitlement,
+    false
+  );
+  assert.equal(
+    getSubscriptionRouteAccessPolicy(["(tabs)", "rankings"])
       .requiresActiveEntitlement,
     false
   );
@@ -263,6 +268,16 @@ test("premium route and action identifiers are still tracked centrally", () => {
   );
   assert.equal(
     getSubscriptionRouteAccessPolicy(["(tabs)", "health"])
+      .requiresActiveEntitlement,
+    true
+  );
+  assert.equal(
+    getSubscriptionRouteAccessPolicy(["(tabs)", "search"])
+      .requiresActiveEntitlement,
+    true
+  );
+  assert.equal(
+    getSubscriptionRouteAccessPolicy(["(tabs)", "stats"])
       .requiresActiveEntitlement,
     true
   );

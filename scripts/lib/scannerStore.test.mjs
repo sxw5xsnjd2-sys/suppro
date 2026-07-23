@@ -40,6 +40,7 @@ function loadScannerStoreModule(overrides = {}) {
     "isRetailBarcodeType",
     "isValidBarcode",
     "normalizeBarcode",
+    "supabase",
     "fetchSupplementProductsMasterScanProduct",
     "buildScanDebugMetadata",
     "maybeFetchDsldScanMatch",
@@ -60,6 +61,8 @@ function loadScannerStoreModule(overrides = {}) {
     "ENABLE_DSLD_LOOKUP",
     "logBuildAwareDiagnostic",
     "logDevelopmentDiagnostic",
+    "createScanRequestId",
+    "logScanTiming",
     "extractIngredientCandidatesFromList",
     "extractBestIngredientCandidates",
     "matchIngredientsToCatalog",
@@ -104,6 +107,11 @@ return { useScannerStore };`
     overrides.isRetailBarcodeType ?? (() => true),
     overrides.isValidBarcode ?? (() => true),
     overrides.normalizeBarcode ?? ((value) => value),
+    overrides.supabase ?? {
+      auth: {
+        getSession: async () => ({ data: { session: null }, error: null }),
+      },
+    },
     overrides.fetchSupplementProductsMasterScanProduct ??
       overrides.fetchLocalBarcodeScanProduct ??
       (async () => null),
@@ -158,6 +166,9 @@ return { useScannerStore };`
     overrides.ENABLE_DSLD_LOOKUP ?? true,
     overrides.logBuildAwareDiagnostic ?? (() => {}),
     overrides.logDevelopmentDiagnostic ?? (() => {}),
+    overrides.createScanRequestId ??
+      ((scanSessionId) => `test-scan-${scanSessionId}`),
+    overrides.logScanTiming ?? (() => {}),
     overrides.extractIngredientCandidatesFromList ??
       ((ingredients) => (Array.isArray(ingredients) ? ingredients : [])),
     overrides.extractBestIngredientCandidates ??
@@ -221,6 +232,172 @@ test("scanner barcode orchestration checks supplement master before fallbacks", 
     state.product.sourceDecision.final_source_used,
     "supplement_products_master"
   );
+});
+
+test("verified master products publish success before ingredient matching finishes", async () => {
+  let resolveCatalog;
+  let catalogStarted = false;
+  const pendingCatalog = new Promise((resolve) => {
+    resolveCatalog = resolve;
+  });
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => ({
+      barcode: "0123456789012",
+      productId: "verified_master",
+      productName: "Verified multivitamin",
+      ingredientsText: "Magnesium 200 mg",
+      sourceIngredients: [
+        { name: "Magnesium", dosageValue: 200, dosageUnit: "mg" },
+      ],
+      scanDataSource: "supplement_products_master",
+      verificationStatus: "verified",
+    }),
+    extractIngredientCandidatesFromList: (ingredients) => ingredients,
+    fetchIngredientMatchCatalog: async () => {
+      catalogStarted = true;
+      return pendingCatalog;
+    },
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [{ catalogId: "magnesium" }],
+      matches: [{ catalogId: "magnesium" }],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.equal(state.status, "success");
+  assert.deepEqual(state.matchedIngredients, []);
+  assert.equal(catalogStarted, false);
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(catalogStarted, true);
+  resolveCatalog([]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(useScannerStore.getState().matchedIngredients, [
+    { catalogId: "magnesium" },
+  ]);
+});
+
+test("deferred verified-master matching cannot update a newer scan", async () => {
+  let resolveFirstCatalog;
+  const firstCatalog = new Promise((resolve) => {
+    resolveFirstCatalog = resolve;
+  });
+  let catalogCallCount = 0;
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async (barcode) =>
+      barcode === "0123456789012"
+        ? {
+            barcode,
+            productId: "first_verified_master",
+            productName: "First product",
+            ingredientsText: "Magnesium 200 mg",
+            sourceIngredients: [{ name: "Magnesium" }],
+            scanDataSource: "supplement_products_master",
+            verificationStatus: "verified",
+          }
+        : {
+            barcode,
+            productId: "newer_product",
+            productName: "Newer product",
+            ingredientsText: "",
+            sourceIngredients: [],
+            scanDataSource: "supplement_products_master",
+            verificationStatus: "verified",
+          },
+    extractIngredientCandidatesFromList: (ingredients) => ingredients,
+    fetchIngredientMatchCatalog: async () => {
+      catalogCallCount += 1;
+      return firstCatalog;
+    },
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [{ catalogId: "stale_magnesium" }],
+      matches: [{ catalogId: "stale_magnesium" }],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(catalogCallCount, 1);
+
+  await useScannerStore
+    .getState()
+    .processBarcode("0999999999999", "ean13");
+  resolveFirstCatalog([]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const currentState = useScannerStore.getState();
+  assert.equal(currentState.scanSessionId, 2);
+  assert.equal(currentState.product.productId, "newer_product");
+  assert.deepEqual(currentState.matchedIngredients, []);
+});
+
+test("fallback products still wait for required ingredient matching", async () => {
+  let resolveCatalog;
+  let catalogStarted = false;
+  let processSettled = false;
+  const pendingCatalog = new Promise((resolve) => {
+    resolveCatalog = resolve;
+  });
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => null,
+    maybeFetchDsldScanMatch: async () => ({
+      checked: true,
+      cacheHit: false,
+      confidence: "low",
+      dsldMatch: null,
+    }),
+    fetchGoUpcProduct: async () => ({
+      barcode: "0123456789012",
+      productName: "Fallback magnesium",
+      ingredientsText: "Magnesium 200 mg",
+      sourceIngredients: [{ name: "Magnesium" }],
+      active_ingredients_json: [{ name: "Magnesium" }],
+      ingredient_count: 1,
+      scanDataSource: "go_upc",
+    }),
+    persistGoUpcProduct: async (product) => product,
+    extractBestIngredientCandidates: (product) => product.sourceIngredients,
+    fetchIngredientMatchCatalog: async () => {
+      catalogStarted = true;
+      return pendingCatalog;
+    },
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [{ catalogId: "magnesium" }],
+      matches: [{ catalogId: "magnesium" }],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const processPromise = useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13")
+    .then((state) => {
+      processSettled = true;
+      return state;
+    });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(catalogStarted, true);
+  assert.equal(processSettled, false);
+
+  resolveCatalog([]);
+  const state = await processPromise;
+  assert.equal(state.status, "success");
+  assert.deepEqual(state.matchedIngredients, [{ catalogId: "magnesium" }]);
 });
 
 test("scanner barcode orchestration checks DSLD before Go-UPC after master misses", async () => {
@@ -912,6 +1089,10 @@ test("scanner barcode orchestration enriches incomplete Go-UPC products with Ope
 test("scanner barcode orchestration enriches cached incomplete provisional products from local master", async () => {
   const sequence = [];
   const persistedPayloads = [];
+  let resolveOpenAi;
+  const pendingOpenAiResult = new Promise((resolve) => {
+    resolveOpenAi = resolve;
+  });
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
     normalizeBarcode: (value) => value.replace(/\D/g, ""),
@@ -943,7 +1124,30 @@ test("scanner barcode orchestration enriches cached incomplete provisional produ
     },
     searchBarcodeWithOpenAi: async () => {
       sequence.push("openai_web_search");
-      return {
+      return pendingOpenAiResult;
+    },
+    extractBestIngredientCandidates: (product) => product.sourceIngredients,
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+
+  assert.deepEqual(sequence, ["local"]);
+  assert.equal(persistedPayloads.length, 0);
+  assert.equal(state.status, "no_ingredients");
+  assert.equal(state.product.productId, "prod_go_upc");
+  assert.equal(state.product.scanDataSource, "supplement_products_master");
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(sequence, ["local", "openai_web_search"]);
+
+  resolveOpenAi({
         barcode: "0123456789012",
         productName: "Cached Go UPC Magnesium 200 mg",
         ingredientsText: "Magnesium 200 mg",
@@ -966,30 +1170,22 @@ test("scanner barcode orchestration enriches cached incomplete provisional produ
         ingredient_count: 1,
         scanDataSource: "openai_web_search",
         verificationStatus: "go_upc_unverified",
-      };
-    },
-    extractBestIngredientCandidates: (product) => product.sourceIngredients,
-    matchIngredientsToCatalog: () => ({
-      matchedIngredients: [],
-      matches: [],
-      unmatchedIngredients: [],
-    }),
   });
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
-  const state = await useScannerStore
-    .getState()
-    .processBarcode("0123456789012", "ean13");
-
-  assert.deepEqual(sequence, ["local", "openai_web_search"]);
   assert.equal(persistedPayloads.length, 1);
   assert.equal(persistedPayloads[0].productId, "prod_go_upc");
   assert.equal(persistedPayloads[0].scanDataSource, "go_upc_plus_openai");
-  assert.equal(state.status, "success");
-  assert.equal(state.product.productId, "prod_go_upc");
-  assert.equal(state.product.scanDataSource, "go_upc_plus_openai");
-  assert.equal(state.product.productName, "Cached Go UPC Magnesium 200 mg");
-  assert.equal(state.product.ingredientCount, 1);
-  assert.deepEqual(state.product.active_ingredients_json, [
+  const enrichedState = useScannerStore.getState();
+  assert.equal(enrichedState.status, "no_ingredients");
+  assert.equal(enrichedState.product.productId, "prod_go_upc");
+  assert.equal(enrichedState.product.scanDataSource, "go_upc_plus_openai");
+  assert.equal(
+    enrichedState.product.productName,
+    "Cached Go UPC Magnesium 200 mg",
+  );
+  assert.equal(enrichedState.product.ingredientCount, 1);
+  assert.deepEqual(enrichedState.product.active_ingredients_json, [
     {
       name: "Magnesium",
       dosageValue: 200,
@@ -998,9 +1194,77 @@ test("scanner barcode orchestration enriches cached incomplete provisional produ
     },
   ]);
   assert.equal(
-    state.product.sourceDecision.final_source_used,
-    "go_upc_plus_openai"
+    enrichedState.product.sourceDecision.final_source_used,
+    "supplement_products_master",
   );
+});
+
+test("deferred master enrichment cannot modify a newer scan session", async () => {
+  let resolveFirstEnrichment;
+  const firstEnrichment = new Promise((resolve) => {
+    resolveFirstEnrichment = resolve;
+  });
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async (barcode) =>
+      barcode === "0123456789012"
+        ? {
+            barcode,
+            productId: "first_product",
+            productName: "First provisional product",
+            ingredientsText: "",
+            sourceIngredients: [],
+            scanDataSource: "supplement_products_master",
+            verificationStatus: "go_upc_unverified",
+            ingredient_count: 0,
+            active_ingredients_json: [],
+            hasIncompleteDetails: true,
+          }
+        : {
+            barcode,
+            productId: "second_product",
+            productName: "Second complete product",
+            ingredientsText: "Vitamin C 500 mg",
+            sourceIngredients: [{ name: "Vitamin C" }],
+            scanDataSource: "supplement_products_master",
+            ingredient_count: 1,
+            active_ingredients_json: [{ name: "Vitamin C" }],
+          },
+    searchBarcodeWithOpenAi: async () => firstEnrichment,
+    persistGoUpcProduct: async (product) => product,
+    extractIngredientCandidatesFromList: (ingredients) => ingredients,
+    matchIngredientsToCatalog: () => ({
+      matchedIngredients: [],
+      matches: [],
+      unmatchedIngredients: [],
+    }),
+  });
+
+  await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await useScannerStore
+    .getState()
+    .processBarcode("0999999999999", "ean13");
+
+  resolveFirstEnrichment({
+    barcode: "0123456789012",
+    productName: "Stale enriched product",
+    ingredientsText: "Magnesium 200 mg",
+    sourceIngredients: [{ name: "Magnesium" }],
+    active_ingredients_json: [{ name: "Magnesium" }],
+    ingredient_count: 1,
+    scanDataSource: "openai_web_search",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const currentState = useScannerStore.getState();
+  assert.equal(currentState.scanSessionId, 2);
+  assert.equal(currentState.barcode, "0999999999999");
+  assert.equal(currentState.product.productId, "second_product");
+  assert.equal(currentState.product.productName, "Second complete product");
 });
 
 test("scanner barcode orchestration keeps metadata-only Go-UPC products when OpenAI misses", async () => {
@@ -1621,6 +1885,26 @@ test("non-retail barcodes check the local cache before taking the not_found path
   assert.equal(finalState.status, "not_found");
   assert.equal(finalState.error.code, "product_not_found");
   assert.deepEqual(sequence, ["local"]);
+});
+
+test("invalid barcodes are normalized without referencing an undefined error helper", async () => {
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value,
+    isValidBarcode: () => false,
+    normalizeBarcodeScanFailure: (error) => ({
+      status: "error",
+      error: { code: error.code, message: "Invalid barcode" },
+    }),
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("invalid", "ean13");
+
+  assert.equal(state, null);
+  assert.equal(useScannerStore.getState().status, "error");
+  assert.equal(useScannerStore.getState().error.code, "invalid_barcode");
 });
 
 test("photo rescue forwards barcodeType from scanner state", async () => {

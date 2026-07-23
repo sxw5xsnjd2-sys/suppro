@@ -63,3 +63,22 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/search-barcode-with-openai/deno.json"
 entrypoint = "./functions/search-barcode-with-openai/index.ts"
+
+[functions.search-supplement-products]
+enabled = true
+verify_jwt = true
+import_map = "./functions/search-supplement-products/deno.json"
+entrypoint = "./functions/search-supplement-products/index.ts"
+
+[functions.resolve-supplement-product]
+enabled = true
+verify_jwt = true
+import_map = "./functions/resolve-supplement-product/deno.json"
+entrypoint = "./functions/resolve-supplement-product/index.ts"
+
+[functions.refresh-product-scores]
+enabled = true
+# This internal worker performs its own service-role/API-key validation so it
+# can support both legacy JWT service keys and current secret keys.
+verify_jwt = false
+entrypoint = "./functions/refresh-product-scores/index.ts"

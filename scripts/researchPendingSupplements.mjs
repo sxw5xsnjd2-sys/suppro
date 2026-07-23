@@ -14,6 +14,8 @@ const DEFAULT_OUTPUT_DIR = path.join(
 );
 const MANUAL_REVIEW_TABLE = "supplement_research_manual_reviews";
 const TAXONOMY_POLICY_TABLE = "supplement_taxonomy_policies";
+const PRODUCT_SCORE_CALCULATION_VERSION =
+  "recommended-dose-product-ranking.v1";
 
 const OFFICIAL_SOURCE_DOMAINS = [
   "clinicaltrials.gov",
@@ -218,6 +220,34 @@ function parseArgs(argv) {
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+async function enqueueLinkedProductScoreRefresh(supabase, supplementId) {
+  const { error } = await supabase.rpc(
+    "enqueue_product_score_refresh_for_supplement",
+    {
+      p_supplement_id: supplementId,
+      p_invalidation_reason: "research_pending_supplement_completed",
+      p_calculation_version: PRODUCT_SCORE_CALCULATION_VERSION,
+    },
+  );
+  if (!error) return;
+
+  const code = trimString(error.code);
+  const message = trimString(error.message).toLowerCase();
+  if (
+    code === "42883" ||
+    code === "PGRST202" ||
+    message.includes("could not find the function")
+  ) {
+    console.warn(
+      "Product score refresh queue is not deployed; research changes were retained.",
+    );
+    return;
+  }
+  throw new Error(
+    `[enqueue_product_score_refresh_for_supplement] ${error.message}`,
+  );
 }
 
 function parseOptionalInteger(value) {
@@ -2485,6 +2515,7 @@ async function applyResearchRelations({
   }
 
   const linked = await relinkIngredients(supabase, supplement.id, aliasNames);
+  await enqueueLinkedProductScoreRefresh(supabase, supplement.id);
   return { linked, benefitCount: benefitRows.length, aliasWarnings };
 }
 

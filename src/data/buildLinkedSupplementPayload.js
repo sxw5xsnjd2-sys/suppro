@@ -2,6 +2,7 @@ import {
   buildProductEvidenceScoreData,
   scoreMatchedIngredientsForProduct,
 } from "@/features/supplements/recommendedDoseScoring";
+import { selectProductBenefitDriver } from "@/features/supplements/benefits";
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -235,7 +236,7 @@ export function buildSupplementReferenceItems(benefits) {
   );
 }
 
-function getBenefitNumericScore(benefit) {
+function getRawActiveIngredientBenefitScore(benefit) {
   if (typeof benefit?.score === "number" && Number.isFinite(benefit.score)) {
     return benefit.score;
   }
@@ -279,53 +280,12 @@ function buildSectionBody(matchedIngredients, supplementsByCatalogId, fieldName)
   return blocks.join("\n\n") || null;
 }
 
-function getScanSupportDriverSelectionScore(driver) {
-  if (!Number.isFinite(driver?.benefitScore)) {
-    return null;
-  }
-
-  const doseFactor = Number.isFinite(driver?.doseFactor) ? driver.doseFactor : 1;
-  return driver.benefitScore * doseFactor;
-}
-
-function shouldReplaceScanSupportDriver(currentDriver, nextDriver) {
-  const currentSelectionScore =
-    getScanSupportDriverSelectionScore(currentDriver);
-  const nextSelectionScore = getScanSupportDriverSelectionScore(nextDriver);
-
-  if (!Number.isFinite(nextSelectionScore)) {
-    return false;
-  }
-
-  if (!Number.isFinite(currentSelectionScore)) {
-    return true;
-  }
-
-  if (nextSelectionScore !== currentSelectionScore) {
-    return nextSelectionScore > currentSelectionScore;
-  }
-
-  if (nextDriver.benefitScore !== currentDriver?.benefitScore) {
-    return nextDriver.benefitScore > currentDriver?.benefitScore;
-  }
-
-  const nextDoseFactor = Number.isFinite(nextDriver.doseFactor)
-    ? nextDriver.doseFactor
-    : 1;
-  const currentDoseFactor = Number.isFinite(currentDriver?.doseFactor)
-    ? currentDriver.doseFactor
-    : 1;
-
-  if (nextDoseFactor !== currentDoseFactor) {
-    return nextDoseFactor > currentDoseFactor;
-  }
-
-  return String(nextDriver.ingredientName ?? "").localeCompare(
-    String(currentDriver?.ingredientName ?? "")
-  ) < 0;
-}
-
-function buildScanSupportDriver(match, supplement, benefitScore) {
+function buildProductBenefitDriver(
+  match,
+  supplement,
+  benefitScore,
+  benefit
+) {
   if (!Number.isFinite(benefitScore)) {
     return null;
   }
@@ -336,13 +296,48 @@ function buildScanSupportDriver(match, supplement, benefitScore) {
     trimString(match?.catalogName) ||
     trimString(supplement?.name) ||
     "Matched ingredient";
+  const benefitEvidenceSourceUrls = collectBenefitEvidenceSources(benefit);
 
   return {
+    canonicalIngredientId: trimString(match?.catalogId) || null,
     catalogId: trimString(match?.catalogId) || null,
     ingredientName,
+    rawActiveIngredientBenefitScore: benefitScore,
     benefitScore,
-    doseFactor: Number.isFinite(match?.doseFactor) ? match.doseFactor : 1,
+    validatedDoseFactor: Number.isFinite(match?.validatedDoseFactor)
+      ? match.validatedDoseFactor
+      : null,
+    doseFactor: Number.isFinite(match?.doseFactor) ? match.doseFactor : null,
+    doseComparisonStatus: trimString(match?.doseComparisonStatus) || null,
+    doseComparisonValid: match?.doseComparisonValid === true,
     doseBand: trimString(match?.doseBand) || null,
+    hasBenefitStudy: benefitEvidenceSourceUrls.length > 0,
+    benefitEvidenceSourceUrls,
+  };
+}
+
+function serializeProductBenefitDriver(driver, productBenefitScore = null) {
+  return {
+    canonicalIngredientId: driver?.canonicalIngredientId ?? null,
+    catalogId: driver?.catalogId ?? null,
+    ingredientName: driver?.ingredientName ?? "Matched ingredient",
+    productBenefitScore: Number.isFinite(productBenefitScore)
+      ? productBenefitScore
+      : null,
+    rawActiveIngredientBenefitScore:
+      driver?.rawActiveIngredientBenefitScore ?? null,
+    benefitScore: driver?.benefitScore ?? null,
+    validatedDoseFactor: driver?.validatedDoseFactor ?? null,
+    doseFactor: driver?.doseFactor ?? null,
+    doseComparisonStatus: driver?.doseComparisonStatus ?? null,
+    doseComparisonValid: driver?.doseComparisonValid === true,
+    doseBand: driver?.doseBand ?? null,
+    hasBenefitStudy: driver?.hasBenefitStudy === true,
+    benefitEvidenceSourceUrls: Array.isArray(
+      driver?.benefitEvidenceSourceUrls
+    )
+      ? driver.benefitEvidenceSourceUrls
+      : [],
   };
 }
 
@@ -368,7 +363,7 @@ function mergeBenefits(scoredMatchedIngredients, supplementsByCatalogId) {
           label,
           icon: benefit?.icon ?? null,
           score: null,
-          scanSupportDriver: null,
+          productBenefitDrivers: [],
           evidenceItems: [],
           evidenceKeys: new Set(),
           evidenceSourceUrls: [],
@@ -376,7 +371,7 @@ function mergeBenefits(scoredMatchedIngredients, supplementsByCatalogId) {
           referenceItems: [],
         };
 
-      const nextScore = getBenefitNumericScore(benefit);
+      const nextScore = getRawActiveIngredientBenefitScore(benefit);
 
       if (
         Number.isFinite(nextScore) &&
@@ -388,9 +383,14 @@ function mergeBenefits(scoredMatchedIngredients, supplementsByCatalogId) {
         existing.icon = benefit.icon;
       }
 
-      const nextDriver = buildScanSupportDriver(match, supplement, nextScore);
-      if (shouldReplaceScanSupportDriver(existing.scanSupportDriver, nextDriver)) {
-        existing.scanSupportDriver = nextDriver;
+      const nextDriver = buildProductBenefitDriver(
+        match,
+        supplement,
+        nextScore,
+        benefit
+      );
+      if (nextDriver) {
+        existing.productBenefitDrivers.push(nextDriver);
       }
 
       [benefit?.evidence, benefit?.evidence_summary].forEach((item) => {
@@ -427,25 +427,44 @@ function mergeBenefits(scoredMatchedIngredients, supplementsByCatalogId) {
     const evidenceSourceUrls = benefit.evidenceSourceUrls
       .slice()
       .sort((left, right) => sourcePriority(left) - sourcePriority(right));
+    const selectedProductBenefitDriver = selectProductBenefitDriver(
+      benefit.productBenefitDrivers
+    );
+    const productBenefitDrivers = benefit.productBenefitDrivers.map(
+      (driver) => {
+        const scoredDriver = selectProductBenefitDriver([driver]);
+        return serializeProductBenefitDriver(
+          driver,
+          scoredDriver?.productBenefitScore
+        );
+      }
+    );
+    const productBenefitDriver = selectedProductBenefitDriver
+      ? serializeProductBenefitDriver(
+          selectedProductBenefitDriver,
+          selectedProductBenefitDriver.productBenefitScore
+        )
+      : null;
 
     return {
       id: benefit.id,
       label: benefit.label,
       icon: benefit.icon,
+      activeIngredientBenefitScore: Number.isFinite(benefit.score)
+        ? benefit.score
+        : null,
+      productBenefitScore: productBenefitDriver?.productBenefitScore ?? null,
       score: Number.isFinite(benefit.score) ? benefit.score : null,
       evidenceItems: benefit.evidenceItems,
       evidence_source: evidenceSourceUrls[0] ?? null,
       evidence_source_urls: evidenceSourceUrls,
       referenceItems: mergeReferenceItems(benefit.referenceItems),
-      ...(benefit.scanSupportDriver
+      ...(productBenefitDrivers.length ? { productBenefitDrivers } : {}),
+      ...(productBenefitDriver
         ? {
-            scanSupportDriver: {
-              catalogId: benefit.scanSupportDriver.catalogId,
-              ingredientName: benefit.scanSupportDriver.ingredientName,
-              benefitScore: benefit.scanSupportDriver.benefitScore,
-              doseFactor: benefit.scanSupportDriver.doseFactor,
-              doseBand: benefit.scanSupportDriver.doseBand,
-            },
+            productBenefitDriver,
+            // Compatibility alias for locally persisted Phase 1 payloads.
+            scanSupportDriver: productBenefitDriver,
           }
         : {}),
     };

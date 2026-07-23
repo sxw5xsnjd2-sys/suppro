@@ -169,6 +169,10 @@ export function FullMetricCard({ metric, todayEntry, entries = [], onPress }) {
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${metric.shortLabel || metric.label}, ${primaryValue}${
+        primaryUnit ? ` ${primaryUnit}` : ""
+      }. Open details`}
       onPress={onPress}
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
@@ -220,6 +224,10 @@ export function HalfMetricCard({ metric, entries = [], value, onValueChange, onP
     <View style={styles.halfCard}>
       {/* Tappable header area */}
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${metric.shortLabel || metric.label}, ${displayValue} out of ${
+          metric.max ?? 10
+        }. Open details`}
         onPress={onPress}
         style={({ pressed }) => [pressed && { opacity: 0.85 }]}
       >
@@ -265,6 +273,8 @@ export function HalfMetricCard({ metric, entries = [], value, onValueChange, onP
 export function AddMetricPlaceholder({ onPress }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Add health metric"
       onPress={onPress}
       style={({ pressed }) => [styles.addPlaceholder, pressed && { opacity: 0.75 }]}
     >

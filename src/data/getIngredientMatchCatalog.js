@@ -1,6 +1,11 @@
 import { CATALOG_TYPES } from "@/features/supplements/catalog";
 import { supabase } from "@src/lib/supabase";
 
+const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
+let cachedCatalogRows = null;
+let cachedCatalogAt = 0;
+let pendingCatalogRequest = null;
+
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -24,7 +29,8 @@ function toAliasCatalogRows(rows, supplementStatusById) {
   return (rows ?? [])
     .map((row) => {
       const catalogId = trimString(row?.supplement_id);
-      const catalogName = trimString(row?.alias) || trimString(row?.alias_normalized);
+      const catalogName =
+        trimString(row?.alias) || trimString(row?.alias_normalized);
       const status = statusById.get(catalogId);
 
       if (!catalogId || !catalogName || !status) {
@@ -58,7 +64,7 @@ function dedupeCatalogRows(rows) {
   return Array.from(byKey.values());
 }
 
-export async function fetchIngredientMatchCatalog() {
+async function loadIngredientMatchCatalog() {
   const [supplementsResult, aliasesResult] = await Promise.all([
     supabase
       .from("supplements")
@@ -86,11 +92,41 @@ export async function fetchIngredientMatchCatalog() {
   );
 
   if (aliasesResult.error) {
-    console.warn("ingredient alias catalog fetch failed; falling back to supplement names", aliasesResult.error);
+    console.warn(
+      "ingredient alias catalog fetch failed; falling back to supplement names",
+      aliasesResult.error,
+    );
     return supplementRows;
   }
 
   const aliasRows = toAliasCatalogRows(aliasesResult.data, supplementStatusById);
 
   return dedupeCatalogRows([...aliasRows, ...supplementRows]);
+}
+
+export async function fetchIngredientMatchCatalog(
+  { forceRefresh = false } = {},
+) {
+  const cacheIsFresh =
+    Array.isArray(cachedCatalogRows) &&
+    Date.now() - cachedCatalogAt < CATALOG_CACHE_TTL_MS;
+  if (!forceRefresh && cacheIsFresh) {
+    return cachedCatalogRows;
+  }
+
+  if (!forceRefresh && pendingCatalogRequest) {
+    return pendingCatalogRequest;
+  }
+
+  pendingCatalogRequest = loadIngredientMatchCatalog()
+    .then((rows) => {
+      cachedCatalogRows = rows;
+      cachedCatalogAt = Date.now();
+      return rows;
+    })
+    .finally(() => {
+      pendingCatalogRequest = null;
+    });
+
+  return pendingCatalogRequest;
 }

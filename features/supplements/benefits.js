@@ -32,6 +32,13 @@ import UrineSystemHealthIcon from "@/assets/icons/supplements/urine-system-healt
 import WeightManagementIcon from "@/assets/icons/supplements/weight-management.svg";
 import StrengthEnhancingIcon from "@/assets/icons/supplements/strength-enhancing.svg";
 import { appTheme } from "@/theme";
+import {
+  calculateProductBenefitScore as calculateCanonicalProductBenefitScore,
+  formatProductBenefitScoreText as formatCanonicalProductBenefitScoreText,
+  formatProductBenefitScoreValue as formatCanonicalProductBenefitScoreValue,
+  getProductBenefitScoreProgress as getCanonicalProductBenefitScoreProgress,
+  selectProductBenefitDriver as selectCanonicalProductBenefitDriver,
+} from "@/features/supplements/productBenefitScoring";
 
 export const BENEFIT_ICON_MAP = {
   "Weight management": WeightManagementIcon,
@@ -150,17 +157,144 @@ export function getBenefitScore(benefit) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-export function getScanBenefitSortScore(benefit) {
-  const benefitScore = Number(benefit?.scanSupportDriver?.benefitScore);
-  const doseFactor = Number(benefit?.scanSupportDriver?.doseFactor);
+export function calculateProductBenefitScore({
+  rawActiveIngredientBenefitScore,
+  validatedDoseFactor,
+  doseComparisonStatus,
+  doseComparisonValid,
+}) {
+  return calculateCanonicalProductBenefitScore({
+    rawActiveIngredientBenefitScore,
+    validatedDoseFactor,
+    doseComparisonStatus,
+    doseComparisonValid,
+  });
+}
 
-  if (Number.isFinite(benefitScore) && Number.isFinite(doseFactor)) {
-    return benefitScore * doseFactor;
+export function formatProductBenefitScoreText(productBenefitScore) {
+  return formatCanonicalProductBenefitScoreText(productBenefitScore);
+}
+
+export function formatProductBenefitScoreValue(productBenefitScore) {
+  return formatCanonicalProductBenefitScoreValue(productBenefitScore);
+}
+
+export function getProductBenefitScoreProgress(productBenefitScore) {
+  return getCanonicalProductBenefitScoreProgress(productBenefitScore);
+}
+
+export function selectProductBenefitDriver(ingredientDrivers) {
+  return selectCanonicalProductBenefitDriver(ingredientDrivers);
+}
+
+export function getProductDetailBenefitDriver(benefit) {
+  const driverCandidates = Array.isArray(benefit?.productBenefitDrivers)
+    ? benefit.productBenefitDrivers
+    : Array.isArray(benefit?.scanSupportDrivers)
+    ? benefit.scanSupportDrivers
+    : [];
+  const selectedDriver =
+    benefit?.productBenefitDriver ?? benefit?.scanSupportDriver ?? null;
+
+  return selectProductBenefitDriver([
+    ...driverCandidates,
+    ...(selectedDriver ? [selectedDriver] : []),
+  ]);
+}
+
+export function getProductDetailBenefitContributors(benefit) {
+  const driverCandidates = Array.isArray(benefit?.productBenefitDrivers)
+    ? benefit.productBenefitDrivers
+    : Array.isArray(benefit?.scanSupportDrivers)
+    ? benefit.scanSupportDrivers
+    : [];
+  const selectedDriver =
+    benefit?.productBenefitDriver ?? benefit?.scanSupportDriver ?? null;
+  const contributors = [];
+  const seen = new Set();
+
+  [...driverCandidates, ...(selectedDriver ? [selectedDriver] : [])].forEach(
+    (driver) => {
+      const hasBenefitStudy =
+        driver?.hasBenefitStudy === true ||
+        (Array.isArray(driver?.benefitEvidenceSourceUrls) &&
+          driver.benefitEvidenceSourceUrls.length > 0) ||
+        (Array.isArray(driver?.evidenceSourceUrls) &&
+          driver.evidenceSourceUrls.length > 0) ||
+        (Array.isArray(driver?.referenceItems) &&
+          driver.referenceItems.some((item) => String(item?.url ?? "").trim()));
+      if (!hasBenefitStudy) return;
+
+      const ingredientName = String(driver?.ingredientName ?? "")
+        .trim()
+        .replace(/\s+/g, " ");
+      const identity =
+        String(
+          driver?.canonicalIngredientId ??
+            driver?.catalogId ??
+            ingredientName
+        )
+          .trim()
+          .toLowerCase();
+      if (!ingredientName || !identity || seen.has(identity)) return;
+      seen.add(identity);
+      contributors.push({
+        canonicalIngredientId: driver?.canonicalIngredientId ?? null,
+        ingredientName,
+      });
+    }
+  );
+
+  return contributors;
+}
+
+export function getProductDetailBenefitScore(benefit) {
+  return getProductDetailBenefitDriver(benefit)?.productBenefitScore ?? null;
+}
+
+export function getProductDetailBenefitAccessibilityLabel(benefit) {
+  const label = String(benefit?.label ?? "Benefit");
+  const driver = getProductDetailBenefitDriver(benefit);
+  const contributors = getProductDetailBenefitContributors(benefit);
+  const score = driver?.productBenefitScore;
+
+  if (!Number.isFinite(score)) {
+    return `${label}, not rated`;
+  }
+
+  const contributorNames = contributors
+    .map((contributor) => contributor.ingredientName)
+    .join(", ");
+  return `${label}, ${Math.round(score)} out of 100${
+    contributorNames ? `, supported by ${contributorNames}` : ""
+  }`;
+}
+
+export function compareProductDetailBenefits(left, right) {
+  const leftScore = getProductDetailBenefitScore(left);
+  const rightScore = getProductDetailBenefitScore(right);
+
+  if (leftScore !== rightScore) {
+    return (rightScore ?? -1) - (leftScore ?? -1);
+  }
+
+  return String(left?.label ?? "").localeCompare(String(right?.label ?? ""));
+}
+
+export function getScanBenefitSortScore(benefit) {
+  const productBenefitScore = benefit?.scanSupportDriver?.productBenefitScore;
+
+  if (Number.isFinite(productBenefitScore)) {
+    return productBenefitScore;
   }
 
   return getBenefitScore(benefit);
 }
 
+/**
+ * @deprecated Legacy percentile display semantics. Product detail must use the
+ * canonical product-benefit helpers above.
+ */
 export function getScanBenefitDisplayScore(benefit, ranking = null) {
   const doseFactor = Number(benefit?.scanSupportDriver?.doseFactor);
 
@@ -171,6 +305,7 @@ export function getScanBenefitDisplayScore(benefit, ranking = null) {
   return getScanBenefitSortScore(benefit);
 }
 
+/** @deprecated Legacy percentile ordering retained for compatibility only. */
 export function compareScanBenefits(
   left,
   right,
@@ -191,8 +326,12 @@ export function compareScanBenefits(
     return (rightWeightedScore ?? -1) - (leftWeightedScore ?? -1);
   }
 
-  const leftRawScore = Number(left?.scanSupportDriver?.benefitScore);
-  const rightRawScore = Number(right?.scanSupportDriver?.benefitScore);
+  const leftRawScore =
+    left?.scanSupportDriver?.rawActiveIngredientBenefitScore ??
+    left?.scanSupportDriver?.benefitScore;
+  const rightRawScore =
+    right?.scanSupportDriver?.rawActiveIngredientBenefitScore ??
+    right?.scanSupportDriver?.benefitScore;
 
   if (leftRawScore !== rightRawScore) {
     return (rightRawScore ?? -1) - (leftRawScore ?? -1);
@@ -202,6 +341,14 @@ export function compareScanBenefits(
 }
 
 function getBenefitRankingSourceScore(benefit) {
+  if (
+    Number.isFinite(
+      benefit?.scanSupportDriver?.rawActiveIngredientBenefitScore
+    )
+  ) {
+    return benefit.scanSupportDriver.rawActiveIngredientBenefitScore;
+  }
+
   if (Number.isFinite(benefit?.scanSupportDriver?.benefitScore)) {
     return benefit.scanSupportDriver.benefitScore;
   }
@@ -209,6 +356,9 @@ function getBenefitRankingSourceScore(benefit) {
   return getBenefitScore(benefit);
 }
 
+/**
+ * @deprecated Legacy rank-percentile progress. Do not use for product detail.
+ */
 export function getScanBenefitProgress(ranking, doseFactor) {
   const rank = Number(ranking?.rank);
   const total = Number(ranking?.total);

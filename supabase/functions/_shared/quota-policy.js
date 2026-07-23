@@ -54,6 +54,28 @@ export const EDGE_FUNCTION_QUOTAS = {
     dailyLimitMessage:
       "Daily catalog review queue limit reached. Please try again tomorrow.",
   },
+  "search-supplement-products": {
+    quotaKey: "search_supplement_products",
+    functionName: "search-supplement-products",
+    shortWindowSeconds: 60,
+    shortWindowLimit: 30,
+    dailyLimit: 500,
+    shortWindowMessage:
+      "Too many product searches. Please wait a minute and try again.",
+    dailyLimitMessage:
+      "Daily product search limit reached. Please try again tomorrow.",
+  },
+  "resolve-supplement-product": {
+    quotaKey: "resolve_supplement_product",
+    functionName: "resolve-supplement-product",
+    shortWindowSeconds: 600,
+    shortWindowLimit: 10,
+    dailyLimit: 100,
+    shortWindowMessage:
+      "Too many product resolution requests. Please wait a few minutes and try again.",
+    dailyLimitMessage:
+      "Daily product resolution limit reached. Please try again tomorrow.",
+  },
 }
 
 export function getEdgeFunctionQuotaPolicy(policyKey) {

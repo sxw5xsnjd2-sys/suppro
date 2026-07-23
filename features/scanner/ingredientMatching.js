@@ -168,6 +168,9 @@ const ALIAS_GROUPS = [
     "eicosapentaenoic acid",
   ],
 ];
+const ALIAS_FORMS_CACHE = new Map();
+const CATALOG_LOOKUP_CACHE = new WeakMap();
+const MAX_ALIAS_FORM_CACHE_SIZE = 2000;
 
 function normalizePlainText(value) {
   return trimString(value)
@@ -464,6 +467,11 @@ function addDerivedAliasForms(normalized, forms) {
 }
 
 function getAliasForms(normalized) {
+  const cached = ALIAS_FORMS_CACHE.get(normalized);
+  if (cached) {
+    return cached;
+  }
+
   const forms = new Set([normalized]);
 
   ALIAS_GROUPS.forEach((group) => {
@@ -476,6 +484,11 @@ function getAliasForms(normalized) {
 
   addSlashVariantAliases(normalized, forms);
   addDerivedAliasForms(normalized, forms);
+
+  if (ALIAS_FORMS_CACHE.size >= MAX_ALIAS_FORM_CACHE_SIZE) {
+    ALIAS_FORMS_CACHE.clear();
+  }
+  ALIAS_FORMS_CACHE.set(normalized, forms);
 
   return forms;
 }
@@ -536,10 +549,6 @@ function resolveIngredientClassification(values) {
   }
 
   return sawActive ? "active" : "ignore";
-}
-
-function isLikelyExcipientText(text) {
-  return classifyIngredientText(text) === "inactive";
 }
 
 function isLikelyNonIngredientText(text) {
@@ -799,34 +808,73 @@ export function extractIngredientCandidates(text) {
   return filterActiveIngredientCandidates(extractDelimitedIngredientCandidates(text));
 }
 
-export function extractIngredientCandidatesFromList(values) {
-  return filterActiveIngredientCandidates(
-    dedupeIngredientCandidates(
-      (values ?? [])
-        .map((value) => {
-          if (value && typeof value === "object") {
-            const structured = normalizeStructuredIngredientSource(value);
+export function extractIngredientCandidatesFromList(values, options = {}) {
+  let dosageParsingDurationMs = 0;
+  let nameNormalizationDurationMs = 0;
+  const candidates = [];
 
-            return toIngredientCandidate(
-              structured?.raw || buildStructuredIngredientDisplay(value),
-              {
-                name: structured?.name,
-                amount: structured?.amount,
-                unit: structured?.unit,
-                dosageDisplay: structured?.dosageDisplay,
-                chemicalForm: structured?.chemicalForm,
-                amountBasis: structured?.amountBasis,
-                doseConfidence: value.doseConfidence ?? null,
-                doseReviewReason: value.doseReviewReason ?? null,
-              }
-            );
-          }
+  (values ?? []).forEach((value) => {
+    let candidate = null;
+    if (value && typeof value === "object") {
+      let stageStartedAt = nowMs();
+      const structured = normalizeStructuredIngredientSource(value);
+      dosageParsingDurationMs += nowMs() - stageStartedAt;
 
-          return toIngredientCandidate(value);
-        })
-        .filter(Boolean)
-    )
+      stageStartedAt = nowMs();
+      candidate = toIngredientCandidate(
+        structured?.raw || buildStructuredIngredientDisplay(value),
+        {
+          name: structured?.name,
+          amount: structured?.amount,
+          unit: structured?.unit,
+          dosageDisplay: structured?.dosageDisplay,
+          chemicalForm: structured?.chemicalForm,
+          amountBasis: structured?.amountBasis,
+          doseConfidence: value.doseConfidence ?? null,
+          doseReviewReason: value.doseReviewReason ?? null,
+        },
+      );
+      nameNormalizationDurationMs += nowMs() - stageStartedAt;
+    } else {
+      const stageStartedAt = nowMs();
+      candidate = toIngredientCandidate(value);
+      nameNormalizationDurationMs += nowMs() - stageStartedAt;
+    }
+
+    if (candidate) {
+      candidates.push(candidate);
+    }
+  });
+
+  options?.logTiming?.(
+    options?.scanRequestId,
+    "ingredient_dosage_parsing_completed",
+    {
+      durationMs: Math.round(dosageParsingDurationMs * 10) / 10,
+      ingredientCount: values?.length ?? 0,
+    },
   );
+  options?.logTiming?.(
+    options?.scanRequestId,
+    "ingredient_name_normalization_completed",
+    {
+      durationMs: Math.round(nameNormalizationDurationMs * 10) / 10,
+      candidateCount: candidates.length,
+    },
+  );
+
+  const deduplicationStartedAt = nowMs();
+  const activeCandidates = filterActiveIngredientCandidates(
+    dedupeIngredientCandidates(candidates),
+  );
+  logMatchingTiming(
+    options,
+    "ingredient_extraction_deduplication_completed",
+    deduplicationStartedAt,
+    { activeCandidateCount: activeCandidates.length },
+  );
+
+  return activeCandidates;
 }
 
 function scoreCandidateSet(candidates) {
@@ -887,14 +935,91 @@ export function extractBestIngredientCandidates(product) {
 export function buildCatalogIndex(rows) {
   return (rows ?? []).map((row) => {
     const normalizedName = cleanPhrase(row.catalogName);
+    const tokens = tokenize(normalizedName);
 
     return {
       ...row,
       normalizedName,
-      tokens: tokenize(normalizedName),
+      tokens,
+      tokenSet: new Set(tokens),
       aliasForms: getAliasForms(normalizedName),
     };
   });
+}
+
+function appendLookupEntry(lookup, key, entry) {
+  if (!key) {
+    return;
+  }
+
+  const entries = lookup.get(key);
+  if (entries) {
+    entries.push(entry);
+  } else {
+    lookup.set(key, [entry]);
+  }
+}
+
+function buildCatalogLookup(rows) {
+  const entries = buildCatalogIndex(rows);
+  const exactByName = new Map();
+  const byAlias = new Map();
+
+  entries.forEach((entry) => {
+    appendLookupEntry(exactByName, entry.normalizedName, entry);
+    entry.aliasForms.forEach((alias) => {
+      appendLookupEntry(byAlias, alias, entry);
+    });
+  });
+
+  return { entries, exactByName, byAlias };
+}
+
+function getCatalogLookup(rows) {
+  if (Array.isArray(rows)) {
+    const cached = CATALOG_LOOKUP_CACHE.get(rows);
+    if (cached) {
+      return { lookup: cached, cacheHit: true };
+    }
+
+    const lookup = buildCatalogLookup(rows);
+    CATALOG_LOOKUP_CACHE.set(rows, lookup);
+    return { lookup, cacheHit: false };
+  }
+
+  return { lookup: buildCatalogLookup(rows), cacheHit: false };
+}
+
+function nowMs() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function logMatchingTiming(options, stage, startedAt, details = {}) {
+  options?.logTiming?.(options?.scanRequestId, stage, {
+    durationMs: Math.round((nowMs() - startedAt) * 10) / 10,
+    ...details,
+  });
+}
+
+function compareCatalogEntries(left, right) {
+  const nameComparison = left.catalogName.localeCompare(right.catalogName);
+  if (nameComparison !== 0) {
+    return nameComparison;
+  }
+
+  return trimString(left.catalogId).localeCompare(trimString(right.catalogId));
+}
+
+function chooseBestCatalogEntry(entries) {
+  let best = null;
+
+  (entries ?? []).forEach((entry) => {
+    if (!best || compareCatalogEntries(entry, best) < 0) {
+      best = entry;
+    }
+  });
+
+  return best;
 }
 
 function hasDose(match) {
@@ -917,7 +1042,8 @@ export function scoreIngredientMatch(candidate, catalogEntry) {
     };
   }
 
-  const candidateAliases = getAliasForms(candidate.normalized);
+  const candidateAliases =
+    candidate.aliasForms ?? getAliasForms(candidate.normalized);
   const sharedAlias = Array.from(candidateAliases).some((alias) =>
     catalogEntry.aliasForms.has(alias)
   );
@@ -929,8 +1055,14 @@ export function scoreIngredientMatch(candidate, catalogEntry) {
     };
   }
 
+  return scorePartialIngredientMatch(candidate, catalogEntry);
+}
+
+function scorePartialIngredientMatch(candidate, catalogEntry) {
+  const catalogTokenSet =
+    catalogEntry.tokenSet ?? new Set(catalogEntry.tokens ?? []);
   const sharedTokens = candidate.tokens.filter(
-    (token) => token.length > 2 && catalogEntry.tokens.includes(token)
+    (token) => token.length > 2 && catalogTokenSet.has(token)
   );
 
   if (sharedTokens.length === 0) {
@@ -964,59 +1096,181 @@ export function scoreIngredientMatch(candidate, catalogEntry) {
   };
 }
 
-export function matchIngredientsToCatalog(ingredients, catalogRows) {
-  const catalogIndex = buildCatalogIndex(catalogRows);
-  const bestMatchByCatalogId = new Map();
-  const matchedIngredientKeys = new Set();
-  const matchedIngredients = [];
-  const activeIngredients = filterActiveIngredientCandidates(ingredients);
+function buildMatchedIngredient(ingredient, catalogEntry, scored) {
+  return {
+    ingredientRaw: ingredient.raw,
+    ingredientNormalized: ingredient.normalized,
+    catalogId: catalogEntry.catalogId,
+    catalogName: catalogEntry.catalogName,
+    verified: catalogEntry.verified,
+    sourceTable: catalogEntry.sourceTable,
+    matchType: scored.matchType,
+    score: scored.score,
+    classification: "active",
+    dosageValue: Number.isFinite(ingredient.amount) ? ingredient.amount : null,
+    dosageUnit: normalizeDosageUnit(ingredient.unit),
+    dosageDisplay: trimString(ingredient.dosageDisplay) || null,
+    chemicalForm: trimString(ingredient.chemicalForm) || null,
+    amountBasis: normalizeAmountBasis(
+      ingredient.amountBasis,
+      Number.isFinite(ingredient.amount) && Boolean(ingredient.unit)
+    ),
+    doseConfidence: ingredient.doseConfidence ?? null,
+    doseReviewReason: ingredient.doseReviewReason ?? null,
+  };
+}
 
-  activeIngredients.forEach((ingredient) => {
-    let bestForIngredient = null;
+export function matchIngredientsToCatalog(
+  ingredients,
+  catalogRows,
+  options = {},
+) {
+  const matchingStartedAt = nowMs();
+  options?.logTiming?.(options?.scanRequestId, "ingredient_matching_started", {
+    ingredientCount: ingredients?.length ?? 0,
+    catalogRowCount: catalogRows?.length ?? 0,
+  });
 
-    catalogIndex.forEach((catalogEntry) => {
-      const scored = scoreIngredientMatch(ingredient, catalogEntry);
-      if (!scored) return;
+  let stageStartedAt = nowMs();
+  const activeIngredients = filterActiveIngredientCandidates(ingredients).map(
+    (ingredient) => ({
+      ...ingredient,
+      aliasForms: getAliasForms(ingredient.normalized),
+    }),
+  );
+  logMatchingTiming(
+    options,
+    "ingredient_matching_normalization_completed",
+    stageStartedAt,
+    { activeIngredientCount: activeIngredients.length },
+  );
 
-      const nextMatch = {
-        ingredientRaw: ingredient.raw,
-        ingredientNormalized: ingredient.normalized,
-        catalogId: catalogEntry.catalogId,
-        catalogName: catalogEntry.catalogName,
-        verified: catalogEntry.verified,
-        sourceTable: catalogEntry.sourceTable,
-        matchType: scored.matchType,
-        score: scored.score,
-        classification: "active",
-        dosageValue: Number.isFinite(ingredient.amount)
-          ? ingredient.amount
-          : null,
-        dosageUnit: normalizeDosageUnit(ingredient.unit),
-        dosageDisplay: trimString(ingredient.dosageDisplay) || null,
-        chemicalForm: trimString(ingredient.chemicalForm) || null,
-        amountBasis: normalizeAmountBasis(
-          ingredient.amountBasis,
-          Number.isFinite(ingredient.amount) && Boolean(ingredient.unit)
-        ),
-        doseConfidence: ingredient.doseConfidence ?? null,
-        doseReviewReason: ingredient.doseReviewReason ?? null,
-      };
+  stageStartedAt = nowMs();
+  const { lookup: catalogLookup, cacheHit } = getCatalogLookup(catalogRows);
+  logMatchingTiming(
+    options,
+    "ingredient_matching_catalog_index_completed",
+    stageStartedAt,
+    {
+      cacheHit,
+      indexedNameCount: catalogLookup.exactByName.size,
+      indexedAliasCount: catalogLookup.byAlias.size,
+    },
+  );
 
-      if (
-        !bestForIngredient ||
-        nextMatch.score > bestForIngredient.score ||
-        (nextMatch.score === bestForIngredient.score &&
-          nextMatch.catalogName.localeCompare(bestForIngredient.catalogName) < 0)
-      ) {
-        bestForIngredient = nextMatch;
-      }
-    });
+  const resolutions = activeIngredients.map((ingredient) => ({
+    ingredient,
+    catalogEntry: null,
+    scored: null,
+  }));
 
-    if (!bestForIngredient) {
+  stageStartedAt = nowMs();
+  resolutions.forEach((resolution) => {
+    const exactEntries = catalogLookup.exactByName.get(
+      resolution.ingredient.normalized,
+    );
+    const catalogEntry = chooseBestCatalogEntry(exactEntries);
+    if (catalogEntry) {
+      resolution.catalogEntry = catalogEntry;
+      resolution.scored = { matchType: "exact", score: 100 };
+    }
+  });
+  logMatchingTiming(
+    options,
+    "ingredient_matching_exact_completed",
+    stageStartedAt,
+    {
+      matchedCount: resolutions.filter((resolution) => resolution.scored)
+        .length,
+    },
+  );
+
+  stageStartedAt = nowMs();
+  resolutions.forEach((resolution) => {
+    if (resolution.scored) {
       return;
     }
 
-    matchedIngredientKeys.add(ingredient.normalized);
+    const aliasEntries = [];
+    const seenEntries = new Set();
+    resolution.ingredient.aliasForms.forEach((alias) => {
+      (catalogLookup.byAlias.get(alias) ?? []).forEach((entry) => {
+        if (!seenEntries.has(entry)) {
+          seenEntries.add(entry);
+          aliasEntries.push(entry);
+        }
+      });
+    });
+    const catalogEntry = chooseBestCatalogEntry(aliasEntries);
+    if (catalogEntry) {
+      resolution.catalogEntry = catalogEntry;
+      resolution.scored = { matchType: "alias", score: 90 };
+    }
+  });
+  logMatchingTiming(
+    options,
+    "ingredient_matching_alias_completed",
+    stageStartedAt,
+    {
+      matchedCount: resolutions.filter(
+        (resolution) => resolution.scored?.matchType === "alias",
+      ).length,
+    },
+  );
+
+  stageStartedAt = nowMs();
+  resolutions.forEach((resolution) => {
+    if (resolution.scored) {
+      return;
+    }
+
+    catalogLookup.entries.forEach((catalogEntry) => {
+      const scored = scorePartialIngredientMatch(
+        resolution.ingredient,
+        catalogEntry,
+      );
+      if (!scored) {
+        return;
+      }
+
+      if (
+        !resolution.scored ||
+        scored.score > resolution.scored.score ||
+        (scored.score === resolution.scored.score &&
+          compareCatalogEntries(catalogEntry, resolution.catalogEntry) < 0)
+      ) {
+        resolution.catalogEntry = catalogEntry;
+        resolution.scored = scored;
+      }
+    });
+  });
+  logMatchingTiming(
+    options,
+    "ingredient_matching_fuzzy_completed",
+    stageStartedAt,
+    {
+      fuzzyCandidateCount: resolutions.filter(
+        (resolution) => resolution.scored?.matchType === "partial",
+      ).length,
+      unmatchedCandidateCount: resolutions.filter(
+        (resolution) => !resolution.scored,
+      ).length,
+    },
+  );
+
+  stageStartedAt = nowMs();
+  const bestMatchByCatalogId = new Map();
+  const matchedIngredients = [];
+  resolutions.forEach(({ ingredient, catalogEntry, scored }) => {
+    if (!catalogEntry || !scored) {
+      return;
+    }
+
+    const bestForIngredient = buildMatchedIngredient(
+      ingredient,
+      catalogEntry,
+      scored,
+    );
     matchedIngredients.push(bestForIngredient);
 
     const existing = bestMatchByCatalogId.get(bestForIngredient.catalogId);
@@ -1042,9 +1296,22 @@ export function matchIngredientsToCatalog(ingredients, catalogRows) {
     return left.catalogName.localeCompare(right.catalogName);
   });
 
-  const unmatchedIngredients = activeIngredients
-    .filter((ingredient) => !matchedIngredientKeys.has(ingredient.normalized))
-    .map((ingredient) => ingredient.raw);
+  const unmatchedIngredients = resolutions
+    .filter((resolution) => !resolution.scored)
+    .map((resolution) => resolution.ingredient.raw);
+  logMatchingTiming(
+    options,
+    "ingredient_matching_deduplication_sort_completed",
+    stageStartedAt,
+    {
+      matchedIngredientCount: matchedIngredients.length,
+      deduplicatedMatchCount: matches.length,
+      unmatchedIngredientCount: unmatchedIngredients.length,
+    },
+  );
+  logMatchingTiming(options, "ingredient_matching_completed", matchingStartedAt, {
+    cacheHit,
+  });
 
   return {
     matchedIngredients,

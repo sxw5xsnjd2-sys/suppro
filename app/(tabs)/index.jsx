@@ -89,10 +89,7 @@ function EmptyState() {
               return;
             }
 
-            router.push({
-              pathname: "/supplement-search",
-              params: { mode: "info" },
-            });
+            router.navigate("/search");
           }}
           style={({ pressed }) => [
             emptyStateStyles.action,
@@ -1083,30 +1080,6 @@ export default function HomeScreen() {
         titleStyle={styles.dateHeading}
       />
 
-      <Pressable
-        onPress={() => {
-          if (!requireSubscriptionAccess("supplement_search")) {
-            return;
-          }
-
-          router.push({
-            pathname: "/supplement-search",
-            params: { mode: "info" },
-          });
-        }}
-        style={styles.searchField}
-      >
-        <Ionicons
-          name="search"
-          size={18}
-          color="#8B8595"
-          style={styles.searchFieldIcon}
-        />
-        <Text style={styles.searchFieldPlaceholder}>
-          Search supplement catalog ...
-        </Text>
-      </Pressable>
-
       {hasActiveAccess ? (
         <AISummaryCard
           summary={aiSummaryText}
@@ -1175,32 +1148,6 @@ const styles = StyleSheet.create({
   },
   dateHeading: {
     textTransform: "uppercase",
-  },
-  searchField: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.65)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.85)",
-    shadowColor: "#1A1820",
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-    marginBottom: 18,
-  },
-  searchFieldIcon: {
-    marginRight: 0,
-  },
-  searchFieldPlaceholder: {
-    flex: 1,
-    fontSize: 14,
-    fontFamily: typography.fontFamily.body,
-    color: "#8B8595",
   },
   aiSummaryCard: {
     paddingHorizontal: spacing.md,

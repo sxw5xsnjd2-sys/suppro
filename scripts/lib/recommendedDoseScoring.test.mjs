@@ -97,6 +97,8 @@ test("normalizes per-capsule doses using serving size text", () => {
   });
   assert.equal(ingredient.doseComparisonStatus, "within_target_range");
   assert.equal(ingredient.doseFactor, 1);
+  assert.equal(ingredient.validatedDoseFactor, 1);
+  assert.equal(ingredient.doseComparisonValid, true);
   assert.equal(ingredient.adjustedEvidenceScore, 90);
   assert.equal(ingredient.doseBand, "optimal");
 });
@@ -419,6 +421,8 @@ test("slightly downgrades above-range doses and leaves missing recommendations n
   assert.equal(missingRecommended.doseStatusLabel, "Dose target unavailable");
   assert.equal(missingRecommended.scoreAdjustmentSummary, null);
   assert.equal(missingRecommended.doseFactor, 1);
+  assert.equal(missingRecommended.validatedDoseFactor, null);
+  assert.equal(missingRecommended.doseComparisonValid, false);
   assert.equal(missingRecommended.adjustedEvidenceScore, 64);
   assert.deepEqual(missingRecommended.doseFlags, ["missing_dose_scoring_profile"]);
 });
@@ -472,19 +476,93 @@ test("treats missing actual dose, unknown amount bases, and unclear serving text
   assert.equal(missingActual.doseStatusLabel, "Dose unavailable");
   assert.equal(missingActual.scoreAdjustmentSummary, null);
   assert.equal(missingActual.doseFactor, 1);
+  assert.equal(missingActual.validatedDoseFactor, null);
+  assert.equal(missingActual.doseComparisonValid, false);
   assert.equal(missingActual.adjustedEvidenceScore, 75);
   assert.equal(unknownBasis.doseComparisonStatus, "unknown_amount_basis");
   assert.equal(unknownBasis.doseStatusLabel, "Dose unavailable");
   assert.equal(unknownBasis.scoreAdjustmentSummary, null);
   assert.equal(unknownBasis.doseFactor, 1);
+  assert.equal(unknownBasis.validatedDoseFactor, null);
+  assert.equal(unknownBasis.doseComparisonValid, false);
   assert.equal(unknownBasis.adjustedEvidenceScore, 70);
   assert.deepEqual(unknownBasis.doseFlags, ["unknown_amount_basis"]);
   assert.equal(unclearServing.doseComparisonStatus, "serving_size_unparseable");
   assert.equal(unclearServing.doseStatusLabel, "Dose unavailable");
   assert.equal(unclearServing.scoreAdjustmentSummary, null);
   assert.equal(unclearServing.doseFactor, 1);
+  assert.equal(unclearServing.validatedDoseFactor, null);
+  assert.equal(unclearServing.doseComparisonValid, false);
   assert.equal(unclearServing.adjustedEvidenceScore, 72);
   assert.deepEqual(unclearServing.doseFlags, ["serving_size_unparseable"]);
+});
+
+test("marks incomparable dose units invalid despite a neutral factor", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "unit-mismatch",
+      evidenceScore: 80,
+      minValue: 100,
+      unit: "mg",
+    }),
+  ]);
+
+  const [ingredient] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "unit-mismatch",
+        dosageValue: 100,
+        dosageUnit: "ml",
+        amountBasis: "per_serving",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(ingredient.doseComparisonStatus, "unit_mismatch");
+  assert.equal(ingredient.doseFactor, 1);
+  assert.equal(ingredient.validatedDoseFactor, null);
+  assert.equal(ingredient.doseComparisonValid, false);
+  assert.equal(ingredient.adjustedEvidenceScore, 80);
+});
+
+test("keeps legacy neutral factors separate from validated product-benefit factors", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "valid-dose",
+      evidenceScore: 80,
+      minValue: 100,
+    }),
+    createSupplement({
+      id: "missing-dose",
+      evidenceScore: 80,
+      minValue: 100,
+    }),
+  ]);
+  const [validDose, missingDose] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "valid-dose",
+        dosageValue: 100,
+        dosageUnit: "mg",
+        amountBasis: "per_serving",
+      },
+      {
+        catalogId: "missing-dose",
+        dosageValue: null,
+        dosageUnit: null,
+        amountBasis: "per_serving",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(validDose.doseFactor, 1);
+  assert.equal(validDose.validatedDoseFactor, 1);
+  assert.equal(validDose.doseComparisonValid, true);
+  assert.equal(missingDose.doseFactor, 1);
+  assert.equal(missingDose.validatedDoseFactor, null);
+  assert.equal(missingDose.doseComparisonValid, false);
 });
 
 test("feeds adjusted ingredient scores into the top-weighted blend scorer", () => {

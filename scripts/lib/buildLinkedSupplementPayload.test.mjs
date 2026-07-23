@@ -2,6 +2,25 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+function loadSelectProductBenefitDriver() {
+  const source = readFileSync(
+    new URL(
+      "../../features/supplements/productBenefitScoring.js",
+      import.meta.url,
+    ),
+    "utf8"
+  );
+  const contractSource = source
+    .replace(/export const /g, "const ")
+    .replace(/export function /g, "function ");
+
+  return new Function(
+    `${contractSource}\nreturn selectProductBenefitDriver;`
+  )();
+}
+
+const selectProductBenefitDriver = loadSelectProductBenefitDriver();
+
 function loadBuildLinkedSupplementPayload(scoredMatchedIngredients) {
   const source = readFileSync(
     new URL("../../src/data/buildLinkedSupplementPayload.js", import.meta.url),
@@ -9,13 +28,18 @@ function loadBuildLinkedSupplementPayload(scoredMatchedIngredients) {
   );
   const transformed = source
     .replace(
-      /import\s+\{[\s\S]*?\}\s+from\s+"@\/features\/supplements\/recommendedDoseScoring";\n\n/,
+      /import\s+\{[\s\S]*?\}\s+from\s+"@\/features\/supplements\/recommendedDoseScoring";\n/,
+      ""
+    )
+    .replace(
+      /import\s+\{\s*selectProductBenefitDriver\s*\}\s+from\s+"@\/features\/supplements\/benefits";\n/,
       ""
     )
     .replace(/export function /g, "function ");
   const factory = new Function(
     "buildProductEvidenceScoreData",
     "scoreMatchedIngredientsForProduct",
+    "selectProductBenefitDriver",
     `${transformed}\nreturn { buildLinkedSupplementPayload };`
   );
 
@@ -26,7 +50,8 @@ function loadBuildLinkedSupplementPayload(scoredMatchedIngredients) {
       scoreAdjustmentSummary: null,
       scoreAdjustmentReasonCode: null,
     }),
-    () => scoredMatchedIngredients
+    () => scoredMatchedIngredients,
+    selectProductBenefitDriver
   ).buildLinkedSupplementPayload;
 }
 
@@ -37,6 +62,9 @@ test("selects the scan support driver by benefit score weighted by dose factor",
       ingredientName: "Magnesium Glycinate",
       ingredientRaw: "Magnesium Glycinate",
       doseFactor: 0.7,
+      validatedDoseFactor: 0.7,
+      doseComparisonStatus: "below_effective_min",
+      doseComparisonValid: true,
       doseBand: "underdosed",
     },
     {
@@ -44,6 +72,9 @@ test("selects the scan support driver by benefit score weighted by dose factor",
       ingredientName: "L-Theanine",
       ingredientRaw: "L-Theanine",
       doseFactor: 1,
+      validatedDoseFactor: 1,
+      doseComparisonStatus: "within_target_range",
+      doseComparisonValid: true,
       doseBand: "optimal",
     },
   ];
@@ -89,6 +120,13 @@ test("selects the scan support driver by benefit score weighted by dose factor",
   });
 
   assert.equal(payload.supplement_benefits.length, 1);
+  assert.equal(payload.evidence_score, 80);
+  assert.equal(payload.base_evidence_score, 80);
+  assert.equal(
+    payload.supplement_benefits[0].activeIngredientBenefitScore,
+    90
+  );
+  assert.equal(payload.supplement_benefits[0].productBenefitScore, 70);
   assert.equal(payload.supplement_benefits[0].score, 90);
   assert.deepEqual(payload.supplement_benefits[0].evidenceItems, [
     "Magnesium helps with sleep.",
@@ -103,21 +141,36 @@ test("selects the scan support driver by benefit score weighted by dose factor",
     "https://doi.org/10.1000/theanine",
   ]);
   assert.deepEqual(payload.supplement_benefits[0].scanSupportDriver, {
+    canonicalIngredientId: "theanine",
     catalogId: "theanine",
     ingredientName: "L-Theanine",
+    productBenefitScore: 70,
+    rawActiveIngredientBenefitScore: 70,
     benefitScore: 70,
+    validatedDoseFactor: 1,
     doseFactor: 1,
+    doseComparisonStatus: "within_target_range",
+    doseComparisonValid: true,
     doseBand: "optimal",
+    hasBenefitStudy: true,
+    benefitEvidenceSourceUrls: ["https://doi.org/10.1000/theanine"],
   });
+  assert.deepEqual(
+    payload.supplement_benefits[0].productBenefitDriver,
+    payload.supplement_benefits[0].scanSupportDriver
+  );
 });
 
-test("keeps missing dose-profile matches neutral when selecting a scan support driver", () => {
+test("rejects a neutral missing-profile fallback when selecting a driver", () => {
   const scoredMatchedIngredients = [
     {
       catalogId: "collagen",
       ingredientName: "Collagen Peptides",
       ingredientRaw: "Collagen Peptides",
       doseFactor: 1,
+      validatedDoseFactor: null,
+      doseComparisonStatus: "missing_dose_scoring_profile",
+      doseComparisonValid: false,
       doseBand: "unknown",
     },
     {
@@ -125,6 +178,9 @@ test("keeps missing dose-profile matches neutral when selecting a scan support d
       ingredientName: "Vitamin C",
       ingredientRaw: "Vitamin C",
       doseFactor: 0.8,
+      validatedDoseFactor: 0.8,
+      doseComparisonStatus: "below_effective_min",
+      doseComparisonValid: true,
       doseBand: "underdosed",
     },
   ];
@@ -168,6 +224,11 @@ test("keeps missing dose-profile matches neutral when selecting a scan support d
   });
 
   assert.equal(payload.supplement_benefits.length, 1);
+  assert.equal(
+    payload.supplement_benefits[0].activeIngredientBenefitScore,
+    90
+  );
+  assert.equal(payload.supplement_benefits[0].productBenefitScore, 72);
   assert.equal(payload.supplement_benefits[0].score, 90);
   assert.equal(
     payload.supplement_benefits[0].evidence_source,
@@ -178,12 +239,113 @@ test("keeps missing dose-profile matches neutral when selecting a scan support d
     "https://doi.org/10.1000/collagen",
   ]);
   assert.deepEqual(payload.supplement_benefits[0].scanSupportDriver, {
-    catalogId: "collagen",
-    ingredientName: "Collagen Peptides",
-    benefitScore: 82,
-    doseFactor: 1,
-    doseBand: "unknown",
+    canonicalIngredientId: "vitamin-c",
+    catalogId: "vitamin-c",
+    ingredientName: "Vitamin C",
+    productBenefitScore: 72,
+    rawActiveIngredientBenefitScore: 90,
+    benefitScore: 90,
+    validatedDoseFactor: 0.8,
+    doseFactor: 0.8,
+    doseComparisonStatus: "below_effective_min",
+    doseComparisonValid: true,
+    doseBand: "underdosed",
+    hasBenefitStudy: true,
+    benefitEvidenceSourceUrls: [
+      "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567",
+    ],
   });
+  assert.deepEqual(
+    payload.supplement_benefits[0].productBenefitDriver,
+    payload.supplement_benefits[0].scanSupportDriver
+  );
+});
+
+test("preserves full precision and selects the highest valid product-benefit driver", () => {
+  const scoredMatchedIngredients = [
+    {
+      catalogId: "lower",
+      ingredientName: "Lower driver",
+      doseFactor: 0.7249,
+      validatedDoseFactor: 0.7249,
+      doseComparisonStatus: "below_effective_min",
+      doseComparisonValid: true,
+    },
+    {
+      catalogId: "winner",
+      ingredientName: "Winning driver",
+      doseFactor: 0.725,
+      validatedDoseFactor: 0.725,
+      doseComparisonStatus: "below_effective_min",
+      doseComparisonValid: true,
+    },
+  ];
+  const buildLinkedSupplementPayload =
+    loadBuildLinkedSupplementPayload(scoredMatchedIngredients);
+  const supplementsByCatalogId = new Map(
+    scoredMatchedIngredients.map((ingredient) => [
+      ingredient.catalogId,
+      {
+        name: ingredient.ingredientName,
+        supplement_benefits: [{ label: "Sleep support", score: 100 }],
+      },
+    ])
+  );
+
+  const payload = buildLinkedSupplementPayload({
+    name: "Precision blend",
+    matchedIngredients: scoredMatchedIngredients,
+    supplementsByCatalogId,
+  });
+  const [benefit] = payload.supplement_benefits;
+
+  assert.equal(benefit.productBenefitScore, 72.5);
+  assert.equal(benefit.productBenefitDriver.ingredientName, "Winning driver");
+  assert.equal(benefit.productBenefitDriver.validatedDoseFactor, 0.725);
+  assert.deepEqual(
+    benefit.productBenefitDrivers.map((driver) => driver.ingredientName),
+    ["Lower driver", "Winning driver"]
+  );
+  assert.deepEqual(
+    benefit.productBenefitDrivers.map((driver) => driver.productBenefitScore),
+    [72.49, 72.5]
+  );
+});
+
+test("leaves product benefit unrated when every driver has an invalid dose comparison", () => {
+  const scoredMatchedIngredients = [
+    {
+      catalogId: "missing-dose",
+      ingredientName: "Missing dose",
+      doseFactor: 1,
+      validatedDoseFactor: null,
+      doseComparisonStatus: "missing_actual_dose",
+      doseComparisonValid: false,
+    },
+  ];
+  const buildLinkedSupplementPayload =
+    loadBuildLinkedSupplementPayload(scoredMatchedIngredients);
+  const payload = buildLinkedSupplementPayload({
+    name: "Unknown dose",
+    matchedIngredients: scoredMatchedIngredients,
+    supplementsByCatalogId: new Map([
+      [
+        "missing-dose",
+        {
+          name: "Missing dose",
+          supplement_benefits: [{ label: "Sleep support", score: 90 }],
+        },
+      ],
+    ]),
+  });
+  const [benefit] = payload.supplement_benefits;
+
+  assert.equal(benefit.productBenefitScore, null);
+  assert.equal(benefit.productBenefitDriver, undefined);
+  assert.equal(benefit.scanSupportDriver, undefined);
+  assert.equal(benefit.productBenefitDrivers.length, 1);
+  assert.equal(benefit.productBenefitDrivers[0].ingredientName, "Missing dose");
+  assert.equal(benefit.productBenefitDrivers[0].productBenefitScore, null);
 });
 
 test("builds deduplicated reference items with benefit metadata", () => {
@@ -193,6 +355,9 @@ test("builds deduplicated reference items with benefit metadata", () => {
       ingredientName: "L-Theanine",
       ingredientRaw: "L-Theanine",
       doseFactor: 1,
+      validatedDoseFactor: 1,
+      doseComparisonStatus: "within_target_range",
+      doseComparisonValid: true,
       doseBand: "optimal",
     },
     {
@@ -200,6 +365,9 @@ test("builds deduplicated reference items with benefit metadata", () => {
       ingredientName: "Magnesium Glycinate",
       ingredientRaw: "Magnesium Glycinate",
       doseFactor: 1,
+      validatedDoseFactor: 1,
+      doseComparisonStatus: "within_target_range",
+      doseComparisonValid: true,
       doseBand: "optimal",
     },
   ];

@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { enqueueProductScoreRefreshForSupplement } from "../_shared/product-score-refresh.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2504,6 +2505,11 @@ async function applyResearchRelations(
   }
 
   const linked = await relinkIngredients(supplement.id, names);
+  await enqueueProductScoreRefreshForSupplement({
+    adminSupabase,
+    supplementId: supplement.id,
+    reason: "research_pending_supplement_completed",
+  });
   return { linked, benefitCount: benefitRows.length, aliasWarnings };
 }
 
@@ -2655,9 +2661,9 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const normalizedNames = Array.isArray(body?.normalizedNames)
+    const normalizedNames: string[] = Array.isArray(body?.normalizedNames)
       ? Array.from(
-          new Set(
+          new Set<string>(
             body.normalizedNames
               .flatMap(buildExplicitCandidateLookupVariants)
               .filter(Boolean),
@@ -3141,7 +3147,11 @@ Deno.serve(async (req) => {
         }
 
         const result = await createPendingSupplement(candidate, research);
-        if (result?.outcome === "alias_existing" && result?.match) {
+        if (
+          result?.outcome === "alias_existing" &&
+          "match" in result &&
+          result.match
+        ) {
           applySupplementDecision(
             record,
             createSupplementDecision({

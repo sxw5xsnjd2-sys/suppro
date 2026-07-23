@@ -23,6 +23,7 @@ function loadGetSupplementHelpers(overrides = {}) {
     "buildLinkedSupplementPayload",
     "buildSupplementReferenceItems",
     "fetchIngredientMatchCatalog",
+    "logScanTiming",
     `${transformed}
 return {
   dedupeProductIngredientsForDisplay,
@@ -50,7 +51,8 @@ return {
     overrides.supabase ?? {},
     overrides.buildLinkedSupplementPayload ?? (() => null),
     overrides.buildSupplementReferenceItems ?? (() => []),
-    overrides.fetchIngredientMatchCatalog ?? (async () => [])
+    overrides.fetchIngredientMatchCatalog ?? (async () => []),
+    overrides.logScanTiming ?? (() => {}),
   );
 }
 

@@ -5,12 +5,10 @@ import { Tabs, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { appTheme, typography } from "@/theme";
+import { VISIBLE_TAB_ROUTES } from "@src/lib/routeCompatibility";
 import HomeIcon from "@/assets/icons/tab/home.svg";
 import SupplementsIcon from "@/assets/icons/tab/supplements.svg";
-import HealthIcon from "@/assets/icons/tab/health.svg";
 import AccountIcon from "@/assets/icons/profile/account.svg";
-
-const VISIBLE_TABS = ["index", "supplements", "health", "profile"];
 
 function TabIcon({ routeName, color }) {
   const iconProps = {
@@ -23,8 +21,16 @@ function TabIcon({ routeName, color }) {
   };
 
   if (routeName === "index") return <HomeIcon {...iconProps} />;
-  if (routeName === "supplements") return <SupplementsIcon {...iconProps} />;
-  if (routeName === "health") return <HealthIcon {...iconProps} />;
+  if (routeName === "search") {
+    return (
+      <Ionicons
+        name="search-outline"
+        size={appTheme.tabBar.iconSize}
+        color={color}
+      />
+    );
+  }
+  if (routeName === "rankings") return <SupplementsIcon {...iconProps} />;
   return <AccountIcon {...iconProps} />;
 }
 
@@ -35,8 +41,8 @@ function TabItem({ route, label, focused, navigation, requireSubscriptionAccess 
 
   return (
     <Pressable
-      accessibilityRole="button"
-      accessibilityState={focused ? { selected: true } : {}}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: focused }}
       accessibilityLabel={label}
       onPress={() => {
         const event = navigation.emit({
@@ -47,8 +53,8 @@ function TabItem({ route, label, focused, navigation, requireSubscriptionAccess 
 
         if (!focused && !event.defaultPrevented) {
           if (
-            route.name === "health" &&
-            !requireSubscriptionAccess("health_tab")
+            route.name === "search" &&
+            !requireSubscriptionAccess("supplement_search")
           ) {
             return;
           }
@@ -85,7 +91,7 @@ function TabItem({ route, label, focused, navigation, requireSubscriptionAccess 
 
 function CustomTabBar({ state, descriptors, navigation, insets }) {
   const { requireSubscriptionAccess } = useSubscriptionAccess();
-  const visibleRoutes = VISIBLE_TABS.map((name) =>
+  const visibleRoutes = VISIBLE_TAB_ROUTES.map((name) =>
     state.routes.find((route) => route.name === name)
   ).filter(Boolean);
   const currentRouteName = state.routes[state.index]?.name;
@@ -184,32 +190,36 @@ export default function TabsLayout() {
         />
 
         <Tabs.Screen
+          name="search"
+          options={{
+            title: "Search",
+          }}
+        />
+
+        <Tabs.Screen
+          name="rankings"
+          options={{
+            title: "Rankings",
+          }}
+        />
+
+        <Tabs.Screen
           name="supplements"
           options={{
-            title: "Supplements",
+            href: null,
           }}
         />
 
         <Tabs.Screen
           name="health"
           options={{
-            title: "Health",
-          }}
-        />
-
-        <Tabs.Screen
-          name="ai"
-          options={{
             href: null,
           }}
         />
 
-        <Tabs.Screen
-          name="stats"
-          options={{
-            href: null,
-          }}
-        />
+        <Tabs.Screen name="stats" options={{ href: null }} />
+        <Tabs.Screen name="ai" options={{ href: null }} />
+
         <Tabs.Screen
           name="profile"
           options={{

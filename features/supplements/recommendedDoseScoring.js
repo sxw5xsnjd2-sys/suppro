@@ -23,6 +23,13 @@ const DOSE_BANDS = {
   ABOVE_TARGET: "above_target",
   UNKNOWN: "unknown",
 };
+const VALID_DOSE_COMPARISON_STATUSES = new Set([
+  "above_target_range",
+  "below_effective_min",
+  "effective_below_target",
+  "severely_underdosed",
+  "within_target_range",
+]);
 const DEFAULT_EFFECTIVE_MIN_FRACTION = 0.6;
 const HOW_TO_USE_MULTIPLIERS = {
   thousand: 1e3,
@@ -1338,6 +1345,10 @@ export function scoreMatchedIngredientsForProduct({
     const adjustedEvidenceScore = Number.isFinite(evidenceScore)
       ? roundTo(evidenceScore * doseFactor, 4)
       : null;
+    const doseComparisonValid =
+      VALID_DOSE_COMPARISON_STATUSES.has(doseComparisonStatus) &&
+      Number.isFinite(doseFactor);
+    const validatedDoseFactor = doseComparisonValid ? doseFactor : null;
     const scoreAdjustmentSummary = buildDoseComparisonSummary({
       doseBand,
       doseComparisonStatus,
@@ -1353,6 +1364,8 @@ export function scoreMatchedIngredientsForProduct({
       doseScoringProfile,
       normalizedServingDose: effectiveServingDose,
       doseFactor,
+      validatedDoseFactor,
+      doseComparisonValid,
       doseBand,
       doseStatusLabel: buildDoseStatusLabel({
         doseBand,

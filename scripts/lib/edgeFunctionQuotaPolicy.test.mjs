@@ -31,6 +31,8 @@ test("scan and image enrichment quotas stay stricter than AI chat", () => {
   const scan = getEdgeFunctionQuotaPolicy("scan-supplement-photos")
   const enrich = getEdgeFunctionQuotaPolicy("enrich-product-image")
   const queue = getEdgeFunctionQuotaPolicy("queue-missing-active-ingredients")
+  const productSearch = getEdgeFunctionQuotaPolicy("search-supplement-products")
+  const productResolve = getEdgeFunctionQuotaPolicy("resolve-supplement-product")
 
   assert.equal(chat.shortWindowSeconds, 60)
   assert.equal(chat.shortWindowLimit, 6)
@@ -48,11 +50,20 @@ test("scan and image enrichment quotas stay stricter than AI chat", () => {
   assert.equal(queue.shortWindowLimit, 10)
   assert.equal(queue.dailyLimit, 50)
 
+  assert.equal(productSearch.shortWindowSeconds, 60)
+  assert.equal(productSearch.shortWindowLimit, 30)
+  assert.equal(productSearch.dailyLimit, 500)
+
+  assert.equal(productResolve.shortWindowSeconds, 600)
+  assert.equal(productResolve.shortWindowLimit, 10)
+  assert.equal(productResolve.dailyLimit, 100)
+
   assert.equal(getEdgeFunctionQuotaPolicy("ai-supplement-summary").dailyLimit, 200)
 
   assert.ok(enrich.shortWindowLimit < scan.shortWindowLimit)
   assert.ok(scan.shortWindowLimit < chat.shortWindowLimit)
   assert.ok(queue.shortWindowLimit >= scan.shortWindowLimit)
+  assert.ok(productResolve.shortWindowLimit < productSearch.shortWindowLimit)
 })
 
 test("quota exceeded body distinguishes short-window throttles from daily caps", () => {

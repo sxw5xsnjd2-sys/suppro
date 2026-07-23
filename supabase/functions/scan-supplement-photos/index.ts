@@ -5,6 +5,7 @@ import {
   authenticateSupabaseUser,
 } from "../_shared/revenuecat.ts";
 import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
+import { enqueueProductScoreRefresh } from "../_shared/product-score-refresh.ts";
 import { validateScanSupplementPhotosRequest } from "../_shared/scan-supplement-photos-policy.js";
 
 declare const EdgeRuntime:
@@ -2723,7 +2724,7 @@ Deno.serve(async (req) => {
       policyKey: "scan-supplement-photos",
       userId: authenticatedUser.user.id,
     });
-    if (!quotaAccess.ok) {
+    if (quotaAccess.ok === false) {
       return jsonResponse(
         quotaAccess.body,
         quotaAccess.status,
@@ -2944,6 +2945,11 @@ Deno.serve(async (req) => {
       displayName,
       servingSizeText: aiResult.extraction.serving_size_text,
       namingConfidence: aiResult.naming.confidence,
+    });
+    await enqueueProductScoreRefresh({
+      adminSupabase,
+      productId: productResolution.productId,
+      reason: "photo_product_ingredients_persisted",
     });
 
     const affectedReviewNames = await replaceReviewArtifacts({

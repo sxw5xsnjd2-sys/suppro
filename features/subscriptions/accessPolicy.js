@@ -1,4 +1,6 @@
-const PREMIUM_TAB_NAMES = new Set(["health", "ai", "stats"]);
+// These names follow feature semantics, including routes hidden from the tab bar.
+// Rankings intentionally keeps the former Supplements locked-shell behavior.
+const PREMIUM_TAB_NAMES = new Set(["search", "health", "stats", "ai"]);
 const PREMIUM_TOP_LEVEL_ROUTES = new Set([
   "scanner",
   "benefit-ranking",

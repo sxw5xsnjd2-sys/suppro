@@ -34,15 +34,31 @@ import {
   buildScannedSupplementPayload,
 } from "@/features/scanner/buildScannedSupplementPayload";
 import { leaveTopLevelScanModal } from "@/features/scanner/navigation";
+import {
+  applyScanResultIfCurrent,
+  buildScanResultHydrationKey,
+  hydrateScanResultOnce,
+  persistScanResultHistoryOnce,
+} from "@/features/scanner/resultHydration";
+import { logScanTiming } from "@/features/scanner/scanTiming";
 import { useScannerStore } from "@/features/scanner/store";
+import { useSearchResolutionStore } from "@/features/search/resolutionStore";
+import {
+  OVERALL_PRODUCT_EVIDENCE_CALCULATION_VERSION,
+  recordCanonicalProductEvidenceHistory,
+} from "@/features/search/history";
 import {
   BENEFIT_RANK,
   buildBenefitRankings,
-  compareScanBenefits,
   compareBenefits,
+  compareProductDetailBenefits,
+  formatProductBenefitScoreValue,
   getBenefitColor,
   getBenefitIconComponent,
-  getScanBenefitProgress,
+  getProductBenefitScoreProgress,
+  getProductDetailBenefitAccessibilityLabel,
+  getProductDetailBenefitContributors,
+  getProductDetailBenefitDriver,
 } from "@/features/supplements/benefits";
 import {
   CATALOG_TYPES,
@@ -113,14 +129,40 @@ const B_COMPLEX_REFERENCE_SOURCE_NAMES = new Set([
   "Vitamin B6 (Pyridoxine / P5P / Pyridoxal-5-Phosphate)",
 ]);
 const BENEFIT_SCORE_TOOLTIP_COPY = {
-  scan: "This score estimates how well the scanned product supports this benefit by combining the matched ingredient's overall score with how effective the dose is. A fuller bar means stronger benefit support; lower bars can reflect weaker evidence, a lower dose, or both.",
+  scan: "This product-benefit score combines the supporting ingredient's benefit evidence with a genuinely comparable dose. Missing or incomparable dose information is not rated.",
   ranking:
     "A gold medal means there is strong evidence for this benefit while a silver medal means some evidence but not robust. A bronze medal means poor research studies performed for this benefit or no human studies performed.",
 };
+
+async function persistHydratedCanonicalProductEvidence(payload) {
+  const canonicalProductId = normalizeParam(
+    payload?.productId ?? payload?.product_id,
+  );
+  if (
+    payload?.catalogType !== CATALOG_TYPES.SUPPLEMENT_PRODUCT ||
+    !canonicalProductId ||
+    !Number.isFinite(payload?.evidence_score)
+  ) {
+    return;
+  }
+
+  try {
+    await recordCanonicalProductEvidenceHistory({
+      canonicalProductId,
+      barcode: payload?.barcode,
+      score: payload.evidence_score,
+      calculatedAt: Date.now(),
+      calculationVersion:
+        normalizeParam(payload?.overall_evidence_calculation_version) ||
+        OVERALL_PRODUCT_EVIDENCE_CALCULATION_VERSION,
+    });
+  } catch (error) {
+    console.warn("Failed to update canonical product History evidence", error);
+  }
+}
 const REFERENCES_DISCLAIMER =
   "Suppro provides educational information only and is not medical advice. Always speak to a doctor, pharmacist, or qualified healthcare professional before starting supplements, especially if pregnant, taking medication, or managing a medical condition.";
-// Temporarily hidden by product decision. Set SHOW_PROVISIONAL_DATA_WARNING to true to restore.
-const SHOW_PROVISIONAL_DATA_WARNING = false;
+const SHOW_PROVISIONAL_DATA_WARNING = true;
 
 function getDoseTooltipMessage(item) {
   const summary =
@@ -267,7 +309,7 @@ function buildEvidenceSnippets(text) {
       .filter(Boolean);
 
     if (snippets.length) {
-      return snippets.slice(0, 3);
+      return snippets;
     }
   }
 
@@ -281,7 +323,7 @@ function buildEvidenceSnippets(text) {
     .map((block) => block.trim())
     .filter(Boolean);
 
-  return blocks.length ? blocks.slice(0, 3) : [body];
+  return blocks.length ? blocks : [body];
 }
 
 function getReferenceBenefitText(reference) {
@@ -525,35 +567,53 @@ function ActiveIngredientSummaryHeader({ value, toneScore }) {
   );
 }
 
-function BenefitRankingBar({
-  ranking,
-  dimmed = false,
-  variant = "catalog",
-  doseFactor = 1,
-}) {
-  const isScanVariant = variant === "scan";
-  const progress = getScanBenefitProgress(ranking, doseFactor);
-
-  if (!isScanVariant) {
-    return null;
-  }
-
+function ProductBenefitScoreBar({ productBenefitScore, dimmed = false }) {
+  const progress = getProductBenefitScoreProgress(productBenefitScore);
+  const hasRating = Number.isFinite(progress);
+  const scoreText =
+    formatProductBenefitScoreValue(productBenefitScore) ?? "Not rated";
   const fillColor = "#34C759";
-  const trackColor = dimmed ? "rgba(52,199,89,0.08)" : "rgba(52,199,89,0.16)";
+  const trackColor = hasRating
+    ? dimmed
+      ? "rgba(52,199,89,0.08)"
+      : "rgba(52,199,89,0.16)"
+    : appTheme.colors.borderSubtle;
 
   return (
     <View
       accessibilityElementsHidden
       importantForAccessibility="no"
-      style={[styles.rankingBarTrack, { backgroundColor: trackColor }]}
+      style={styles.productBenefitScoreWrap}
     >
+      <Text
+        style={[
+          styles.productBenefitScoreText,
+          !hasRating && styles.productBenefitScoreTextUnavailable,
+        ]}
+      >
+        {scoreText}
+      </Text>
       <View
         style={[
-          styles.rankingBarFill,
-          { backgroundColor: dimmed ? "rgba(52,199,89,0.82)" : fillColor },
-          { width: `${progress * 100}%` },
+          styles.rankingBarTrack,
+          styles.productBenefitScoreTrack,
+          { backgroundColor: trackColor },
         ]}
-      />
+      >
+        {hasRating ? (
+          <View
+            style={[
+              styles.rankingBarFill,
+              {
+                backgroundColor: dimmed
+                  ? "rgba(52,199,89,0.82)"
+                  : fillColor,
+              },
+              { width: `${progress * 100}%` },
+            ]}
+          />
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -913,7 +973,7 @@ function BenefitRow({
   onBenefitPress,
   supplementEvidence,
   showRanking = true,
-  scanSupportDriver = null,
+  productBenefitDriver = null,
 }) {
   const BenefitIcon = getBenefitIconComponent(benefit.label);
   const evidenceSource =
@@ -921,18 +981,23 @@ function BenefitRow({
       ? benefit.evidenceItems
       : (benefit?.evidence ?? benefit?.evidence_summary ?? supplementEvidence);
   const evidenceSnippets = buildEvidenceSnippets(evidenceSource);
-  const showScanSupportBar =
-    ranking &&
-    Number.isFinite(scanSupportDriver?.doseFactor) &&
-    Number.isFinite(scanSupportDriver?.benefitScore);
+  const showProductBenefitScore = !showRanking;
+  const productBenefitContributorNames = showProductBenefitScore
+    ? getProductDetailBenefitContributors(benefit)
+        .map((contributor) => contributor.ingredientName)
+        .join(", ")
+    : "";
+  const accessibilityLabel = showProductBenefitScore
+    ? `${getProductDetailBenefitAccessibilityLabel(benefit)}. ${
+        open ? "Collapse" : "Expand"
+      } evidence.`
+    : `${benefit.label}. ${open ? "Collapse" : "Expand"} evidence.`;
 
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
-      accessibilityLabel={`${benefit.label}. ${
-        open ? "Collapse" : "Expand"
-      } evidence.`}
+      accessibilityLabel={accessibilityLabel}
       onPress={onPress}
       style={({ pressed }) => [
         styles.benefitRow,
@@ -949,7 +1014,7 @@ function BenefitRow({
 
           <View style={styles.benefitCopy}>
             <Text style={styles.benefitLabel}>{benefit.label}</Text>
-            {showRanking && !scanSupportDriver ? (
+            {showRanking ? (
               <Text style={styles.benefitMeta}>
                 {getBenefitRankText(benefit, ranking)}
               </Text>
@@ -960,24 +1025,24 @@ function BenefitRow({
         <View
           style={[
             styles.benefitRight,
-            !showRanking && !showScanSupportBar && styles.benefitRightCompact,
+            showProductBenefitScore && styles.benefitRightProduct,
           ]}
         >
-          {showRanking && !scanSupportDriver ? (
+          {showRanking ? (
             <BenefitRankingMedal
               ranking={ranking}
               benefitLabel={benefit.label}
               Icon={BenefitIcon}
               dimmed={dimmed}
             />
-          ) : showScanSupportBar ? (
-            <BenefitRankingBar
-              ranking={ranking}
+          ) : (
+            <ProductBenefitScoreBar
+              productBenefitScore={
+                productBenefitDriver?.productBenefitScore ?? null
+              }
               dimmed={dimmed}
-              variant="scan"
-              doseFactor={scanSupportDriver.doseFactor}
             />
-          ) : null}
+          )}
           <Ionicons
             name={open ? "chevron-up" : "chevron-down"}
             size={15}
@@ -988,6 +1053,11 @@ function BenefitRow({
 
       {open ? (
         <View style={styles.expandedEvidenceWrap}>
+          {productBenefitContributorNames ? (
+            <Text style={styles.benefitMeta}>
+              {productBenefitContributorNames}
+            </Text>
+          ) : null}
           {evidenceSnippets.map((snippet, index) => (
             <EvidenceSnippetCard
               key={`${benefit.id ?? benefit.label}-${index}`}
@@ -1034,14 +1104,19 @@ export default function SupplementInfoModal() {
   const source = normalizeParam(params.source);
   const id = normalizeParam(params.id);
   const paramName = normalizeParam(params.name);
+  const resolutionSessionId = normalizeParam(params.resolutionSessionId);
   const trackedSupplementId = normalizeParam(params.trackedSupplementId);
   const requestedScanSessionId = normalizeIntegerParam(params.scanSessionId);
+  const requestedScanRequestId = normalizeParam(params.scanRequestId);
   const scannerStatus = useScannerStore((state) => state.status);
   const scannerScanSessionId = useScannerStore((state) => state.scanSessionId);
   const scannerError = useScannerStore((state) => state.error);
   const scannerProduct = useScannerStore((state) => state.product);
   const scannerMatchedIngredients = useScannerStore(
     (state) => state.matchedIngredients,
+  );
+  const searchResolutionPayload = useSearchResolutionStore(
+    (state) => state.sessions[resolutionSessionId]?.payload ?? null,
   );
   const resetScan = useScannerStore((state) => state.resetScan);
   const trackedSupplement = useSupplementsStore((state) =>
@@ -1071,6 +1146,8 @@ export default function SupplementInfoModal() {
   const scrollViewRef = useRef(null);
   const referencesSectionYRef = useRef(0);
   const imageRequestKeyRef = useRef("");
+  const activeHydrationKeyRef = useRef("");
+  const displayedHydrationKeyRef = useRef("");
   const [headerAreaHeight, setHeaderAreaHeight] = useState(0);
   const collapsedHeaderAnimation = useRef(new Animated.Value(0)).current;
   const isCollapsedRef = useRef(false);
@@ -1087,6 +1164,7 @@ export default function SupplementInfoModal() {
   const clearToast = useToastStore((state) => state.clear);
   const isLiveScanSource = source === "scanned";
   const isTrackedScannedSource = source === "tracked-scanned";
+  const isSearchResolutionSource = source === "search-resolution";
   const isScanStyledSource = isLiveScanSource || isTrackedScannedSource;
   const isSupplementProduct =
     data?.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT;
@@ -1103,6 +1181,20 @@ export default function SupplementInfoModal() {
     "not_found",
     "no_ingredients",
   ].includes(scannerStatus);
+
+  useEffect(() => {
+    if (!isLiveScanSource || !requestedScanRequestId) {
+      return;
+    }
+
+    logScanTiming(requestedScanRequestId, "result_screen_mounted", {
+      scanSessionId: effectiveScanSessionId,
+    });
+  }, [
+    effectiveScanSessionId,
+    isLiveScanSource,
+    requestedScanRequestId,
+  ]);
 
   useEffect(() => {
     if (hasActiveAccess || !isResolved) {
@@ -1124,7 +1216,7 @@ export default function SupplementInfoModal() {
     }
 
     if (!id) {
-      if (!isScanStyledSource) {
+      if (!isScanStyledSource && !isSearchResolutionSource) {
         setData(null);
         setLoaded(true);
         return () => {
@@ -1143,9 +1235,23 @@ export default function SupplementInfoModal() {
     setIsBenefitScoreTooltipOpen(false);
     setReferencesExpanded(true);
 
+    if (isSearchResolutionSource) {
+      setData(searchResolutionPayload);
+      setLoaded(true);
+      return () => {
+        active = false;
+      };
+    }
+
     if (isLiveScanSource) {
       const isActiveScan = isCurrentScanSession && isActiveScanStatus;
       const scanProductId = normalizeParam(scannerProduct?.productId);
+      const hydrationKey = buildScanResultHydrationKey({
+        scanRequestId: requestedScanRequestId,
+        productId: scanProductId,
+        scanSessionId: effectiveScanSessionId,
+      });
+      activeHydrationKeyRef.current = hydrationKey;
 
       if (!isActiveScan) {
         setData(null);
@@ -1156,17 +1262,6 @@ export default function SupplementInfoModal() {
       }
 
       const loadLiveScanData = async () => {
-        if (scanProductId) {
-          const productDetail = await getSupplementById(
-            createSupplementProductCatalogId(scanProductId),
-            scannerProduct?.productName,
-          );
-
-          if (productDetail) {
-            return productDetail;
-          }
-        }
-
         if (scannerStatus !== "success") {
           return buildScannedSupplementFailurePayload({
             status: scannerStatus,
@@ -1175,28 +1270,98 @@ export default function SupplementInfoModal() {
           });
         }
 
+        if (scanProductId) {
+          logScanTiming(
+            requestedScanRequestId,
+            "result_product_hydration_started",
+            { productId: scanProductId },
+          );
+          const productDetail = await getSupplementById(
+            createSupplementProductCatalogId(scanProductId),
+            scannerProduct?.productName,
+            { scanRequestId: requestedScanRequestId },
+          );
+          logScanTiming(
+            requestedScanRequestId,
+            "result_product_hydration_completed",
+            { found: Boolean(productDetail) },
+          );
+
+          if (productDetail) {
+            return productDetail;
+          }
+        }
+
         return buildScannedSupplementPayload({
           product: scannerProduct,
           matchedIngredients: scannerMatchedIngredients,
         });
       };
 
-      loadLiveScanData()
+      hydrateScanResultOnce(hydrationKey, loadLiveScanData)
         .then((nextData) => {
-          if (active) {
-            setData(nextData);
+          if (!active) {
+            return;
           }
+
+          const applied = applyScanResultIfCurrent({
+            hydrationKey,
+            currentHydrationKey: activeHydrationKeyRef.current,
+            result: nextData,
+            apply(result) {
+              if (displayedHydrationKeyRef.current !== hydrationKey) {
+                displayedHydrationKeyRef.current = hydrationKey;
+                setData(result);
+                logScanTiming(requestedScanRequestId, "result_data_updated");
+                logScanTiming(requestedScanRequestId, "result_content_ready");
+              }
+              setLoaded(true);
+            },
+          });
+          if (!applied) {
+            return;
+          }
+
+          persistScanResultHistoryOnce(hydrationKey, () => {
+            logScanTiming(
+              requestedScanRequestId,
+              "result_history_persistence_started",
+            );
+            return persistHydratedCanonicalProductEvidence(nextData)
+              .then(() => {
+                logScanTiming(
+                  requestedScanRequestId,
+                  "result_history_persistence_completed",
+                );
+              })
+              .catch((error) => {
+                logScanTiming(
+                  requestedScanRequestId,
+                  "result_history_persistence_completed",
+                  {
+                    failed: true,
+                    error: normalizeParam(error?.message) || "unknown_error",
+                  },
+                );
+              });
+          });
         })
         .catch((error) => {
           console.error("Failed to build scanned supplement payload", error);
-          if (active) {
-            setData(null);
+          if (!active) {
+            return;
           }
-        })
-        .finally(() => {
-          if (active) {
-            setLoaded(true);
-          }
+
+          applyScanResultIfCurrent({
+            hydrationKey,
+            currentHydrationKey: activeHydrationKeyRef.current,
+            result: null,
+            apply(result) {
+              setData(result);
+              setLoaded(true);
+              logScanTiming(requestedScanRequestId, "result_content_ready");
+            },
+          });
         });
 
       return () => {
@@ -1256,7 +1421,9 @@ export default function SupplementInfoModal() {
       .then((nextData) => {
         if (active) {
           setData(nextData);
+          setLoaded(true);
         }
+        persistHydratedCanonicalProductEvidence(nextData).catch(() => {});
       })
       .finally(() => {
         if (active) {
@@ -1268,6 +1435,7 @@ export default function SupplementInfoModal() {
       active = false;
     };
   }, [
+    effectiveScanSessionId,
     hasActiveAccess,
     id,
     isLiveScanSource,
@@ -1275,8 +1443,11 @@ export default function SupplementInfoModal() {
     isScanStyledSource,
     isActiveScanStatus,
     isCurrentScanSession,
+    isSearchResolutionSource,
     paramName,
     requestedScanSessionId,
+    requestedScanRequestId,
+    searchResolutionPayload,
     scannerError,
     scannerMatchedIngredients,
     scannerProduct,
@@ -1288,7 +1459,7 @@ export default function SupplementInfoModal() {
   useEffect(() => {
     let active = true;
 
-    if (!hasActiveAccess) {
+    if (!hasActiveAccess || useProductSupportBar) {
       setBenefitRankings({});
       return () => {
         active = false;
@@ -1331,7 +1502,7 @@ export default function SupplementInfoModal() {
     return () => {
       active = false;
     };
-  }, [data?.supplement_benefits, hasActiveAccess]);
+  }, [data?.supplement_benefits, hasActiveAccess, useProductSupportBar]);
 
   const rating = data?.evidence_score;
 
@@ -1368,6 +1539,10 @@ export default function SupplementInfoModal() {
     const nextBenefits = [...(data?.supplement_benefits ?? [])];
 
     return nextBenefits.sort((left, right) => {
+      if (useProductSupportBar) {
+        return compareProductDetailBenefits(left, right);
+      }
+
       const leftRanking = benefitRankings[left?.id] ?? null;
       const rightRanking = benefitRankings[right?.id] ?? null;
       const leftTone =
@@ -1381,9 +1556,7 @@ export default function SupplementInfoModal() {
         return leftTone - rightTone;
       }
 
-      return useProductSupportBar
-        ? compareScanBenefits(left, right, leftRanking, rightRanking)
-        : compareBenefits(left, right);
+      return compareBenefits(left, right);
     });
   }, [benefitRankings, data?.supplement_benefits, useProductSupportBar]);
   const matchedIngredients = useMemo(
@@ -1447,7 +1620,8 @@ export default function SupplementInfoModal() {
       data?.verification_status === "go_upc_unverified",
   );
   const shouldShowProvisionalDataWarning =
-    SHOW_PROVISIONAL_DATA_WARNING && hasIncompleteDetailsWarning;
+    data?.searchResolutionIncomplete === true ||
+    (SHOW_PROVISIONAL_DATA_WARNING && hasIncompleteDetailsWarning);
   const isVerified = Boolean(data?.verified);
   const canAddSupplement = Boolean(
     (!isScanFailure && isLiveScanSource && fallbackName) ||
@@ -2302,7 +2476,9 @@ export default function SupplementInfoModal() {
                       <Ionicons name="warning" size={18} color="#B42318" />
                     </View>
                     <Text style={styles.incompleteScanWarningText}>
-                      Warning some details may be missing or incomplete
+                      {data?.searchResolutionIncomplete
+                        ? "Product details are incomplete. This product is not rated yet."
+                        : "Warning some details may be missing or incomplete"}
                     </Text>
                   </View>
                   {canImproveScanWithPhotos ? (
@@ -2489,9 +2665,9 @@ export default function SupplementInfoModal() {
                           dimmed={dimmed}
                           supplementEvidence={supplementEvidence}
                           showRanking={showRanking}
-                          scanSupportDriver={
+                          productBenefitDriver={
                             useProductSupportBar
-                              ? (benefit?.scanSupportDriver ?? null)
+                              ? getProductDetailBenefitDriver(benefit)
                               : null
                           }
                           onPress={() => {
@@ -3551,6 +3727,9 @@ const styles = StyleSheet.create({
   benefitRightCompact: {
     width: "auto",
   },
+  benefitRightProduct: {
+    width: 154,
+  },
   rankingMedalWrap: {
     width: 22,
     height: 22,
@@ -3574,6 +3753,29 @@ const styles = StyleSheet.create({
   },
   rankingBarFillDimmed: {
     opacity: 0.82,
+  },
+  productBenefitScoreWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 4,
+    flex: 1,
+  },
+  productBenefitScoreText: {
+    minWidth: 18,
+    fontSize: 12,
+    lineHeight: 16,
+    textAlign: "right",
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: appTheme.colors.textStrong,
+  },
+  productBenefitScoreTextUnavailable: {
+    minWidth: 58,
+    fontFamily: typography.fontFamily.body,
+    color: appTheme.colors.textSecondary,
+  },
+  productBenefitScoreTrack: {
+    marginRight: 0,
   },
   expandedEvidenceWrap: {
     marginTop: 14,

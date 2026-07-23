@@ -14,6 +14,7 @@ import {
   buildSupplementReferenceItems,
 } from "./buildLinkedSupplementPayload";
 import { fetchIngredientMatchCatalog } from "./getIngredientMatchCatalog";
+import { logScanTiming } from "@/features/scanner/scanTiming";
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -282,12 +283,15 @@ const PRODUCT_ACTIVE_INGREDIENTS_SELECT = `
   amount_basis
 `;
 
-async function getOffProductBarcode(productId) {
+async function getOffProductBarcode(productId, scanRequestId) {
   const cleanProductId = trimString(productId);
   if (!cleanProductId) {
     return null;
   }
 
+  logScanTiming(scanRequestId, "result_database_query_started", {
+    query: "off_products_barcode_by_product_id",
+  });
   const { data, error } = await supabase
     .from("off_products")
     .select("barcode")
@@ -299,10 +303,17 @@ async function getOffProductBarcode(productId) {
     return null;
   }
 
+  logScanTiming(scanRequestId, "result_database_query_completed", {
+    query: "off_products_barcode_by_product_id",
+    found: Boolean(data),
+  });
   return trimString(data?.barcode) || null;
 }
 
-export async function getSupplementsByIds(ids) {
+export async function getSupplementsByIds(
+  ids,
+  { scanRequestId, query = "supplements_by_ids" } = {},
+) {
   const cleanIds = Array.from(
     new Set((ids ?? []).map((id) => trimString(id)).filter(Boolean))
   );
@@ -311,6 +322,7 @@ export async function getSupplementsByIds(ids) {
     return [];
   }
 
+  logScanTiming(scanRequestId, "result_database_query_started", { query });
   const { data, error } = await supabase
     .from("supplements")
     .select(SUPPLEMENT_SELECT)
@@ -322,6 +334,10 @@ export async function getSupplementsByIds(ids) {
     return [];
   }
 
+  logScanTiming(scanRequestId, "result_database_query_completed", {
+    query,
+    rowCount: data?.length ?? 0,
+  });
   return (data ?? []).map((row) => ({
     ...attachSupplementReferenceItems(row),
     verified: row?.status === "approved",
@@ -329,7 +345,10 @@ export async function getSupplementsByIds(ids) {
   }));
 }
 
-async function loadSupplementProductIngredientSets(catalogId) {
+async function loadSupplementProductIngredientSets(
+  catalogId,
+  { scanRequestId } = {},
+) {
   const productId = getCatalogEntityId(catalogId);
   if (!productId) {
     return {
@@ -339,6 +358,9 @@ async function loadSupplementProductIngredientSets(catalogId) {
     };
   }
 
+  logScanTiming(scanRequestId, "result_database_query_started", {
+    query: "product_active_ingredients_by_product_id",
+  });
   const { data, error } = await supabase
     .from("product_active_ingredients")
     .select(PRODUCT_ACTIVE_INGREDIENTS_SELECT)
@@ -356,9 +378,17 @@ async function loadSupplementProductIngredientSets(catalogId) {
       supplementRows: [],
     };
   }
+  logScanTiming(scanRequestId, "result_database_query_completed", {
+    query: "product_active_ingredients_by_product_id",
+    rowCount: data?.length ?? 0,
+  });
 
   const supplementRows = await getSupplementsByIds(
-    (data ?? []).map((row) => row?.canonical_supplement_id)
+    (data ?? []).map((row) => row?.canonical_supplement_id),
+    {
+      scanRequestId,
+      query: "linked_supplements_by_ids",
+    },
   );
   const supplementNameById = new Map(
     supplementRows.map((row) => [row.id, row.name])
@@ -385,7 +415,10 @@ async function loadSupplementProductIngredientSets(catalogId) {
   };
 }
 
-async function loadMasterJsonIngredientSets(activeIngredientsJson) {
+async function loadMasterJsonIngredientSets(
+  activeIngredientsJson,
+  { scanRequestId } = {},
+) {
   if (
     !Array.isArray(activeIngredientsJson) ||
     activeIngredientsJson.length === 0
@@ -397,7 +430,10 @@ async function loadMasterJsonIngredientSets(activeIngredientsJson) {
     };
   }
 
-  const candidates = extractIngredientCandidatesFromList(activeIngredientsJson);
+  const candidates = extractIngredientCandidatesFromList(
+    activeIngredientsJson,
+    { scanRequestId, logTiming: logScanTiming },
+  );
   if (candidates.length === 0) {
     return {
       activeIngredients: [],
@@ -406,10 +442,18 @@ async function loadMasterJsonIngredientSets(activeIngredientsJson) {
     };
   }
 
+  logScanTiming(scanRequestId, "result_database_query_started", {
+    query: "ingredient_match_catalog_fallback",
+  });
   const catalogRows = await fetchIngredientMatchCatalog();
+  logScanTiming(scanRequestId, "result_database_query_completed", {
+    query: "ingredient_match_catalog_fallback",
+    rowCount: catalogRows.length,
+  });
   const { matchedIngredients } = matchIngredientsToCatalog(
     candidates,
-    catalogRows
+    catalogRows,
+    { scanRequestId, logTiming: logScanTiming },
   );
   const activeIngredients =
     dedupeProductIngredientsForDisplay(matchedIngredients);
@@ -418,7 +462,11 @@ async function loadMasterJsonIngredientSets(activeIngredientsJson) {
     (match) => trimString(match.catalogId)
   );
   const supplementRows = await getSupplementsByIds(
-    linkedIngredients.map((match) => match.catalogId)
+    linkedIngredients.map((match) => match.catalogId),
+    {
+      scanRequestId,
+      query: "fallback_linked_supplements_by_ids",
+    },
   );
 
   return {
@@ -471,12 +519,19 @@ async function getActiveIngredientById(catalogId) {
   };
 }
 
-async function getSupplementProductById(catalogId, fallbackName) {
+async function getSupplementProductById(
+  catalogId,
+  fallbackName,
+  { scanRequestId } = {},
+) {
   const productId = getCatalogEntityId(catalogId);
   if (!productId) {
     return null;
   }
 
+  logScanTiming(scanRequestId, "result_database_query_started", {
+    query: "supplement_products_master_by_product_id",
+  });
   const { data, error } = await supabase
     .from("supplement_products_master")
     .select(
@@ -489,13 +544,17 @@ async function getSupplementProductById(catalogId, fallbackName) {
     console.error("Failed to load supplement product", error);
     return null;
   }
+  logScanTiming(scanRequestId, "result_database_query_completed", {
+    query: "supplement_products_master_by_product_id",
+    found: Boolean(data),
+  });
 
   if (!data) {
     return null;
   }
 
   let { activeIngredients, linkedIngredients, supplementRows } =
-    await loadSupplementProductIngredientSets(catalogId);
+    await loadSupplementProductIngredientSets(catalogId, { scanRequestId });
   if (
     activeIngredients.length === 0 &&
     linkedIngredients.length === 0 &&
@@ -503,7 +562,9 @@ async function getSupplementProductById(catalogId, fallbackName) {
     data.active_ingredients_json.length > 0
   ) {
     ({ activeIngredients, linkedIngredients, supplementRows } =
-      await loadMasterJsonIngredientSets(data.active_ingredients_json));
+      await loadMasterJsonIngredientSets(data.active_ingredients_json, {
+        scanRequestId,
+      }));
   }
 
   const supplementsByCatalogId = new Map(
@@ -512,7 +573,8 @@ async function getSupplementProductById(catalogId, fallbackName) {
   const displayName =
     trimString(data?.display_name) || trimString(fallbackName) || "Supplement";
   const barcode =
-    trimString(data?.barcode) || (await getOffProductBarcode(data.product_id));
+    trimString(data?.barcode) ||
+    (await getOffProductBarcode(data.product_id, scanRequestId));
   const verificationStatus =
     trimString(data?.verification_status) || "verified";
 
@@ -555,7 +617,11 @@ async function getSupplementProductById(catalogId, fallbackName) {
   };
 }
 
-export async function getSupplementById(supplementId, fallbackName) {
+export async function getSupplementById(
+  supplementId,
+  fallbackName,
+  options = {},
+) {
   const catalogType = getCatalogType(supplementId);
   if (
     catalogType === CATALOG_TYPES.CUSTOM ||
@@ -565,7 +631,7 @@ export async function getSupplementById(supplementId, fallbackName) {
   }
 
   if (catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT) {
-    return getSupplementProductById(supplementId, fallbackName);
+    return getSupplementProductById(supplementId, fallbackName, options);
   }
 
   return getActiveIngredientById(supplementId);

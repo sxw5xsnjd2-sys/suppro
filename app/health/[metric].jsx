@@ -208,7 +208,7 @@ export default function MetricDetailScreen() {
   const [addOpen, setAddOpen] = useState(false);
   const safeBackAction = resolveBackNavigationAction({
     canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
-    fallbackHref: "/(tabs)/health",
+    fallbackHref: "/profile?segment=health",
   });
 
   useEffect(() => {
@@ -297,6 +297,8 @@ export default function MetricDetailScreen() {
         {/* Top bar */}
         <View style={styles.topBar}>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back to Health"
             onPress={() => {
               if (safeBackAction.type === "back") {
                 router.back();
@@ -313,6 +315,8 @@ export default function MetricDetailScreen() {
             {metric.shortLabel || metric.label}
           </Text>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Add ${metric.shortLabel || metric.label} entry`}
             onPress={() => {
               if (!requireSubscriptionAccess("health_metrics")) {
                 return;
@@ -328,10 +332,17 @@ export default function MetricDetailScreen() {
 
         <View style={styles.content}>
           {/* Period switcher */}
-          <View style={styles.periodBar}>
+          <View
+            accessibilityRole="tablist"
+            accessibilityLabel="Chart period"
+            style={styles.periodBar}
+          >
             {PERIODS.map((p) => (
               <Pressable
                 key={p}
+                accessibilityRole="tab"
+                accessibilityLabel={`Show ${p} period`}
+                accessibilityState={{ selected: period === p }}
                 onPress={() => setPeriod(p)}
                 style={[styles.periodBtn, period === p && styles.periodBtnActive]}
               >
@@ -410,6 +421,8 @@ export default function MetricDetailScreen() {
                       {formatEntryValue(metric, entry)}
                     </Text>
                     <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete ${formatShortDate(entry.date)} entry`}
                       onPress={() =>
                         Alert.alert(
                           "Delete entry",

@@ -364,8 +364,11 @@ test("Android screen modules gate Apple Health at the actual render and call sit
     new URL("../../app/onboarding.jsx", import.meta.url),
     "utf8"
   );
-  const healthTabSource = readFileSync(
-    new URL("../../app/(tabs)/health.jsx", import.meta.url),
+  const healthContentSource = readFileSync(
+    new URL(
+      "../../features/health/components/HealthContent.jsx",
+      import.meta.url
+    ),
     "utf8"
   );
   const settingsSource = readFileSync(
@@ -396,11 +399,15 @@ test("Android screen modules gate Apple Health at the actual render and call sit
     true
   );
 
-  assert.equal(healthTabSource.includes("useAppleHealthConnection"), false);
-  assert.equal(healthTabSource.includes("AppleHealthPill"), false);
+  assert.equal(healthContentSource.includes("useAppleHealthConnection"), false);
+  assert.equal(healthContentSource.includes("AppleHealthPill"), false);
   assert.equal(
-    healthTabSource.includes('import { IOSHealthConnectionCta }'),
+    healthContentSource.includes('import { IOSHealthConnectionCta }'),
     false
+  );
+  assert.equal(
+    healthContentSource.includes("IS_APPLE_HEALTH_SUPPORTED_PLATFORM ?"),
+    true
   );
 
   assert.equal(settingsSource.includes("useAppleHealthConnection"), false);

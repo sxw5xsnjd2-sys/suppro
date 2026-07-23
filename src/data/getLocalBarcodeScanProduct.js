@@ -1,4 +1,5 @@
 import { supabase } from "@src/lib/supabase";
+import { logScanTiming } from "@/features/scanner/scanTiming";
 import { isValidBarcode, normalizeBarcode } from "./getOpenFoodFactsProduct";
 
 function trimString(value) {
@@ -122,25 +123,11 @@ function extractMasterIngredients(activeIngredientsJson) {
   return ingredients;
 }
 
-async function fetchOffProductByProductId(productId) {
-  if (!trimString(productId)) {
-    return null;
-  }
-
-  const { data, error } = await supabase
-    .from("off_products")
-    .select("id, barcode, name, ingredients")
-    .eq("id", trimString(productId))
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data ?? null;
-}
-
-export async function fetchSupplementProductsMasterScanProduct(barcode, barcodeType) {
+export async function fetchSupplementProductsMasterScanProduct(
+  barcode,
+  barcodeType,
+  { scanRequestId } = {},
+) {
   const normalizedBarcode = normalizeBarcode(barcode, barcodeType);
   if (!isValidBarcode(normalizedBarcode, barcodeType)) {
     return null;
@@ -150,6 +137,11 @@ export async function fetchSupplementProductsMasterScanProduct(barcode, barcodeT
     normalizedBarcode,
     barcodeType
   );
+  logScanTiming(scanRequestId, "database_query_started", {
+    query: "supplement_products_master_by_barcode",
+    barcodeCandidates,
+    operator: "in",
+  });
   const { data: masterBarcodeRows, error: masterBarcodeError } = await supabase
     .from("supplement_products_master")
     .select(
@@ -160,6 +152,10 @@ export async function fetchSupplementProductsMasterScanProduct(barcode, barcodeT
   if (masterBarcodeError) {
     throw masterBarcodeError;
   }
+  logScanTiming(scanRequestId, "database_query_completed", {
+    query: "supplement_products_master_by_barcode",
+    rowCount: masterBarcodeRows?.length ?? 0,
+  });
 
   const masterByBarcode = barcodeCandidates
     .map((candidate) =>
@@ -168,7 +164,6 @@ export async function fetchSupplementProductsMasterScanProduct(barcode, barcodeT
     .find(Boolean);
 
   if (masterByBarcode?.product_id) {
-    const offProduct = await fetchOffProductByProductId(masterByBarcode.product_id);
     const masterIngredients = extractMasterIngredients(
       masterByBarcode.active_ingredients_json
     );
@@ -181,12 +176,11 @@ export async function fetchSupplementProductsMasterScanProduct(barcode, barcodeT
       productId: trimString(masterByBarcode.product_id) || null,
       productName:
         trimString(masterByBarcode.display_name) ||
-        trimString(offProduct?.name) ||
         "Scanned supplement",
       ingredientsText:
         masterIngredients.length > 0
           ? masterIngredients.map((item) => getIngredientDisplayName(item)).join(", ")
-          : trimString(offProduct?.ingredients),
+          : "",
       sourceIngredients: masterIngredients,
       sourceStatus: 1,
       sourceStatusVerbose:

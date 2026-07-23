@@ -282,6 +282,8 @@ test("normal sign-out preserves account-scoped supplement data, clears global se
       "supplement-heart-flags",
       "suppro.stats.aiSummary.v1",
       "recent-supplement-searches",
+      "suppro.searchHistory.v1:guest",
+      "suppro.searchHistory.v1:account:user-a",
     ],
   });
 
@@ -302,6 +304,8 @@ test("normal sign-out preserves account-scoped supplement data, clears global se
       "supplement-heart-flags",
       "suppro.stats.aiSummary.v1",
       "recent-supplement-searches",
+      "suppro.searchHistory.v1:guest",
+      "suppro.searchHistory.v1:account:user-a",
     ],
   ]);
   assert.equal(harness.healthTracker.resetCount, 1);
@@ -325,6 +329,8 @@ test("delete-account sign-out also removes the deleted user's account-scoped sup
       "supplement-heart-flags",
       "suppro.stats.aiSummary.v1",
       "recent-supplement-searches",
+      "suppro.searchHistory.v1:guest",
+      "suppro.searchHistory.v1:account:user-a",
     ],
   });
 
@@ -350,6 +356,8 @@ test("delete-account sign-out also removes the deleted user's account-scoped sup
       "supplement-heart-flags",
       "suppro.stats.aiSummary.v1",
       "recent-supplement-searches",
+      "suppro.searchHistory.v1:guest",
+      "suppro.searchHistory.v1:account:user-a",
     ],
   ]);
   assert.equal(harness.healthTracker.resetCount, 1);
@@ -398,6 +406,8 @@ test("forceClearDeletedAccountLocalState removes auth storage, resets RevenueCat
       "supplement-heart-flags",
       "suppro.stats.aiSummary.v1",
       "recent-supplement-searches",
+      "suppro.searchHistory.v1:guest",
+      "suppro.searchHistory.v1:account:user-a",
     ],
   ]);
   assert.equal(harness.healthTracker.resetCount, 1);

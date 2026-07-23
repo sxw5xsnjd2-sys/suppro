@@ -207,7 +207,11 @@ export function HealthEntryModal({ visible, metric, onClose }) {
         style={styles.overlay}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <Pressable style={styles.backdrop} onPress={onClose} />
+        <Pressable
+          accessible={false}
+          style={styles.backdrop}
+          onPress={onClose}
+        />
 
         <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom + 16, 28) }]}>
           {/* Handle */}
@@ -220,6 +224,7 @@ export function HealthEntryModal({ visible, metric, onClose }) {
               <Text style={styles.dateLabel}>{displayDate}</Text>
             </View>
             <Pressable
+              accessibilityRole="button"
               onPress={onClose}
               style={({ pressed }) => [styles.closeBtn, pressed && { opacity: 0.7 }]}
               accessibilityLabel="Close"

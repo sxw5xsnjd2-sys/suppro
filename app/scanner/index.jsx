@@ -16,6 +16,12 @@ import { router, useLocalSearchParams } from "expo-router";
 import { AppButton, PrimaryCard } from "@/components/common/ui";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { leaveScannerScreen } from "@/features/scanner/navigation";
+import { buildScannedSupplementPayload } from "@/features/scanner/buildScannedSupplementPayload";
+import {
+  createScanRequestId,
+  logScanTiming,
+} from "@/features/scanner/scanTiming";
+import { recordScanHistory } from "@/features/search/history";
 import { appTheme, spacing, typography } from "@/theme";
 import { useScannerStore } from "@/features/scanner/store";
 import {
@@ -64,6 +70,57 @@ function inferBarcodeType(text) {
   if (/^\d{12}$/.test(digits)) return "upc_a";
   if (/^\d{8}$/.test(digits)) return "ean8";
   return "code128";
+}
+
+function buildScanNavigationDescriptor(scanState, scannerOrigin) {
+  return {
+    action: "push",
+    pathname: "/modal/supplement-info",
+    params: {
+      source: "scanned",
+      origin: scannerOrigin,
+      scanSessionId: String(scanState.scanSessionId),
+      scanRequestId: scanState.scanRequestId || undefined,
+      name:
+        scanState.product?.productName ||
+        scanState.product?.name ||
+        "Scanned supplement",
+    },
+  };
+}
+
+async function saveUsableScanHistory({
+  scanState,
+  expectedScanSessionId,
+  navigationDescriptor,
+}) {
+  let overallProductEvidenceScore = null;
+  const scanRequestId = scanState.scanRequestId;
+  logScanTiming(scanRequestId, "background_scan_history_started", {
+    blocksNavigation: false,
+  });
+
+  if (scanState.status === "success") {
+    try {
+      const payload = await buildScannedSupplementPayload(scanState);
+      overallProductEvidenceScore = Number.isFinite(payload?.evidence_score)
+        ? payload.evidence_score
+        : null;
+      logScanTiming(scanRequestId, "background_scan_score_calculated", {
+        score: overallProductEvidenceScore,
+      });
+    } catch (error) {
+      console.warn("Failed to calculate scan history evidence", error);
+    }
+  }
+
+  await recordScanHistory({
+    scanState,
+    expectedScanSessionId,
+    overallProductEvidenceScore,
+    navigationDescriptor,
+  });
+  logScanTiming(scanRequestId, "background_scan_history_completed");
 }
 
 export default function ScannerScreen() {
@@ -204,40 +261,57 @@ export default function ScannerScreen() {
       return;
     }
 
+    const expectedScanSessionId =
+      useScannerStore.getState().scanSessionId + 1;
+    const scanRequestId = createScanRequestId(expectedScanSessionId);
+    logScanTiming(scanRequestId, "barcode_detected", {
+      detectionSource: "manual",
+      rawBarcode: manualBarcodeText,
+    });
+
     const raw = manualBarcodeText.trim().replace(/[\s-]/g, "");
     if (!raw) return;
 
     const barcodeType = inferBarcodeType(raw);
 
     const barcode = normalizeBarcode(raw, barcodeType);
+    logScanTiming(scanRequestId, "barcode_normalized", {
+      barcode,
+      barcodeType,
+    });
     if (!isValidBarcode(barcode, barcodeType)) return;
 
     Keyboard.dismiss();
     setManualEntryOpen(false);
     hasScannedRef.current = true;
     setHasScanned(true);
-    await processBarcode(barcode, barcodeType);
+    await processBarcode(barcode, barcodeType, { scanRequestId });
 
     const nextScanState = useScannerStore.getState();
     const nextScanSessionId = nextScanState.scanSessionId;
-    if (!Number.isFinite(nextScanSessionId) || nextScanSessionId <= 0) return;
     if (
-      nextScanState.status === "not_found" ||
-      nextScanState.status === "error"
+      nextScanSessionId !== expectedScanSessionId ||
+      !["success", "no_ingredients"].includes(nextScanState.status)
     )
       return;
 
+    const navigationDescriptor = buildScanNavigationDescriptor(
+      nextScanState,
+      scannerOrigin,
+    );
+    saveUsableScanHistory({
+      scanState: nextScanState,
+      expectedScanSessionId,
+      navigationDescriptor,
+    }).catch((error) => {
+      console.error("Failed to save scan history", error);
+    });
+    logScanTiming(scanRequestId, "navigation_started", {
+      pathname: navigationDescriptor.pathname,
+    });
     router.push({
-      pathname: "/modal/supplement-info",
-      params: {
-        source: "scanned",
-        origin: scannerOrigin,
-        scanSessionId: String(nextScanSessionId),
-        name:
-          nextScanState.product?.productName ||
-          nextScanState.product?.name ||
-          "Scanned supplement",
-      },
+      pathname: navigationDescriptor.pathname,
+      params: navigationDescriptor.params,
     });
   };
 
@@ -248,8 +322,20 @@ export default function ScannerScreen() {
 
     if (!isFocused || hasScannedRef.current || hasScanned) return;
 
+    const expectedScanSessionId =
+      useScannerStore.getState().scanSessionId + 1;
+    const scanRequestId = createScanRequestId(expectedScanSessionId);
     const barcodeType = event?.type;
+    logScanTiming(scanRequestId, "barcode_detected", {
+      detectionSource: "camera",
+      rawBarcode: event?.data,
+      barcodeType,
+    });
     const scannedBarcode = normalizeBarcode(event?.data, barcodeType);
+    logScanTiming(scanRequestId, "barcode_normalized", {
+      barcode: scannedBarcode,
+      barcodeType,
+    });
 
     if (!isValidBarcode(scannedBarcode, barcodeType)) {
       return;
@@ -257,33 +343,35 @@ export default function ScannerScreen() {
 
     hasScannedRef.current = true;
     setHasScanned(true);
-    await processBarcode(scannedBarcode, barcodeType);
+    await processBarcode(scannedBarcode, barcodeType, { scanRequestId });
 
     const nextScanState = useScannerStore.getState();
     const nextScanSessionId = nextScanState.scanSessionId;
 
-    if (!Number.isFinite(nextScanSessionId) || nextScanSessionId <= 0) {
-      return;
-    }
-
     if (
-      nextScanState.status === "not_found" ||
-      nextScanState.status === "error"
+      nextScanSessionId !== expectedScanSessionId ||
+      !["success", "no_ingredients"].includes(nextScanState.status)
     ) {
       return;
     }
 
+    const navigationDescriptor = buildScanNavigationDescriptor(
+      nextScanState,
+      scannerOrigin,
+    );
+    saveUsableScanHistory({
+      scanState: nextScanState,
+      expectedScanSessionId,
+      navigationDescriptor,
+    }).catch((error) => {
+      console.error("Failed to save scan history", error);
+    });
+    logScanTiming(scanRequestId, "navigation_started", {
+      pathname: navigationDescriptor.pathname,
+    });
     router.push({
-      pathname: "/modal/supplement-info",
-      params: {
-        source: "scanned",
-        origin: scannerOrigin,
-        scanSessionId: String(nextScanSessionId),
-        name:
-          nextScanState.product?.productName ||
-          nextScanState.product?.name ||
-          "Scanned supplement",
-      },
+      pathname: navigationDescriptor.pathname,
+      params: navigationDescriptor.params,
     });
   };
 
