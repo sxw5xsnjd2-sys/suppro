@@ -11,12 +11,21 @@ import {
   Share,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Reanimated, {
+  Easing as ReanimatedEasing,
+  ReduceMotion,
+  runOnJS,
+  useAnimatedProps,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import Svg, {
   Circle,
   Defs,
@@ -41,6 +50,10 @@ import {
   persistScanResultHistoryOnce,
 } from "@/features/scanner/resultHydration";
 import { logScanTiming } from "@/features/scanner/scanTiming";
+import {
+  buildScoreAnimationKey,
+  getScoreAnimationDecision,
+} from "@/features/scanner/scoreAnimation";
 import { useScannerStore } from "@/features/scanner/store";
 import { useSearchResolutionStore } from "@/features/search/resolutionStore";
 import {
@@ -192,6 +205,17 @@ const EVIDENCE_GAUGE_PATH = `M ${
 } ${EVIDENCE_GAUGE_CENTER_Y} A ${EVIDENCE_GAUGE_RADIUS} ${EVIDENCE_GAUGE_RADIUS} 0 0 1 ${
   EVIDENCE_GAUGE_CENTER_X + EVIDENCE_GAUGE_RADIUS
 } ${EVIDENCE_GAUGE_CENTER_Y}`;
+const ReanimatedGaugePath = Reanimated.createAnimatedComponent(Path);
+const ReanimatedGaugeCircle = Reanimated.createAnimatedComponent(Circle);
+const ReanimatedScoreTextInput =
+  Reanimated.createAnimatedComponent(TextInput);
+
+function logScoreAnimationCompleted(scanRequestId, animationKey, score) {
+  logScanTiming(scanRequestId, "score_animation_completed", {
+    animationKey,
+    score,
+  });
+}
 
 function normalizeParam(value) {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -378,17 +402,57 @@ function ReferenceRow({ reference, onPress }) {
   );
 }
 
-function EvidenceRatingGauge({ value, toneScore }) {
+function AnimatedScoreValue({ progressValue, score, style }) {
+  const finalScore = Math.round(clampEvidenceScore(score));
+  const animatedProps = useAnimatedProps(() => {
+    const scoreText = `${Math.round(finalScore * progressValue.value)}/100`;
+
+    return {
+      text: scoreText,
+      defaultValue: scoreText,
+    };
+  }, [finalScore]);
+
+  return (
+    <ReanimatedScoreTextInput
+      accessibilityLabel={`Overall score ${finalScore} out of 100`}
+      animatedProps={animatedProps}
+      caretHidden
+      defaultValue="0/100"
+      editable={false}
+      pointerEvents="none"
+      style={style}
+      underlineColorAndroid="transparent"
+    />
+  );
+}
+
+function EvidenceRatingGauge({ progressValue, toneScore }) {
   const hasRating = Number.isFinite(toneScore);
-  const displayScore = clampEvidenceScore(value);
-  const progress = hasRating ? displayScore / 100 : 0;
+  const finalScore = Math.round(clampEvidenceScore(toneScore));
   const palette = getEvidenceGaugePalette(toneScore);
-  const dashOffset = EVIDENCE_GAUGE_LENGTH * (1 - progress);
-  const theta = Math.PI - Math.PI * progress;
-  const indicatorX =
-    EVIDENCE_GAUGE_CENTER_X + EVIDENCE_GAUGE_RADIUS * Math.cos(theta);
-  const indicatorY =
-    EVIDENCE_GAUGE_CENTER_Y - EVIDENCE_GAUGE_RADIUS * Math.sin(theta);
+  const progressPathProps = useAnimatedProps(() => {
+    const gaugeProgress =
+      (finalScore / 100) * Math.max(0, Math.min(1, progressValue.value));
+
+    return {
+      strokeDashoffset: EVIDENCE_GAUGE_LENGTH * (1 - gaugeProgress),
+    };
+  }, [finalScore]);
+  const markerProps = useAnimatedProps(() => {
+    const gaugeProgress =
+      (finalScore / 100) * Math.max(0, Math.min(1, progressValue.value));
+    const theta = Math.PI - Math.PI * gaugeProgress;
+
+    return {
+      cx:
+        EVIDENCE_GAUGE_CENTER_X +
+        EVIDENCE_GAUGE_RADIUS * Math.cos(theta),
+      cy:
+        EVIDENCE_GAUGE_CENTER_Y -
+        EVIDENCE_GAUGE_RADIUS * Math.sin(theta),
+    };
+  }, [finalScore]);
 
   return (
     <View style={styles.gaugeWrap}>
@@ -420,21 +484,20 @@ function EvidenceRatingGauge({ value, toneScore }) {
           strokeLinecap="round"
         />
 
-        <Path
+        <ReanimatedGaugePath
+          animatedProps={progressPathProps}
           d={EVIDENCE_GAUGE_PATH}
           fill="none"
           stroke="url(#supplementGaugeGradient)"
           strokeWidth={EVIDENCE_GAUGE_STROKE_WIDTH}
           strokeLinecap="round"
           strokeDasharray={`${EVIDENCE_GAUGE_LENGTH} ${EVIDENCE_GAUGE_LENGTH}`}
-          strokeDashoffset={dashOffset}
         />
 
         {hasRating ? (
           <G>
-            <Circle
-              cx={indicatorX}
-              cy={indicatorY}
+            <ReanimatedGaugeCircle
+              animatedProps={markerProps}
               r={EVIDENCE_GAUGE_MARKER_RADIUS}
               fill={palette.progressColor}
             />
@@ -446,15 +509,23 @@ function EvidenceRatingGauge({ value, toneScore }) {
         <Text style={[styles.gaugeEyebrow, { color: palette.textColor }]}>
           Overall score
         </Text>
-        <Text
-          style={[
-            styles.gaugeValue,
-            !hasRating && styles.gaugeValueUnavailable,
-            { color: palette.textColor },
-          ]}
-        >
-          {hasRating ? `${displayScore}/100` : "Not rated"}
-        </Text>
+        {hasRating ? (
+          <AnimatedScoreValue
+            progressValue={progressValue}
+            score={toneScore}
+            style={[styles.gaugeValue, { color: palette.textColor }]}
+          />
+        ) : (
+          <Text
+            style={[
+              styles.gaugeValue,
+              styles.gaugeValueUnavailable,
+              { color: palette.textColor },
+            ]}
+          >
+            Not rated
+          </Text>
+        )}
       </View>
     </View>
   );
@@ -538,31 +609,41 @@ function EvidenceSnippetCard({ text }) {
   );
 }
 
-function EvidenceScorePill({ value, toneScore }) {
+function EvidenceScorePill({ progressValue, toneScore }) {
   const hasRating = Number.isFinite(toneScore);
-  const displayScore = clampEvidenceScore(value);
   const palette = getEvidenceGaugePalette(toneScore);
 
   return (
     <View style={styles.evidenceScorePill}>
       <Text style={styles.evidenceScoreLabel}>Evidence score</Text>
-      <Text
-        style={[
-          styles.evidenceScoreValue,
-          !hasRating && styles.evidenceScoreValueUnavailable,
-          { color: palette.textColor },
-        ]}
-      >
-        {hasRating ? `${displayScore}/100` : "Not rated"}
-      </Text>
+      {hasRating ? (
+        <AnimatedScoreValue
+          progressValue={progressValue}
+          score={toneScore}
+          style={[styles.evidenceScoreValue, { color: palette.textColor }]}
+        />
+      ) : (
+        <Text
+          style={[
+            styles.evidenceScoreValue,
+            styles.evidenceScoreValueUnavailable,
+            { color: palette.textColor },
+          ]}
+        >
+          Not rated
+        </Text>
+      )}
     </View>
   );
 }
 
-function ActiveIngredientSummaryHeader({ value, toneScore }) {
+function ActiveIngredientSummaryHeader({ progressValue, toneScore }) {
   return (
     <View style={styles.activeIngredientSummaryHeader}>
-      <EvidenceScorePill value={value} toneScore={toneScore} />
+      <EvidenceScorePill
+        progressValue={progressValue}
+        toneScore={toneScore}
+      />
     </View>
   );
 }
@@ -1127,7 +1208,6 @@ export default function SupplementInfoModal() {
 
   const [data, setData] = useState(null);
   const [loaded, setLoaded] = useState(false);
-  const [displayedRating, setDisplayedRating] = useState(0);
   const [benefitRankings, setBenefitRankings] = useState({});
   const [openBenefitId, setOpenBenefitId] = useState(null);
   const [showAllBenefits, setShowAllBenefits] = useState(false);
@@ -1148,6 +1228,8 @@ export default function SupplementInfoModal() {
   const imageRequestKeyRef = useRef("");
   const activeHydrationKeyRef = useRef("");
   const displayedHydrationKeyRef = useRef("");
+  const scoreAnimationKeyRef = useRef("");
+  const scoreAnimationProgress = useSharedValue(0);
   const [headerAreaHeight, setHeaderAreaHeight] = useState(0);
   const collapsedHeaderAnimation = useRef(new Animated.Value(0)).current;
   const isCollapsedRef = useRef(false);
@@ -1172,6 +1254,12 @@ export default function SupplementInfoModal() {
   const effectiveScanSessionId = Number.isFinite(requestedScanSessionId)
     ? requestedScanSessionId
     : scannerScanSessionId;
+  const scanProductId = normalizeParam(scannerProduct?.productId);
+  const liveHydrationKey = buildScanResultHydrationKey({
+    scanRequestId: requestedScanRequestId,
+    productId: scanProductId,
+    scanSessionId: effectiveScanSessionId,
+  });
   const isCurrentScanSession =
     Number.isFinite(effectiveScanSessionId) &&
     effectiveScanSessionId === scannerScanSessionId;
@@ -1225,15 +1313,20 @@ export default function SupplementInfoModal() {
       }
     }
 
-    setLoaded(false);
-    setOpenBenefitId(null);
-    setShowAllBenefits(false);
-    setShowAllIngredients(false);
-    setExpandedDetailItems({});
-    setVerifiedInfoVisible(false);
-    setOpenDoseTooltipKey(null);
-    setIsBenefitScoreTooltipOpen(false);
-    setReferencesExpanded(true);
+    const isRepeatedLiveHydration =
+      isLiveScanSource &&
+      displayedHydrationKeyRef.current === liveHydrationKey;
+    if (!isRepeatedLiveHydration) {
+      setLoaded(false);
+      setOpenBenefitId(null);
+      setShowAllBenefits(false);
+      setShowAllIngredients(false);
+      setExpandedDetailItems({});
+      setVerifiedInfoVisible(false);
+      setOpenDoseTooltipKey(null);
+      setIsBenefitScoreTooltipOpen(false);
+      setReferencesExpanded(true);
+    }
 
     if (isSearchResolutionSource) {
       setData(searchResolutionPayload);
@@ -1245,12 +1338,7 @@ export default function SupplementInfoModal() {
 
     if (isLiveScanSource) {
       const isActiveScan = isCurrentScanSession && isActiveScanStatus;
-      const scanProductId = normalizeParam(scannerProduct?.productId);
-      const hydrationKey = buildScanResultHydrationKey({
-        scanRequestId: requestedScanRequestId,
-        productId: scanProductId,
-        scanSessionId: effectiveScanSessionId,
-      });
+      const hydrationKey = liveHydrationKey;
       activeHydrationKeyRef.current = hydrationKey;
 
       if (!isActiveScan) {
@@ -1444,9 +1532,11 @@ export default function SupplementInfoModal() {
     isActiveScanStatus,
     isCurrentScanSession,
     isSearchResolutionSource,
+    liveHydrationKey,
     paramName,
     requestedScanSessionId,
     requestedScanRequestId,
+    scanProductId,
     searchResolutionPayload,
     scannerError,
     scannerMatchedIngredients,
@@ -1505,35 +1595,69 @@ export default function SupplementInfoModal() {
   }, [data?.supplement_benefits, hasActiveAccess, useProductSupportBar]);
 
   const rating = data?.evidence_score;
+  const scoreProductId = normalizeParam(
+    data?.productId ?? data?.product_id ?? data?.id ?? id,
+  );
+  const scoreAnimationKey = buildScoreAnimationKey({
+    hydrationKey: isLiveScanSource ? liveHydrationKey : "",
+    source,
+    productId: scoreProductId,
+  });
 
   useEffect(() => {
-    if (!loaded || !Number.isFinite(rating)) {
-      setDisplayedRating(0);
+    const decision = getScoreAnimationDecision({
+      animationKey: scoreAnimationKey,
+      previousAnimationKey: scoreAnimationKeyRef.current,
+      score: rating,
+      loaded,
+    });
+    if (decision === "wait") {
       return;
     }
 
-    let frameId;
-    const startedAt = Date.now();
+    logScanTiming(requestedScanRequestId, "score_became_ready", {
+      animationKey: scoreAnimationKey,
+      score: rating,
+    });
+    if (decision === "ignore") {
+      logScanTiming(
+        requestedScanRequestId,
+        "score_animation_duplicate_start_ignored",
+        { animationKey: scoreAnimationKey, score: rating },
+      );
+      return;
+    }
 
-    const tick = () => {
-      const elapsed = Date.now() - startedAt;
-      const progress = Math.min(elapsed / SCORE_ANIMATION_DURATION_MS, 1);
-      const easedProgress = 1 - Math.pow(1 - progress, 3);
-      const nextValue = Math.round(rating * easedProgress);
-
-      setDisplayedRating(nextValue);
-
-      if (progress < 1) {
-        frameId = requestAnimationFrame(tick);
-      }
-    };
-
-    frameId = requestAnimationFrame(tick);
-
-    return () => {
-      if (frameId) cancelAnimationFrame(frameId);
-    };
-  }, [loaded, rating]);
+    scoreAnimationKeyRef.current = scoreAnimationKey;
+    scoreAnimationProgress.value = 0;
+    logScanTiming(requestedScanRequestId, "score_animation_started", {
+      animationKey: scoreAnimationKey,
+      score: rating,
+    });
+    scoreAnimationProgress.value = withTiming(
+      1,
+      {
+        duration: SCORE_ANIMATION_DURATION_MS,
+        easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+        reduceMotion: ReduceMotion.System,
+      },
+      (finished) => {
+        if (finished) {
+          runOnJS(logScoreAnimationCompleted)(
+            requestedScanRequestId,
+            scoreAnimationKey,
+            rating,
+          );
+        }
+      },
+    );
+  }, [
+    loaded,
+    rating,
+    requestedScanRequestId,
+    scoreAnimationKey,
+    scoreAnimationProgress,
+  ]);
 
   const benefits = useMemo(() => {
     const nextBenefits = [...(data?.supplement_benefits ?? [])];
@@ -2494,12 +2618,12 @@ export default function SupplementInfoModal() {
 
               {isActiveIngredientDetail ? (
                 <ActiveIngredientSummaryHeader
-                  value={displayedRating}
+                  progressValue={scoreAnimationProgress}
                   toneScore={rating}
                 />
               ) : !isProductNotRecognizedFailure ? (
                 <EvidenceRatingGauge
-                  value={displayedRating}
+                  progressValue={scoreAnimationProgress}
                   toneScore={rating}
                 />
               ) : null}
@@ -3521,6 +3645,8 @@ const styles = StyleSheet.create({
   },
   gaugeValue: {
     marginTop: 10,
+    padding: 0,
+    width: 160,
     fontSize: 32,
     lineHeight: 34,
     fontFamily: typography.fontFamily.headingBlack,
@@ -3548,6 +3674,8 @@ const styles = StyleSheet.create({
   },
   evidenceScoreValue: {
     marginTop: 3,
+    padding: 0,
+    width: 160,
     fontSize: 36,
     lineHeight: 39,
     fontFamily: typography.fontFamily.headingBlack,
