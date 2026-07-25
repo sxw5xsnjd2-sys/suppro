@@ -48,7 +48,9 @@ entrypoint = "./functions/research-pending-supplements/index.ts"
 
 [functions.enrich-product-image]
 enabled = true
-verify_jwt = true
+# Authenticated users and trusted internal workers are both validated inside
+# the function, including support for current opaque server credentials.
+verify_jwt = false
 import_map = "./functions/enrich-product-image/deno.json"
 entrypoint = "./functions/enrich-product-image/index.ts"
 
@@ -82,3 +84,9 @@ enabled = true
 # can support both legacy JWT service keys and current secret keys.
 verify_jwt = false
 entrypoint = "./functions/refresh-product-scores/index.ts"
+
+[functions.refresh-product-images]
+enabled = true
+# This internal worker performs its own service-role/API-key validation.
+verify_jwt = false
+entrypoint = "./functions/refresh-product-images/index.ts"

@@ -7,6 +7,10 @@ import {
 import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
 import {
   buildEnrichProductImageResponse,
+  getPersistableProductThumbnailUrl,
+  getProductImageCooldownDecision,
+  PRODUCT_IMAGE_FAILED_COOLDOWN_SECONDS,
+  PRODUCT_IMAGE_SKIPPED_COOLDOWN_SECONDS,
   validateEnrichProductImageRequest,
 } from "../_shared/enrich-product-image-policy.js";
 import { isTrustedEdgeFunctionRequest } from "../_shared/auth-policy.js";
@@ -939,9 +943,9 @@ function scoreImageResult(
     formMismatch,
     placeholderLike: hasPlaceholderSignal,
     query,
-    imageUrl: original || thumbnail,
+    imageUrl: original || getPersistableProductThumbnailUrl(thumbnail),
     originalUrl: original || null,
-    thumbnailUrl: thumbnail || null,
+    thumbnailUrl: getPersistableProductThumbnailUrl(thumbnail),
     sourceUrl: trimString(result.link) || null,
   };
 }
@@ -1078,27 +1082,31 @@ Deno.serve(async (req) => {
     }
 
     const authHeader = req.headers.get("Authorization");
-    const authenticatedUser = await authenticateSupabaseUser({
-      adminSupabase,
-      authHeader,
-    });
-    if (!authenticatedUser.ok) {
-      return jsonResponse(authenticatedUser.body, authenticatedUser.status);
-    }
-
-    const entitlementAccess = await assertActiveRevenueCatEntitlement({
-      userId: authenticatedUser.user.id,
-    });
-    if (!entitlementAccess.ok) {
-      return jsonResponse(entitlementAccess.body, entitlementAccess.status);
-    }
-
     const isTrustedRequest = isTrustedEdgeFunctionRequest({
       authorizationHeader: authHeader ?? "",
       apiKeyHeader: req.headers.get("apikey") ?? "",
       serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
       internalServiceRoleKey: Deno.env.get("INTERNAL_SERVICE_ROLE_KEY") ?? "",
     });
+    let authenticatedUserId = "";
+    if (!isTrustedRequest) {
+      const authenticatedUser = await authenticateSupabaseUser({
+        adminSupabase,
+        authHeader,
+      });
+      if (!authenticatedUser.ok) {
+        return jsonResponse(authenticatedUser.body, authenticatedUser.status);
+      }
+
+      const entitlementAccess = await assertActiveRevenueCatEntitlement({
+        userId: authenticatedUser.user.id,
+      });
+      if (!entitlementAccess.ok) {
+        return jsonResponse(entitlementAccess.body, entitlementAccess.status);
+      }
+      authenticatedUserId = authenticatedUser.user.id;
+    }
+
     const validatedRequest = validateEnrichProductImageRequest(await req.text(), {
       isTrusted: isTrustedRequest,
     });
@@ -1106,8 +1114,58 @@ Deno.serve(async (req) => {
       return jsonResponse(validatedRequest.body, validatedRequest.status);
     }
 
-    const { force, deepSearch, productId, requestProduct } =
+    const { force, deepSearch, productId, productIds, requestProduct } =
       validatedRequest.value;
+
+    if (productIds.length > 0) {
+      if (!isTrustedRequest) {
+        const quotaAccess = await enforceEdgeFunctionQuota({
+          adminSupabase,
+          policyKey: "enrich-product-image",
+          userId: authenticatedUserId,
+        });
+        if (quotaAccess.ok === false) {
+          return jsonResponse(
+            quotaAccess.body,
+            quotaAccess.status,
+            quotaAccess.headers,
+          );
+        }
+      }
+
+      const { data: enqueueRows, error: enqueueError } = await adminSupabase.rpc(
+        "enqueue_product_image_refreshes",
+        {
+          p_product_ids: productIds,
+          p_failed_cooldown_seconds: PRODUCT_IMAGE_FAILED_COOLDOWN_SECONDS,
+          p_skipped_cooldown_seconds: PRODUCT_IMAGE_SKIPPED_COOLDOWN_SECONDS,
+        },
+      );
+      if (enqueueError) {
+        logEdgeDiagnostic("error", "[enrich-product-image] batch enqueue failed", {
+          message: enqueueError.message,
+        });
+        return jsonResponse(
+          { error: "Product image enqueue failed.", code: "enqueue_failed" },
+          500,
+        );
+      }
+
+      const results = Array.isArray(enqueueRows) ? enqueueRows : [];
+      return jsonResponse({
+        ok: true,
+        status: "queued",
+        productIds,
+        queuedCount: results.filter(
+          (row) => row?.enqueue_status === "queued",
+        ).length,
+        deduplicatedCount: results.filter(
+          (row) => row?.enqueue_status === "deduplicated",
+        ).length,
+        results,
+      });
+    }
+
     const product = productId ? await fetchProduct(productId) : requestProduct;
     const effectiveProductId = normalizeProductId(
       product?.product_id ?? product?.id ?? productId
@@ -1165,6 +1223,23 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (!force) {
+      const cooldown = getProductImageCooldownDecision(product);
+      if (cooldown) {
+        return jsonResponse(
+          buildEnrichProductImageResponse({
+            status: cooldown.status,
+            productId: effectiveProductId,
+            confidence: Number(product.image_confidence) || null,
+            query: trimString(product.image_query) || null,
+            reason:
+              trimString(product.image_error) ||
+              `Image lookup cooling down for ${cooldown.retryAfterSeconds} seconds.`,
+          }),
+        );
+      }
+    }
+
     if (!isRealSupplementProduct(product)) {
       await markSkipped(effectiveProductId, "Not a supplement product");
       return jsonResponse(
@@ -1218,17 +1293,19 @@ Deno.serve(async (req) => {
         500
       );
     }
-    const quotaAccess = await enforceEdgeFunctionQuota({
-      adminSupabase,
-      policyKey: "enrich-product-image",
-      userId: authenticatedUser.user.id,
-    });
-    if (!quotaAccess.ok) {
-      return jsonResponse(
-        quotaAccess.body,
-        quotaAccess.status,
-        quotaAccess.headers
-      );
+    if (!isTrustedRequest) {
+      const quotaAccess = await enforceEdgeFunctionQuota({
+        adminSupabase,
+        policyKey: "enrich-product-image",
+        userId: authenticatedUserId,
+      });
+      if (quotaAccess.ok === false) {
+        return jsonResponse(
+          quotaAccess.body,
+          quotaAccess.status,
+          quotaAccess.headers,
+        );
+      }
     }
 
     const queryPlan = buildQueryPlan(product, deepSearch);

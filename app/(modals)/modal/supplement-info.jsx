@@ -14,7 +14,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -2456,7 +2456,12 @@ export default function SupplementInfoModal() {
             {!isProductNotRecognizedFailure ? (
               <View style={styles.titleRow}>
                 {shouldShowProductImage ? (
-                  <View style={styles.productImageFrame}>
+                  <View
+                    style={[
+                      styles.productImageFrame,
+                      !productImageUrl && styles.productImagePlaceholder,
+                    ]}
+                  >
                     {productImageUrl ? (
                       <Image
                         source={{ uri: productImageUrl }}
@@ -2464,10 +2469,11 @@ export default function SupplementInfoModal() {
                         resizeMode="contain"
                       />
                     ) : (
-                      <Ionicons
-                        name="cube-outline"
-                        size={24}
-                        color={appTheme.colors.textSecondary}
+                      <MaterialCommunityIcons
+                        name="pill"
+                        size={25}
+                        color={appTheme.colors.textMuted}
+                        style={styles.productImagePlaceholderIcon}
                       />
                     )}
                   </View>
@@ -3381,6 +3387,13 @@ const styles = StyleSheet.create({
   productImage: {
     width: 54,
     height: 54,
+  },
+  productImagePlaceholder: {
+    backgroundColor: appTheme.colors.surfaceMuted,
+    borderWidth: 0,
+  },
+  productImagePlaceholderIcon: {
+    opacity: 0.48,
   },
   titleCopy: {
     flex: 1,

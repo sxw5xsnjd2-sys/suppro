@@ -12,6 +12,10 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function uniqueStrings(values) {
+  return [...new Set(values.map(trimString).filter(Boolean))];
+}
+
 function finiteNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const parsed = typeof value === "string" && value.trim() ? Number(value) : NaN;
@@ -54,8 +58,20 @@ export function normalizeProductRankingRow(row) {
       trimString(row?.normalized_product_name || row?.normalizedProductName) ||
       productName.toLowerCase(),
     productBrand: trimString(row?.product_brand) || null,
+    productImageThumbnailUrl:
+      trimString(
+        row?.image_thumbnail_url || row?.productImageThumbnailUrl,
+      ) || null,
     productImageUrl:
-      trimString(row?.product_image_url || row?.productImageUrl) || null,
+      trimString(
+        row?.image_url || row?.product_image_url || row?.productImageUrl,
+      ) || null,
+    productImageStatus:
+      trimString(row?.image_status || row?.productImageStatus) || null,
+    productImageLastCheckedAt:
+      trimString(
+        row?.image_last_checked_at || row?.productImageLastCheckedAt,
+      ) || null,
     verificationStatus:
       trimString(row?.verification_status || row?.verificationStatus) || null,
     verificationPrecedence: finiteNumber(
@@ -171,4 +187,143 @@ export function appendProductRankingPage(currentItems, nextItems) {
     seenProductIds.add(productId);
     return [item];
   });
+}
+
+export function getProductRankingImageCandidates(item) {
+  return uniqueStrings([
+    item?.productImageThumbnailUrl,
+    item?.productImageUrl,
+  ]);
+}
+
+export function getNextProductRankingImageUrl(item, failedImageUrls = []) {
+  const failed = new Set(
+    (Array.isArray(failedImageUrls) ? failedImageUrls : [])
+      .map(trimString)
+      .filter(Boolean),
+  );
+  return (
+    getProductRankingImageCandidates(item).find((url) => !failed.has(url)) ??
+    null
+  );
+}
+
+export function mergeRefreshedProductRankingPage(
+  currentItems,
+  refreshedItems,
+) {
+  const current = Array.isArray(currentItems) ? currentItems : [];
+  const refreshed = Array.isArray(refreshedItems) ? refreshedItems : [];
+  const currentByProductId = new Map(
+    current.map((item) => [trimString(item?.productId), item]),
+  );
+  const refreshedProductIds = new Set();
+
+  const nextFirstPage = refreshed.map((item) => {
+    const productId = trimString(item?.productId);
+    refreshedProductIds.add(productId);
+    const cached = currentByProductId.get(productId);
+    if (!cached) return item;
+
+    const productImageThumbnailUrl =
+      trimString(item?.productImageThumbnailUrl) ||
+      trimString(cached?.productImageThumbnailUrl) ||
+      null;
+    const productImageUrl =
+      trimString(item?.productImageUrl) ||
+      trimString(cached?.productImageUrl) ||
+      null;
+    const productImageStatus =
+      trimString(item?.productImageStatus) ||
+      trimString(cached?.productImageStatus) ||
+      null;
+    const productImageLastCheckedAt =
+      trimString(item?.productImageLastCheckedAt) ||
+      trimString(cached?.productImageLastCheckedAt) ||
+      null;
+    if (
+      productImageThumbnailUrl === item.productImageThumbnailUrl &&
+      productImageUrl === item.productImageUrl &&
+      productImageStatus === item.productImageStatus &&
+      productImageLastCheckedAt === item.productImageLastCheckedAt
+    ) {
+      return item;
+    }
+    return {
+      ...item,
+      productImageThumbnailUrl,
+      productImageUrl,
+      productImageStatus,
+      productImageLastCheckedAt,
+    };
+  });
+
+  return [
+    ...nextFirstPage,
+    ...current.filter(
+      (item) => !refreshedProductIds.has(trimString(item?.productId)),
+    ),
+  ];
+}
+
+export function reconcileProductRankingImages(currentItems, imageRows) {
+  const imageStateByProductId = new Map();
+
+  for (const row of Array.isArray(imageRows) ? imageRows : []) {
+    const productId = trimString(row?.product_id || row?.productId);
+    if (!productId) continue;
+
+    imageStateByProductId.set(productId, {
+      productImageThumbnailUrl:
+        trimString(row?.image_thumbnail_url || row?.imageThumbnailUrl) || null,
+      productImageUrl:
+        trimString(row?.image_url || row?.imageUrl) || null,
+      productImageStatus:
+        trimString(row?.image_status || row?.imageStatus) || null,
+      productImageLastCheckedAt:
+        trimString(row?.image_last_checked_at || row?.imageLastCheckedAt) ||
+        null,
+    });
+  }
+
+  let changed = false;
+  const nextItems = (Array.isArray(currentItems) ? currentItems : []).map(
+    (item) => {
+      const productId = trimString(item?.productId);
+      if (!productId || !imageStateByProductId.has(productId)) return item;
+
+      const persisted = imageStateByProductId.get(productId);
+      const productImageThumbnailUrl =
+        persisted.productImageThumbnailUrl ||
+        item.productImageThumbnailUrl ||
+        null;
+      const productImageUrl =
+        persisted.productImageUrl || item.productImageUrl || null;
+      const productImageStatus =
+        persisted.productImageStatus || item.productImageStatus || null;
+      const productImageLastCheckedAt =
+        persisted.productImageLastCheckedAt ||
+        item.productImageLastCheckedAt ||
+        null;
+      if (
+        item.productImageThumbnailUrl === productImageThumbnailUrl &&
+        item.productImageUrl === productImageUrl &&
+        item.productImageStatus === productImageStatus &&
+        item.productImageLastCheckedAt === productImageLastCheckedAt
+      ) {
+        return item;
+      }
+
+      changed = true;
+      return {
+        ...item,
+        productImageThumbnailUrl,
+        productImageUrl,
+        productImageStatus,
+        productImageLastCheckedAt,
+      };
+    },
+  );
+
+  return changed ? nextItems : currentItems;
 }

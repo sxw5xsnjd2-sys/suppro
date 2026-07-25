@@ -1,7 +1,14 @@
-import React, { useEffect, useState } from "react";
-import { Image, StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { StyleSheet, Text, View } from "react-native";
+import { Image } from "expo-image";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import {
   AppButton,
@@ -21,12 +28,27 @@ import { formatProductBenefitScoreText } from "@/features/supplements/productBen
 import {
   appendProductRankingPage,
   BENEFIT_RANKING_ENTITY_TYPES,
+  getNextProductRankingImageUrl,
+  mergeRefreshedProductRankingPage,
+  reconcileProductRankingImages,
   resolveBenefitRankingEntityType,
 } from "@/features/supplements/productRankingContract";
+import {
+  getCachedProductRanking,
+  setCachedProductRanking,
+  updateCachedProductRankingItems,
+} from "@/features/supplements/productRankingSessionCache";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { appTheme, spacing, typography } from "@/theme";
 import { getProductBenefitRankingPage } from "@src/data/getProductBenefitRankings";
+import {
+  enqueueMissingProductImages,
+  getMissingProductImageIds,
+  getPersistedProductImages,
+  PRODUCT_IMAGE_POLL_DELAYS_MS,
+  recordPersistedProductImageStates,
+} from "@src/lib/productImages";
 import { supabase } from "@src/lib/supabase";
 
 function normalizeParam(value) {
@@ -62,13 +84,19 @@ function getProductRankingFailureCopy(reason) {
   };
 }
 
-function ProductRankingCard({ item, requireSubscriptionAccess }) {
-  const [imageFailed, setImageFailed] = useState(false);
+const ProductRankingCard = React.memo(function ProductRankingCard({
+  item,
+  requireSubscriptionAccess,
+}) {
+  const [failedImageUrls, setFailedImageUrls] = useState([]);
   const scoreText = formatProductBenefitScoreText(item.productBenefitScore);
   const benefitScoreText = [scoreText, item.benefitLabel]
     .filter(Boolean)
     .join(" ");
-  const productImageUrl = imageFailed ? null : item.productImageUrl;
+  const productImageUrl = getNextProductRankingImageUrl(
+    item,
+    failedImageUrls,
+  );
 
   return (
     <PrimaryCard
@@ -94,7 +122,10 @@ function ProductRankingCard({ item, requireSubscriptionAccess }) {
           accessibilityLabel={
             productImageUrl ? undefined : "Product image unavailable"
           }
-          style={styles.productImageFrame}
+          style={[
+            styles.productImageFrame,
+            !productImageUrl && styles.productImagePlaceholder,
+          ]}
         >
           {productImageUrl ? (
             <Image
@@ -102,14 +133,23 @@ function ProductRankingCard({ item, requireSubscriptionAccess }) {
               accessibilityLabel={`${item.productName} product image`}
               source={{ uri: productImageUrl }}
               style={styles.productImage}
-              resizeMode="contain"
-              onError={() => setImageFailed(true)}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              recyclingKey={`${item.productId}:${productImageUrl}`}
+              onError={() =>
+                setFailedImageUrls((current) =>
+                  current.includes(productImageUrl)
+                    ? current
+                    : [...current, productImageUrl],
+                )
+              }
             />
           ) : (
-            <Ionicons
-              name="cube-outline"
-              size={22}
-              color={appTheme.colors.textSecondary}
+            <MaterialCommunityIcons
+              name="pill"
+              size={25}
+              color={appTheme.colors.textMuted}
+              style={styles.productImagePlaceholderIcon}
             />
           )}
         </View>
@@ -131,7 +171,7 @@ function ProductRankingCard({ item, requireSubscriptionAccess }) {
       </View>
     </PrimaryCard>
   );
-}
+});
 
 export default function BenefitRankingScreen() {
   const {
@@ -147,19 +187,135 @@ export default function BenefitRankingScreen() {
   );
   const isProductRanking =
     rankingEntity === BENEFIT_RANKING_ENTITY_TYPES.PRODUCT;
+  const initialProductRankingCache = getCachedProductRanking(benefitLabel);
   const [rankedSupplements, setRankedSupplements] = useState([]);
-  const [rankedProducts, setRankedProducts] = useState([]);
-  const [productCursor, setProductCursor] = useState(null);
-  const [productHasMore, setProductHasMore] = useState(false);
+  const [rankedProducts, setRankedProducts] = useState(
+    () => initialProductRankingCache?.items ?? [],
+  );
+  const rankedProductsRef = useRef(initialProductRankingCache?.items ?? []);
+  const [productCursor, setProductCursor] = useState(
+    () => initialProductRankingCache?.cursor ?? null,
+  );
+  const [productHasMore, setProductHasMore] = useState(
+    () => initialProductRankingCache?.hasMore ?? false,
+  );
   const [loadingMore, setLoadingMore] = useState(false);
   const [paginationError, setPaginationError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(
+    () => !(isProductRanking && initialProductRankingCache),
+  );
   const [errorMessage, setErrorMessage] = useState("");
   const [productBackendIssue, setProductBackendIssue] = useState(null);
+  const rankedProductIdsKey = useMemo(
+    () => rankedProducts.map((item) => item.productId).join("|"),
+    [rankedProducts],
+  );
   const safeBackAction = resolveBackNavigationAction({
     canGoBack: typeof router.canGoBack === "function" && router.canGoBack(),
     fallbackHref: "/rankings",
   });
+
+  useEffect(() => {
+    rankedProductsRef.current = rankedProducts;
+  }, [rankedProducts]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasActiveAccess || !isProductRanking || !rankedProductIdsKey) {
+        return undefined;
+      }
+
+      const initialMissingProductIds = getMissingProductImageIds(
+        rankedProductsRef.current,
+      );
+      if (!initialMissingProductIds.length) return undefined;
+
+      let active = true;
+      let pollIndex = 0;
+      let pollTimeout;
+      let pollProductIds = [];
+
+      const pollPersistedImages = async () => {
+        if (!active || !pollProductIds.length) return;
+
+        try {
+          const { data: imageRows, error } = await getPersistedProductImages(
+            pollProductIds,
+          );
+          if (!active) return;
+          if (error) {
+            console.error("Failed to refresh ranked product images", error);
+          } else {
+            setRankedProducts((current) => {
+              const next = reconcileProductRankingImages(current, imageRows);
+              rankedProductsRef.current = next;
+              updateCachedProductRankingItems(benefitLabel, next);
+              return next;
+            });
+            pollProductIds = recordPersistedProductImageStates(imageRows);
+          }
+        } catch (error) {
+          if (active) {
+            console.error("Failed to refresh ranked product images", error);
+          }
+        }
+
+        if (
+          active &&
+          pollIndex < PRODUCT_IMAGE_POLL_DELAYS_MS.length &&
+          pollProductIds.length > 0
+        ) {
+          const delay = PRODUCT_IMAGE_POLL_DELAYS_MS[pollIndex];
+          pollIndex += 1;
+          pollTimeout = setTimeout(pollPersistedImages, delay);
+        }
+      };
+
+      enqueueMissingProductImages(initialMissingProductIds).then(
+        async (result) => {
+          if (!active) return;
+          pollProductIds = Array.isArray(result?.pollProductIds)
+            ? result.pollProductIds
+            : [];
+          const immediateReadProductIds = [
+            ...new Set([
+              ...pollProductIds,
+              ...(Array.isArray(result?.resolvedProductIds)
+                ? result.resolvedProductIds
+                : []),
+            ]),
+          ];
+          if (immediateReadProductIds.length) {
+            const { data: imageRows, error } = await getPersistedProductImages(
+              immediateReadProductIds,
+            );
+            if (!active) return;
+            if (!error) {
+              setRankedProducts((current) => {
+                const next = reconcileProductRankingImages(current, imageRows);
+                rankedProductsRef.current = next;
+                updateCachedProductRankingItems(benefitLabel, next);
+                return next;
+              });
+              pollProductIds = recordPersistedProductImageStates(imageRows);
+            }
+          }
+          if (pollProductIds.length) {
+            pollTimeout = setTimeout(
+              pollPersistedImages,
+              PRODUCT_IMAGE_POLL_DELAYS_MS[pollIndex],
+            );
+            pollIndex += 1;
+          }
+        },
+      );
+
+      return () => {
+        active = false;
+        clearTimeout(pollTimeout);
+      };
+    }, [benefitLabel, hasActiveAccess, isProductRanking, rankedProductIdsKey]),
+  );
 
   useEffect(() => {
     if (hasActiveAccess || !isResolved) return;
@@ -234,9 +390,12 @@ export default function BenefitRankingScreen() {
     let active = true;
 
     const loadProductRankings = async () => {
-      setRankedProducts([]);
-      setProductCursor(null);
-      setProductHasMore(false);
+      const cached = getCachedProductRanking(benefitLabel);
+      const cachedItems = cached?.items ?? [];
+      rankedProductsRef.current = cachedItems;
+      setRankedProducts(cachedItems);
+      setProductCursor(cached?.cursor ?? null);
+      setProductHasMore(cached?.hasMore ?? false);
       setPaginationError("");
       setProductBackendIssue(null);
 
@@ -246,23 +405,45 @@ export default function BenefitRankingScreen() {
         return;
       }
 
-      setLoading(true);
+      setLoading(!cached);
       setErrorMessage("");
       const result = await getProductBenefitRankingPage({ benefitLabel });
       if (!active) return;
 
       if (result.status === "unavailable") {
-        const failure = getProductRankingFailureCopy(result.reason);
-        setProductBackendIssue(failure);
-        setErrorMessage(failure.description);
+        if (!cached) {
+          const failure = getProductRankingFailureCopy(result.reason);
+          setProductBackendIssue(failure);
+          setErrorMessage(failure.description);
+        }
       } else if (result.status !== "ready") {
-        const failure = getProductRankingFailureCopy(result.reason);
-        setProductBackendIssue(failure);
-        setErrorMessage(failure.description);
+        if (!cached) {
+          const failure = getProductRankingFailureCopy(result.reason);
+          setProductBackendIssue(failure);
+          setErrorMessage(failure.description);
+        }
       } else {
-        setRankedProducts(result.items);
-        setProductCursor(result.nextCursor);
-        setProductHasMore(result.hasMore);
+        const currentItems = rankedProductsRef.current;
+        const nextItems = mergeRefreshedProductRankingPage(
+          currentItems,
+          result.items,
+        );
+        const preservedCachedTail = nextItems.length > result.items.length;
+        const nextCursor = preservedCachedTail
+          ? cached?.cursor ?? result.nextCursor
+          : result.nextCursor;
+        const nextHasMore = preservedCachedTail
+          ? cached?.hasMore ?? result.hasMore
+          : result.hasMore;
+        rankedProductsRef.current = nextItems;
+        setRankedProducts(nextItems);
+        setProductCursor(nextCursor);
+        setProductHasMore(nextHasMore);
+        setCachedProductRanking(benefitLabel, {
+          items: nextItems,
+          cursor: nextCursor,
+          hasMore: nextHasMore,
+        });
       }
       setLoading(false);
     };
@@ -286,9 +467,16 @@ export default function BenefitRankingScreen() {
       cursor: productCursor,
     });
     if (result.status === "ready") {
-      setRankedProducts((current) =>
-        appendProductRankingPage(current, result.items),
-      );
+      setRankedProducts((current) => {
+        const nextItems = appendProductRankingPage(current, result.items);
+        rankedProductsRef.current = nextItems;
+        setCachedProductRanking(benefitLabel, {
+          items: nextItems,
+          cursor: result.nextCursor,
+          hasMore: result.hasMore,
+        });
+        return nextItems;
+      });
       setProductCursor(result.nextCursor);
       setProductHasMore(result.hasMore);
     } else {
@@ -567,6 +755,13 @@ const styles = StyleSheet.create({
   productImage: {
     width: 52,
     height: 52,
+  },
+  productImagePlaceholder: {
+    backgroundColor: appTheme.colors.surfaceMuted,
+    borderWidth: 0,
+  },
+  productImagePlaceholderIcon: {
+    opacity: 0.48,
   },
   productCopy: {
     flex: 1,

@@ -11,14 +11,11 @@ import {
   Alert,
   BackHandler,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   Image,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -38,12 +35,6 @@ import {
   PRESET_METRICS_BY_KEY,
 } from "@/features/health/metricDefinitions";
 import { IS_APPLE_HEALTH_SUPPORTED_PLATFORM } from "@/features/health/platform";
-import {
-  SUPPLEMENT_SCHEDULE_PRESETS,
-  buildScheduleFromPreset,
-  getSupplementScheduleLabel,
-  normalizeSupplementSchedule,
-} from "@/features/supplements/schedule";
 import { appTheme, typography } from "@/theme";
 import SupproLogo from "@/assets/icons/Supprologo.png";
 import {
@@ -60,8 +51,6 @@ import {
 } from "@src/lib/onboarding";
 import {
   CheckRow,
-  ChipPill,
-  GhostButton,
   GlyphHeart,
   GlyphPerson,
   GlyphPills,
@@ -82,7 +71,6 @@ const STEP_KEYS = [
   "confidence",
   "insightStacks",
   "metrics",
-  "stack",
   "meds",
   "conditions",
   "lifeStage",
@@ -123,6 +111,10 @@ const LEGACY_STEP_INDEX_TO_KEY = [
   "consent",
   "building",
 ];
+
+const RETIRED_STEP_REDIRECTS = {
+  stack: "lifeStage",
+};
 
 const AGE_RANGE_OPTIONS = [
   { value: "18-24", label: "18-24" },
@@ -376,15 +368,6 @@ function getLocalizedAnnualWasteLabel() {
   }
 }
 
-function toISODate(value) {
-  const date = value instanceof Date ? value : null;
-  if (!date || Number.isNaN(date.getTime())) return "";
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -395,33 +378,8 @@ function easeInOutCubic(value) {
     : 1 - Math.pow(-2 * value + 2, 3) / 2;
 }
 
-function createSupplementRow() {
-  const schedule = buildScheduleFromPreset("daily");
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    name: "",
-    dose: "",
-    ...schedule,
-  };
-}
-
 function normalizeArray(value) {
   return Array.isArray(value) ? value : [];
-}
-
-function normalizeSupplementRows(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((row) => row && typeof row === "object")
-    .map((row) => {
-      const schedule = normalizeSupplementSchedule(row);
-      return {
-        id: row.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: String(row.name || ""),
-        dose: String(row.dose || ""),
-        ...schedule,
-      };
-    });
 }
 
 function createInitialAnswers() {
@@ -433,9 +391,6 @@ function createInitialAnswers() {
     confidence: "",
     trackMetrics: [],
     metricInitialValues: {},
-    takingSupplements: "no",
-    supplementRows: [],
-    currentSupplementsSource: "none",
     medications: [],
     conditions: [],
     conditionsText: "",
@@ -510,7 +465,6 @@ function mergeStoredAnswers(base, stored) {
       typeof storedAnswers.metricInitialValues === "object"
         ? storedAnswers.metricInitialValues
         : {},
-    supplementRows: normalizeSupplementRows(storedAnswers.supplementRows),
     medications: [],
     conditions: [],
     conditionsText: "",
@@ -623,9 +577,10 @@ function getVisibleStepKeys(answers) {
 
 function coerceVisibleStepKey(stepKey, visibleStepKeys) {
   if (stepKey === BUILDING_STEP_KEY) return stepKey;
-  if (visibleStepKeys.includes(stepKey)) return stepKey;
+  const activeStepKey = RETIRED_STEP_REDIRECTS[stepKey] ?? stepKey;
+  if (visibleStepKeys.includes(activeStepKey)) return activeStepKey;
 
-  const sourceIndex = STEP_KEYS.indexOf(stepKey);
+  const sourceIndex = STEP_KEYS.indexOf(activeStepKey);
   if (sourceIndex < 0) return visibleStepKeys[0];
 
   return (
@@ -686,9 +641,6 @@ function getRecommendationFields(answers) {
 }
 
 function buildQuestionnairePayload(answers) {
-  const supplementRows = normalizeSupplementRows(answers.supplementRows).filter(
-    (row) => row.name.trim(),
-  );
   const recommendationFields = getRecommendationFields(answers);
   const {
     name: _name,
@@ -705,20 +657,9 @@ function buildQuestionnairePayload(answers) {
     ...currentAnswers
   } = answers;
 
-  const supplementsDetails = supplementRows
-    .map((row) => {
-      return [row.name.trim(), row.dose.trim(), getSupplementScheduleLabel(row)]
-        .filter(Boolean)
-        .join(" - ");
-    })
-    .join("\n");
-
   return {
     ...currentAnswers,
     ...recommendationFields,
-    supplementRows,
-    supplementsDetails,
-    takingSupplements: supplementRows.length ? "yes" : "no",
     medications: [],
     conditions: [],
     conditionsText: "",
@@ -739,183 +680,6 @@ function triggerSuccess() {
   void Haptics.notificationAsync(
     Haptics.NotificationFeedbackType.Success,
   ).catch(() => {});
-}
-
-function SupplementManualSheet({ visible, rows, onAdd, onRemove, onClose }) {
-  const [name, setName] = useState("");
-  const [dose, setDose] = useState("");
-  const [schedulePreset, setSchedulePreset] = useState("daily");
-  const [customFrequency, setCustomFrequency] = useState("");
-
-  useEffect(() => {
-    if (!visible) return;
-    setName("");
-    setDose("");
-    setSchedulePreset("daily");
-    setCustomFrequency("");
-  }, [visible]);
-
-  const canAdd = Boolean(name.trim());
-  const addRow = () => {
-    if (!canAdd) return false;
-    const customPreset =
-      schedulePreset === "custom"
-        ? SUPPLEMENT_SCHEDULE_PRESETS.find(
-            (preset) =>
-              preset.value !== "custom" &&
-              preset.label.toLowerCase() ===
-                customFrequency.trim().toLowerCase(),
-          )
-        : null;
-    const schedule = buildScheduleFromPreset(
-      customPreset?.value ?? schedulePreset,
-      {
-        anchorDate: toISODate(new Date()),
-        customLabel: customFrequency,
-      },
-    );
-    onAdd({
-      ...createSupplementRow(),
-      name: name.trim(),
-      dose: dose.trim(),
-      ...schedule,
-    });
-    setName("");
-    setDose("");
-    setSchedulePreset("daily");
-    setCustomFrequency("");
-    return true;
-  };
-
-  const handleDone = () => {
-    if (canAdd) {
-      addRow();
-    }
-    onClose();
-  };
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.sheetBackdrop}
-      >
-        <Pressable style={styles.sheetFill} onPress={onClose} />
-        <View style={styles.manualSheetCard}>
-          <View style={styles.manualSheetHeader}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetTitleRow}>
-              <Text style={styles.sheetTitle}>Add supplement</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close manual supplement entry"
-                onPress={onClose}
-                hitSlop={8}
-              >
-                <Ionicons name="close" size={22} color={onboardingV6.ink} />
-              </Pressable>
-            </View>
-          </View>
-
-          <ScrollView
-            style={styles.manualSheetScroll}
-            contentContainerStyle={styles.manualSheetScrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            <View style={styles.inputStack}>
-              <TextInput
-                value={name}
-                onChangeText={setName}
-                placeholder="Supplement name"
-                placeholderTextColor={onboardingV6.faint}
-                style={styles.textInput}
-              />
-              <TextInput
-                value={dose}
-                onChangeText={setDose}
-                placeholder="Dosage, e.g. 5g"
-                placeholderTextColor={onboardingV6.faint}
-                style={styles.textInput}
-              />
-            </View>
-
-            <View style={styles.frequencySection}>
-              <Text style={styles.frequencyLabel}>How often?</Text>
-              <View style={styles.frequencyWrap}>
-                {SUPPLEMENT_SCHEDULE_PRESETS.map((option) => (
-                  <ChipPill
-                    key={option.value}
-                    label={option.label}
-                    selected={schedulePreset === option.value}
-                    onPress={() => setSchedulePreset(option.value)}
-                  />
-                ))}
-              </View>
-              {schedulePreset === "custom" ? (
-                <TextInput
-                  value={customFrequency}
-                  onChangeText={setCustomFrequency}
-                  placeholder="e.g. Mondays and Thursdays"
-                  placeholderTextColor={onboardingV6.faint}
-                  style={styles.textInput}
-                />
-              ) : null}
-            </View>
-
-            {rows.length ? (
-              <View style={styles.addedList}>
-                {rows.map((row) => (
-                  <View key={row.id} style={styles.addedRow}>
-                    <View style={styles.addedCopy}>
-                      <Text style={styles.addedName} numberOfLines={1}>
-                        {row.name}
-                      </Text>
-                      <Text style={styles.addedMeta} numberOfLines={1}>
-                        {[row.dose, getSupplementScheduleLabel(row)]
-                          .filter(Boolean)
-                          .join(" - ")}
-                      </Text>
-                    </View>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Remove ${row.name}`}
-                      onPress={() => onRemove(row.id)}
-                      hitSlop={8}
-                    >
-                      <Ionicons
-                        name="close"
-                        size={18}
-                        color={onboardingV6.muted}
-                      />
-                    </Pressable>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-          </ScrollView>
-
-          <View style={styles.sheetActions}>
-            <GhostButton
-              label="Add another"
-              onPress={addRow}
-              style={styles.sheetAction}
-            />
-            <OnboardingCTA
-              label="Done"
-              onPress={handleDone}
-              style={styles.sheetAction}
-            />
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
 }
 
 function LoaderScreen({ onComplete }) {
@@ -1327,7 +1091,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
   const [draftMode, setDraftMode] = useState("first_run");
   const [hydrated, setHydrated] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [manualSheetOpen, setManualSheetOpen] = useState(false);
   const autoAdvanceTimeoutRef = useRef(null);
   const signupCompletedRef = useRef(false);
   const [{ stepKey, answers }, dispatch] = useReducer(answersReducer, {
@@ -1463,7 +1226,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
   const continueLabel = useMemo(() => {
     if (stepKey === "landing") return "Begin";
     if (stepKey === "welcome") return "Let's go";
-    if (stepKey === "stack") return "I'm all set";
     if (stepKey === "insightStacks") return "See how we'll help";
     if (stepKey === "insightSafety") return "Got it";
     if (stepKey === "consent") return "Agree & continue";
@@ -1879,50 +1641,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
       );
     }
 
-    if (stepKey === "stack") {
-      const rows = normalizeSupplementRows(answers.supplementRows).filter(
-        (row) => row.name.trim(),
-      );
-      return (
-        <>
-          <QuestionHero
-            title="What are you taking now?"
-            subtitle="Add supplements now, or skip if none."
-          />
-          <View style={styles.contentBlock}>
-            <GhostButton
-              label="Add supplement"
-              onPress={() => setManualSheetOpen(true)}
-            />
-            <View style={styles.stackList}>
-              {rows.length ? (
-                rows.map((row) => (
-                  <View key={row.id} style={styles.stackRow}>
-                    <View style={styles.stackRowCopy}>
-                      <Text style={styles.stackRowText} numberOfLines={1}>
-                        {row.name}
-                      </Text>
-                      <Text style={styles.stackRowMeta} numberOfLines={1}>
-                        {[row.dose, getSupplementScheduleLabel(row)]
-                          .filter(Boolean)
-                          .join(" - ")}
-                      </Text>
-                    </View>
-                  </View>
-                ))
-              ) : (
-                <View style={styles.emptyDashed}>
-                  <Text style={styles.emptyDashedText}>
-                    {"Nothing added yet - that's fine."}
-                  </Text>
-                </View>
-              )}
-            </View>
-          </View>
-        </>
-      );
-    }
-
     if (stepKey === "lifeStage") {
       return (
         <>
@@ -2242,34 +1960,6 @@ export default function QuestionnaireScreen({ standalone = false } = {}) {
           {renderStepContent()}
         </OnboardingShell>
       </KeyboardAvoidingView>
-      <SupplementManualSheet
-        visible={manualSheetOpen}
-        rows={normalizeSupplementRows(answers.supplementRows).filter((row) =>
-          row.name.trim(),
-        )}
-        onAdd={(row) => {
-          setFields({
-            takingSupplements: "yes",
-            currentSupplementsSource: "manual",
-            supplementRows: [
-              ...normalizeSupplementRows(answers.supplementRows).filter(
-                (item) => item.name.trim(),
-              ),
-              row,
-            ],
-          });
-        }}
-        onRemove={(rowId) => {
-          const nextRows = normalizeSupplementRows(
-            answers.supplementRows,
-          ).filter((row) => row.id !== rowId);
-          setFields({
-            supplementRows: nextRows,
-            takingSupplements: nextRows.length ? "yes" : "no",
-          });
-        }}
-        onClose={() => setManualSheetOpen(false)}
-      />
     </>
   );
 }
@@ -2379,10 +2069,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: onboardingV6.sidePadding,
     paddingBottom: 44,
   },
-  contentBlock: {
-    paddingHorizontal: onboardingV6.sidePadding,
-    paddingTop: 20,
-  },
   consentNoticeText: {
     marginTop: 8,
     fontSize: 17,
@@ -2406,19 +2092,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-  },
-  textInput: {
-    minHeight: 60,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: onboardingV6.border,
-    backgroundColor: onboardingV6.surface,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    fontSize: 16,
-    lineHeight: 22,
-    fontFamily: typography.fontFamily.body,
-    color: onboardingV6.ink,
   },
   textareaInput: {
     minHeight: 140,
@@ -2658,51 +2331,6 @@ const styles = StyleSheet.create({
   disabledRow: {
     opacity: 0.36,
   },
-  stackList: {
-    marginTop: 24,
-    gap: 10,
-  },
-  stackRow: {
-    minHeight: 58,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: onboardingV6.border,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: onboardingV6.surface,
-  },
-  stackRowCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  stackRowText: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontFamily: typography.fontFamily.bodySemiBold,
-    color: onboardingV6.ink,
-  },
-  stackRowMeta: {
-    marginTop: 2,
-    fontSize: 12.5,
-    lineHeight: 17,
-    fontFamily: typography.fontFamily.body,
-    color: onboardingV6.muted,
-  },
-  emptyDashed: {
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-    borderColor: onboardingV6.border,
-    paddingHorizontal: 16,
-    paddingVertical: 24,
-    alignItems: "center",
-  },
-  emptyDashedText: {
-    fontSize: 13.5,
-    lineHeight: 19,
-    fontFamily: typography.fontFamily.body,
-    color: onboardingV6.muted,
-  },
   microCopy: {
     marginTop: 10,
     paddingHorizontal: 4,
@@ -2721,14 +2349,6 @@ const styles = StyleSheet.create({
   splitFooterCta: {
     flex: 1,
   },
-  sheetBackdrop: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(31,20,40,0.22)",
-  },
-  sheetFill: {
-    flex: 1,
-  },
   sheetCard: {
     maxHeight: "72%",
     borderTopLeftRadius: 28,
@@ -2737,46 +2357,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: onboardingV6.sidePadding,
     paddingTop: 10,
     paddingBottom: 24,
-  },
-  manualSheetCard: {
-    maxHeight: "86%",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    backgroundColor: onboardingV6.paper,
-    paddingHorizontal: onboardingV6.sidePadding,
-    paddingTop: 10,
-    paddingBottom: 24,
-  },
-  manualSheetHeader: {
-    flexShrink: 0,
-  },
-  manualSheetScroll: {
-    flexShrink: 1,
-  },
-  manualSheetScrollContent: {
-    gap: 14,
-    paddingBottom: 16,
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 46,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: onboardingV6.border,
-  },
-  sheetTitleRow: {
-    marginTop: 14,
-    marginBottom: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  sheetTitle: {
-    fontSize: 24,
-    lineHeight: 30,
-    fontFamily: typography.fontFamily.heading,
-    color: onboardingV6.ink,
   },
   sheetScroll: {
     maxHeight: 420,
@@ -2800,61 +2380,6 @@ const styles = StyleSheet.create({
   },
   sheetOptionTextSelected: {
     color: onboardingV6.primaryDk,
-  },
-  inputStack: {
-    gap: 10,
-  },
-  frequencySection: {
-    gap: 10,
-  },
-  frequencyLabel: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.bodySemiBold,
-    color: onboardingV6.muted,
-  },
-  frequencyWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  addedList: {
-    gap: 8,
-  },
-  addedRow: {
-    minHeight: 48,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: onboardingV6.softer,
-  },
-  addedCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  addedName: {
-    fontSize: 14,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.bodySemiBold,
-    color: onboardingV6.ink,
-  },
-  addedMeta: {
-    marginTop: 2,
-    fontSize: 12,
-    lineHeight: 16,
-    fontFamily: typography.fontFamily.body,
-    color: onboardingV6.muted,
-  },
-  sheetActions: {
-    marginTop: 14,
-    flexDirection: "row",
-    gap: 10,
-  },
-  sheetAction: {
-    flex: 1,
   },
   loaderContent: {
     flex: 1,

@@ -1,12 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import React, { useEffect, useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
@@ -200,67 +193,17 @@ function BenefitListItem({
   );
 }
 
-function SupplementResultItem({ item, showBorder, requireSubscriptionAccess }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={item.name}
-      accessibilityHint={`Open supplement details for ${item.name}.`}
-      onPress={() => {
-        if (!requireSubscriptionAccess("supplement_info")) {
-          return;
-        }
-
-        router.push({
-          pathname: "/(modals)/modal/supplement-info",
-          params: { id: item.id, name: item.name },
-        });
-      }}
-      style={({ pressed }) => [
-        styles.searchResultItem,
-        showBorder && styles.searchResultBorder,
-        pressed && styles.searchResultPressed,
-      ]}
-    >
-      <View style={styles.searchResultCopy}>
-        <Text style={styles.searchResultName}>{item.name}</Text>
-        <Text style={styles.searchResultMeta}>Supplement</Text>
-      </View>
-
-      <Ionicons
-        name="chevron-forward"
-        size={18}
-        color={appTheme.colors.textSecondary}
-      />
-    </Pressable>
-  );
-}
-
 export default function RankingsScreen() {
   const { hasActiveAccess, requireSubscriptionAccess } = useSubscriptionAccess();
   const [benefits, setBenefits] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [supplementMatches, setSupplementMatches] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchLoading, setSearchLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [showRankingInfo, setShowRankingInfo] = useState(false);
   const [rankingEntity, setRankingEntity] = useState(
     BENEFIT_RANKING_ENTITY_TYPES.ACTIVE_INGREDIENT,
   );
-  const trimmedQuery = searchQuery.trim();
-  const hasSearchQuery = trimmedQuery.length > 0;
   const isProductRanking =
     rankingEntity === BENEFIT_RANKING_ENTITY_TYPES.PRODUCT;
-
-  const filteredBenefits = useMemo(() => {
-    if (!hasSearchQuery) return benefits;
-
-    const normalizedQuery = trimmedQuery.toLocaleLowerCase();
-    return benefits.filter((item) =>
-      item.label.toLocaleLowerCase().includes(normalizedQuery)
-    );
-  }, [benefits, hasSearchQuery, trimmedQuery]);
 
   useEffect(() => {
     if (!hasActiveAccess) {
@@ -301,57 +244,6 @@ export default function RankingsScreen() {
       active = false;
     };
   }, [hasActiveAccess]);
-
-  useEffect(() => {
-    if (!hasActiveAccess) {
-      setSupplementMatches([]);
-      setSearchLoading(false);
-      return;
-    }
-
-    if (!hasSearchQuery || isProductRanking) {
-      setSupplementMatches([]);
-      setSearchLoading(false);
-      return;
-    }
-
-    let active = true;
-    setSearchLoading(true);
-
-    supabase
-      .from("supplements")
-      .select("id, name")
-      .in("status", ["approved", "pending"])
-      .ilike("name", `%${trimmedQuery}%`)
-      .order("name")
-      .limit(12)
-      .then(({ data, error }) => {
-        if (!active) return;
-
-        if (error) {
-          console.error("Failed to search ranked supplements", error);
-          setSupplementMatches([]);
-          return;
-        }
-
-        setSupplementMatches(data ?? []);
-      })
-      .finally(() => {
-        if (active) {
-          setSearchLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [hasActiveAccess, hasSearchQuery, isProductRanking, trimmedQuery]);
-
-  const showEmptySearchState =
-    hasSearchQuery &&
-    !searchLoading &&
-    filteredBenefits.length === 0 &&
-    supplementMatches.length === 0;
 
   return (
     <BackdropScreen
@@ -408,7 +300,7 @@ export default function RankingsScreen() {
               <Text style={styles.headerSubtitle}>
                 {isProductRanking
                   ? "Browse products ranked for a specific benefit"
-                  : "Search ranked supplements or browse benefit rankings"}
+                  : "Browse active ingredients ranked for a specific benefit"}
               </Text>
             </View>
           }
@@ -418,64 +310,10 @@ export default function RankingsScreen() {
     >
       <RankingSegmentedControl
         value={rankingEntity}
-        onChange={(nextValue) => {
-          setRankingEntity(resolveBenefitRankingEntityType(nextValue));
-          setSupplementMatches([]);
-        }}
+        onChange={(nextValue) =>
+          setRankingEntity(resolveBenefitRankingEntityType(nextValue))
+        }
       />
-
-      {hasActiveAccess ? (
-        <View style={styles.searchField}>
-          <Ionicons
-            name="search"
-            size={18}
-            color="#8B8595"
-            style={styles.searchFieldIcon}
-          />
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder={
-              isProductRanking
-                ? "Search product benefits"
-                : "Search supplements or benefits"
-            }
-            placeholderTextColor="#8B8595"
-            selectionColor="#A6685B"
-            style={styles.searchFieldInput}
-            autoCapitalize="words"
-            clearButtonMode="while-editing"
-            accessibilityLabel={
-              isProductRanking
-                ? "Search product ranking benefits"
-                : "Search supplement rankings"
-            }
-          />
-        </View>
-      ) : (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            isProductRanking
-              ? "Search product ranking benefits"
-              : "Search supplement rankings"
-          }
-          onPress={() => requireSubscriptionAccess("supplement_search")}
-          style={styles.searchField}
-        >
-          <Ionicons
-            name="search"
-            size={18}
-            color="#8B8595"
-            style={styles.searchFieldIcon}
-          />
-          <Text style={styles.searchFieldPlaceholder}>
-            {isProductRanking
-              ? "Search product benefits"
-              : "Search supplements or benefits"}
-          </Text>
-        </Pressable>
-      )}
 
       {loading ? (
         <View style={styles.stateCard}>
@@ -501,61 +339,7 @@ export default function RankingsScreen() {
         />
       ) : null}
 
-      {!loading && !errorMessage && hasSearchQuery ? (
-        <View style={styles.searchResults}>
-          <View style={styles.searchSummaryRow}>
-            <Text style={styles.searchSummaryTitle}>Search results</Text>
-            {searchLoading ? (
-              <ActivityIndicator
-                size="small"
-                color={appTheme.colors.textSecondary}
-              />
-            ) : null}
-          </View>
-
-          {!isProductRanking && supplementMatches.length > 0 ? (
-            <PrimaryCard style={styles.resultsCard}>
-              <Text style={styles.resultsSectionTitle}>Supplements</Text>
-              {supplementMatches.map((item, index) => (
-                <SupplementResultItem
-                  key={item.id}
-                  item={item}
-                  showBorder={index < supplementMatches.length - 1}
-                  requireSubscriptionAccess={requireSubscriptionAccess}
-                />
-              ))}
-            </PrimaryCard>
-          ) : null}
-
-          {filteredBenefits.length > 0 ? (
-            <PrimaryCard style={styles.resultsCard}>
-              <Text style={styles.resultsSectionTitle}>Benefits</Text>
-              {filteredBenefits.map((item, index) => (
-                <BenefitListItem
-                  key={item.label}
-                  item={item}
-                  showBorder={index < filteredBenefits.length - 1}
-                  requireSubscriptionAccess={requireSubscriptionAccess}
-                  rankingEntity={rankingEntity}
-                />
-              ))}
-            </PrimaryCard>
-          ) : null}
-
-          {showEmptySearchState ? (
-            <EmptyStateCard
-              title="No ranking matches"
-              description={
-                isProductRanking
-                  ? "Try a different benefit name."
-                  : "Try a different supplement or benefit name."
-              }
-            />
-          ) : null}
-        </View>
-      ) : null}
-
-      {!loading && !errorMessage && !hasSearchQuery && benefits.length > 0 ? (
+      {!loading && !errorMessage && benefits.length > 0 ? (
         <PrimaryCard style={styles.resultsCard}>
           <View style={styles.list}>
             {benefits.map((item, index) => (
@@ -665,41 +449,6 @@ const styles = StyleSheet.create({
   segmentLabelSelected: {
     color: appTheme.colors.textStrong,
   },
-  searchField: {
-    flexDirection: "row",
-    alignItems: "center",
-    minHeight: 44,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.92)",
-    borderWidth: 1,
-    borderColor: "rgba(26,24,32,0.08)",
-    shadowColor: "#1A1820",
-    shadowOpacity: 0.05,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginBottom: spacing.md,
-  },
-  searchFieldIcon: {
-    marginRight: 8,
-  },
-  searchFieldInput: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textPrimary,
-    paddingVertical: 0,
-  },
-  searchFieldPlaceholder: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.body,
-    color: "#8B8595",
-  },
   stateCard: {
     marginBottom: spacing.md,
     paddingHorizontal: appTheme.card.paddingSpacious,
@@ -716,36 +465,10 @@ const styles = StyleSheet.create({
   list: {
     overflow: "hidden",
   },
-  searchResults: {
-    gap: spacing.md,
-  },
-  searchSummaryRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-  },
-  searchSummaryTitle: {
-    fontSize: 20,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textHeading,
-    letterSpacing: -0.4,
-  },
   resultsCard: {
     paddingHorizontal: 0,
     paddingVertical: 0,
     overflow: "hidden",
-  },
-  resultsSectionTitle: {
-    paddingHorizontal: appTheme.card.paddingSpacious,
-    paddingTop: appTheme.card.paddingSpacious,
-    paddingBottom: spacing.sm,
-    fontSize: 12,
-    lineHeight: 16,
-    fontFamily: typography.fontFamily.headingSemiBold,
-    color: appTheme.colors.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
   },
   benefitItem: {
     minHeight: 72,
@@ -768,38 +491,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-  },
-  searchResultItem: {
-    minHeight: 72,
-    paddingHorizontal: appTheme.card.paddingSpacious,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md,
-  },
-  searchResultBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: appTheme.colors.borderSubtle,
-  },
-  searchResultPressed: {
-    backgroundColor: appTheme.colors.surfaceMuted,
-  },
-  searchResultCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  searchResultName: {
-    fontSize: 16,
-    lineHeight: 21,
-    fontFamily: typography.fontFamily.bodySemiBold,
-    color: appTheme.colors.textStrong,
-  },
-  searchResultMeta: {
-    marginTop: 4,
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
   },
   benefitLabel: {
     flex: 1,

@@ -47,7 +47,10 @@ function productRow(overrides = {}) {
     product_id: "11111111-1111-4111-8111-111111111111",
     product_name: "Canonical Product",
     product_brand: "Canonical Brand",
-    product_image_url: "https://images.example.com/canonical-product.png",
+    image_thumbnail_url: "https://images.example.com/canonical-product-thumb.png",
+    image_url: "https://images.example.com/canonical-product.png",
+    image_status: "found",
+    image_last_checked_at: "2026-07-24T12:00:00.000Z",
     normalized_product_name: "canonical product",
     verification_status: "verified",
     verification_precedence: 100,
@@ -125,6 +128,10 @@ test("normalization excludes unknown scores and preserves full-precision server 
   const normalized = contract.normalizeProductRankingPage(rows);
   assert.equal(normalized[0].productBrand, "Canonical Brand");
   assert.equal(
+    normalized[0].productImageThumbnailUrl,
+    "https://images.example.com/canonical-product-thumb.png",
+  );
+  assert.equal(
     normalized[0].productImageUrl,
     "https://images.example.com/canonical-product.png",
   );
@@ -167,6 +174,100 @@ test("page append deduplicates overlap without locally reordering rows", () => {
     contract.appendProductRankingPage(first, next).map((item) => item.productName),
     ["Canonical Product", "Second Product", "Third Product"],
   );
+});
+
+test("persisted product images reconcile into existing ranking rows", () => {
+  const missingImage = contract.normalizeProductRankingRow(
+    productRow({ image_thumbnail_url: null, image_url: null }),
+  );
+  const unchanged = contract.normalizeProductRankingRow(
+    productRow({
+      product_id: "33333333-3333-4333-8333-333333333333",
+      product_name: "Second Product",
+      image_thumbnail_url: null,
+      image_url: "https://images.example.com/existing.png",
+    }),
+  );
+  const current = [missingImage, unchanged];
+
+  const reconciled = contract.reconcileProductRankingImages(current, [
+    {
+      product_id: missingImage.productId,
+      image_url: "https://images.example.com/full.png",
+      image_thumbnail_url: " https://images.example.com/thumbnail.png ",
+    },
+    {
+      product_id: unchanged.productId,
+      image_url: "https://images.example.com/existing.png",
+      image_thumbnail_url: "",
+    },
+  ]);
+
+  assert.notEqual(reconciled, current);
+  assert.notEqual(reconciled[0], missingImage);
+  assert.equal(
+    reconciled[0].productImageThumbnailUrl,
+    "https://images.example.com/thumbnail.png",
+  );
+  assert.equal(reconciled[0].productImageUrl, "https://images.example.com/full.png");
+  assert.equal(reconciled[1], unchanged);
+});
+
+test("empty refresh values do not erase a URL already known in the session", () => {
+  const current = [
+    contract.normalizeProductRankingRow(
+      productRow({
+        image_thumbnail_url: null,
+        image_url: "https://images.example.com/persisted.png",
+      }),
+    ),
+  ];
+
+  const reconciled = contract.reconcileProductRankingImages(current, [
+    {
+      product_id: current[0].productId,
+      image_url: "  ",
+      image_thumbnail_url: null,
+    },
+  ]);
+
+  assert.equal(
+    reconciled[0].productImageUrl,
+    "https://images.example.com/persisted.png",
+  );
+});
+
+test("thumbnail failure falls back to the independent full image URL", () => {
+  const item = contract.normalizeProductRankingRow(productRow());
+  const thumbnail = contract.getNextProductRankingImageUrl(item);
+  const full = contract.getNextProductRankingImageUrl(item, [thumbnail]);
+
+  assert.equal(thumbnail, item.productImageThumbnailUrl);
+  assert.equal(full, item.productImageUrl);
+  assert.equal(
+    contract.getNextProductRankingImageUrl(item, [thumbnail, full]),
+    null,
+  );
+});
+
+test("background first-page refresh preserves cached image URLs and visible tail", () => {
+  const cached = contract.normalizeProductRankingPage([
+    productRow(),
+    productRow({
+      product_id: "33333333-3333-4333-8333-333333333333",
+      product_name: "Cached Tail Product",
+      normalized_product_name: "cached tail product",
+    }),
+  ]);
+  const refreshed = contract.normalizeProductRankingPage([
+    productRow({ image_thumbnail_url: null, image_url: null }),
+  ]);
+
+  const merged = contract.mergeRefreshedProductRankingPage(cached, refreshed);
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].productImageThumbnailUrl, cached[0].productImageThumbnailUrl);
+  assert.equal(merged[0].productImageUrl, cached[0].productImageUrl);
+  assert.equal(merged[1], cached[1]);
 });
 
 test("product ranking client invokes one bounded RPC page and exposes the next cursor", async () => {
@@ -287,12 +388,27 @@ test("rankings screens expose accessible segments and product compatibility rout
   assert.match(rankingsScreen, /Active ingredients/);
   assert.match(rankingsScreen, /Products/);
   assert.match(rankingsScreen, /entity: BENEFIT_RANKING_ENTITY_TYPES\.PRODUCT/);
+  assert.doesNotMatch(rankingsScreen, /TextInput/);
+  assert.doesNotMatch(rankingsScreen, /searchField/);
+  assert.doesNotMatch(rankingsScreen, /searchQuery/);
   assert.match(rankingRoute, /resolveBenefitRankingEntityType/);
   assert.match(rankingRoute, /getProductBenefitRankingPage/);
   assert.match(rankingRoute, /createSupplementProductCatalogId/);
   assert.match(rankingRoute, /item\.productBrand/);
-  assert.match(rankingRoute, /item\.productImageUrl/);
-  assert.match(rankingRoute, /name="cube-outline"/);
+  assert.match(rankingRoute, /getNextProductRankingImageUrl/);
+  assert.match(rankingRoute, /MaterialCommunityIcons/);
+  assert.match(rankingRoute, /name="pill"/);
+  assert.match(rankingRoute, /styles\.productImagePlaceholder/);
+  assert.doesNotMatch(rankingRoute, /name="cube-outline"/);
+  assert.match(rankingRoute, /from "expo-image"/);
+  assert.match(rankingRoute, /cachePolicy="memory-disk"/);
+  assert.match(rankingRoute, /getCachedProductRanking/);
+  assert.match(rankingRoute, /mergeRefreshedProductRankingPage/);
+  assert.match(rankingRoute, /useFocusEffect/);
+  assert.match(rankingRoute, /enqueueMissingProductImages/);
+  assert.match(rankingRoute, /getMissingProductImageIds/);
+  assert.match(rankingRoute, /PRODUCT_IMAGE_POLL_DELAYS_MS/);
+  assert.match(rankingRoute, /reconcileProductRankingImages/);
   assert.match(rankingRoute, /titleAccessory=\{\s*isProductRanking \? null : \(/);
   assert.doesNotMatch(rankingRoute, /isProductRanking \? "products"/);
   assert.match(rankingRoute, /styles\.productBenefitScore\}>\{scoreText\}/);

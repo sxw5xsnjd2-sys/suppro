@@ -11,12 +11,17 @@ function loadEnrichProductImagePolicyModule() {
     "utf8"
   )
 
-  const transformed = source.replace(/export function /g, "function ")
+  const transformed = source
+    .replace(/export const /g, "const ")
+    .replace(/export function /g, "function ")
 
   const factory = new Function(
     `${transformed}
 return {
   buildEnrichProductImageResponse,
+  getPersistableProductThumbnailUrl,
+  getProductImageCooldownDecision,
+  MAX_PRODUCT_IMAGE_ENQUEUE_BATCH,
   validateEnrichProductImageRequest,
 };`
   )
@@ -134,5 +139,110 @@ test("enrich-product-image response builder preserves the public response shape"
       query: "magnesium glycinate official product",
       reason: "Image found",
     }
+  )
+})
+
+test("batch enqueue validation is bounded, deduplicated, and UUID-only", () => {
+  const {
+    MAX_PRODUCT_IMAGE_ENQUEUE_BATCH,
+    validateEnrichProductImageRequest,
+  } = loadEnrichProductImagePolicyModule()
+  const productId = "11111111-1111-4111-8111-111111111111"
+  const validated = validateEnrichProductImageRequest(
+    JSON.stringify({ productIds: [productId, productId] })
+  )
+
+  assert.equal(validated.ok, true)
+  assert.deepEqual(validated.value.productIds, [productId])
+  assert.equal(MAX_PRODUCT_IMAGE_ENQUEUE_BATCH, 25)
+  assert.equal(
+    validateEnrichProductImageRequest(
+      JSON.stringify({
+        productIds: Array.from(
+          { length: MAX_PRODUCT_IMAGE_ENQUEUE_BATCH + 1 },
+          (_, index) => `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`
+        ),
+      })
+    ).ok,
+    false
+  )
+  assert.equal(
+    validateEnrichProductImageRequest(
+      JSON.stringify({ productIds: [productId], force: true })
+    ).ok,
+    false
+  )
+})
+
+test("recent failures and skips observe distinct cooldowns", () => {
+  const { getProductImageCooldownDecision } =
+    loadEnrichProductImagePolicyModule()
+  const now = Date.parse("2026-07-24T12:00:00.000Z")
+
+  const failed = getProductImageCooldownDecision(
+    {
+      image_status: "failed",
+      image_last_checked_at: "2026-07-23T12:00:00.000Z",
+    },
+    { now }
+  )
+  const expiredFailure = getProductImageCooldownDecision(
+    {
+      image_status: "failed",
+      image_last_checked_at: "2026-07-16T11:59:59.000Z",
+    },
+    { now }
+  )
+  const skipped = getProductImageCooldownDecision(
+    {
+      image_status: "skipped",
+      image_last_checked_at: "2026-07-01T12:00:00.000Z",
+    },
+    { now }
+  )
+
+  assert.equal(failed.status, "failed")
+  assert.ok(failed.retryAfterSeconds > 0)
+  assert.equal(expiredFailure, null)
+  assert.equal(skipped.status, "skipped")
+})
+
+test("future enrichment does not persist transient SerpApi thumbnails", () => {
+  const { getPersistableProductThumbnailUrl } =
+    loadEnrichProductImagePolicyModule()
+
+  assert.equal(
+    getPersistableProductThumbnailUrl(
+      "https://serpapi.com/searches/abc/images/thumbnail.jpg"
+    ),
+    null
+  )
+  assert.equal(
+    getPersistableProductThumbnailUrl(
+      "https://cdn.serpapi.com/searches/abc/images/thumbnail.jpg"
+    ),
+    null
+  )
+  assert.equal(
+    getPersistableProductThumbnailUrl(
+      "https://images.example.com/products/thumbnail.jpg"
+    ),
+    "https://images.example.com/products/thumbnail.jpg"
+  )
+
+  const enrichmentFunction = readFileSync(
+    new URL(
+      "../../supabase/functions/enrich-product-image/index.ts",
+      import.meta.url
+    ),
+    "utf8"
+  )
+  assert.match(
+    enrichmentFunction,
+    /imageUrl: original \|\| getPersistableProductThumbnailUrl\(thumbnail\)/u
+  )
+  assert.match(
+    enrichmentFunction,
+    /thumbnailUrl: getPersistableProductThumbnailUrl\(thumbnail\)/u
   )
 })

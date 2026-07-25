@@ -90,6 +90,17 @@ test("overall evidence remains separate from product-benefit display", () => {
   );
 });
 
+test("missing product images use the muted pill placeholder", () => {
+  assert.match(detailSource, /MaterialCommunityIcons/u);
+  assert.match(detailSource, /name="pill"/u);
+  assert.match(detailSource, /styles\.productImagePlaceholder/u);
+  assert.match(
+    detailSource,
+    /productImagePlaceholder: \{[\s\S]*?backgroundColor: appTheme\.colors\.surfaceMuted,[\s\S]*?borderWidth: 0,/u,
+  );
+  assert.doesNotMatch(detailSource, /name="cube-outline"/u);
+});
+
 test("incomplete and no-ingredients payloads preserve unknown ratings as null", () => {
   assert.match(incompleteResolutionSource, /evidence_score: null/u);
   assert.match(incompleteResolutionSource, /supplement_benefits: \[\]/u);
