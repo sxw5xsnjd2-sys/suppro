@@ -8,6 +8,7 @@ import {
   getCatalogEntityId,
   getCatalogType,
 } from "@/features/supplements/catalog";
+import { normalizeIngredientDose } from "@/features/supplements/doseNormalization";
 import { supabase } from "@src/lib/supabase";
 import {
   buildLinkedSupplementPayload,
@@ -33,65 +34,6 @@ function dedupeByKey(items, getKey) {
     seen.add(key);
     return true;
   });
-}
-
-function formatDosageValue(value) {
-  if (!Number.isFinite(value)) {
-    return "";
-  }
-
-  return Number.isInteger(value) ? String(value) : String(Number(value));
-}
-
-function formatDosageUnit(value) {
-  const normalizedUnit = trimString(value).toLowerCase();
-  if (!normalizedUnit) {
-    return "";
-  }
-
-  if (normalizedUnit === "mcg" || normalizedUnit === "ug" || normalizedUnit === "µg") {
-    return "μg";
-  }
-
-  return normalizedUnit;
-}
-
-function buildStructuredDosageDisplay(row) {
-  const dosageValue = parseFloat(row?.dosage_value);
-  const dosageUnit = formatDosageUnit(row?.dosage_unit);
-
-  if (!Number.isFinite(dosageValue) || !dosageUnit) {
-    return null;
-  }
-
-  const chemicalForm = trimString(row?.chemical_form);
-  const chemicalFormLabel = chemicalForm ? `${chemicalForm} ` : "";
-
-  return `${chemicalFormLabel}${formatDosageValue(dosageValue)}${dosageUnit}`;
-}
-
-function buildDosageDisplay(row) {
-  const structuredDisplay = buildStructuredDosageDisplay(row);
-  if (structuredDisplay) {
-    return structuredDisplay;
-  }
-
-  const originalText = trimString(row?.dosage_original_text);
-  if (originalText) {
-    const canonicalName = trimString(row?.canonical_name);
-    if (canonicalName) {
-      const normalizedOriginal = originalText.toLowerCase();
-      const normalizedCanonical = canonicalName.toLowerCase();
-
-      if (normalizedOriginal.startsWith(`${normalizedCanonical} `)) {
-        return originalText.slice(canonicalName.length).trim();
-      }
-    }
-
-    return originalText;
-  }
-
-  return null;
 }
 
 function buildProductIngredientKey(match) {
@@ -225,6 +167,10 @@ function buildProductIngredientMatch(row, supplementNameById) {
   const canonicalName = trimString(row?.canonical_name);
   const linkedSupplementName = trimString(supplementNameById.get(supplementId));
   const ingredientName = canonicalName || linkedSupplementName || "Active ingredient";
+  const normalizedDose = normalizeIngredientDose({
+    ...row,
+    ingredientName,
+  });
 
   return {
     catalogId: supplementId || null,
@@ -236,11 +182,15 @@ function buildProductIngredientMatch(row, supplementNameById) {
     score: 100,
     verified: Boolean(supplementId),
     sourceTable: "product_active_ingredients",
-    dosageValue: Number.isFinite(parseFloat(row?.dosage_value)) ? parseFloat(row?.dosage_value) : null,
-    dosageUnit: trimString(row?.dosage_unit) || null,
-    dosageDisplay: buildDosageDisplay(row),
+    dosageValue: normalizedDose.value,
+    dosageUnit: normalizedDose.unit,
+    dosageOriginalText: normalizedDose.dosageOriginalText,
+    dosageDisplay: normalizedDose.displayText,
     chemicalForm: trimString(row?.chemical_form) || null,
-    amountBasis: trimString(row?.amount_basis) || null,
+    amountBasis: normalizedDose.amountBasis,
+    doseConfidence: normalizedDose.doseConfidence,
+    doseReviewReason: normalizedDose.doseReviewReason,
+    normalizedDose,
   };
 }
 
@@ -280,7 +230,9 @@ const PRODUCT_ACTIVE_INGREDIENTS_SELECT = `
   dosage_unit,
   dosage_original_text,
   chemical_form,
-  amount_basis
+  amount_basis,
+  dose_confidence,
+  dose_review_reason
 `;
 
 async function getOffProductBarcode(productId, scanRequestId) {
@@ -535,7 +487,7 @@ async function getSupplementProductById(
   const { data, error } = await supabase
     .from("supplement_products_master")
     .select(
-      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at, verification_status"
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at, verification_status, photo_improvement_revision"
     )
     .eq("product_id", productId)
     .maybeSingle();
@@ -610,6 +562,16 @@ async function getSupplementProductById(
     image_last_checked_at: trimString(data?.image_last_checked_at) || null,
     verification_status: verificationStatus,
     verificationStatus,
+    photo_improvement_revision: Number.isSafeInteger(
+      Number(data?.photo_improvement_revision)
+    )
+      ? Math.max(0, Number(data.photo_improvement_revision))
+      : 0,
+    photoImprovementRevision: Number.isSafeInteger(
+      Number(data?.photo_improvement_revision)
+    )
+      ? Math.max(0, Number(data.photo_improvement_revision))
+      : 0,
     scanDetailsIncomplete:
       verificationStatus === "go_upc_unverified" ||
       verificationStatus === "ean_search_unverified",

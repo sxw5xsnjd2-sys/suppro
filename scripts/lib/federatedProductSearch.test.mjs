@@ -236,6 +236,29 @@ test("unresolved candidates have unknown evidence instead of zero", () => {
   assert.equal(row.evidenceSnapshot, null)
 })
 
+test("master evidence hydration preserves dose confidence metadata", () => {
+  const providerSource = readFileSync(
+    new URL(
+      "../../supabase/functions/_shared/federated-product-providers.ts",
+      import.meta.url
+    ),
+    "utf8"
+  )
+
+  assert.match(
+    providerSource,
+    /amount_basis, dose_confidence, dose_review_reason/
+  )
+  assert.match(
+    providerSource,
+    /doseConfidence: trimString\(row\?\.dose_confidence\) \|\| null/
+  )
+  assert.match(
+    providerSource,
+    /doseReviewReason: trimString\(row\?\.dose_review_reason\) \|\| null/
+  )
+})
+
 test("typeahead adapter uses DSLD search-filter without a label fetch and Go keyword remains blocked", () => {
   const providerSource = readFileSync(
     new URL(

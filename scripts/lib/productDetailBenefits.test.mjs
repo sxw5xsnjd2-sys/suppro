@@ -90,6 +90,17 @@ test("overall evidence remains separate from product-benefit display", () => {
   );
 });
 
+test("ingredient rows render the normalized dose contract and explicit statuses", () => {
+  assert.match(detailSource, /item\?\.normalizedDose\?\.displayText/u);
+  assert.match(detailSource, /dose_could_not_be_parsed:/u);
+  assert.match(detailSource, /dose_not_verified:/u);
+  assert.match(detailSource, /unsupported_amount_basis:/u);
+  assert.doesNotMatch(
+    detailSource,
+    /item\?\.doseConfidence === "unverified"/u,
+  );
+});
+
 test("missing product images use the muted pill placeholder", () => {
   assert.match(detailSource, /MaterialCommunityIcons/u);
   assert.match(detailSource, /name="pill"/u);

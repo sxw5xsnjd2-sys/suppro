@@ -21,6 +21,7 @@ export function buildScanResultHydrationKey({
   scanRequestId,
   productId,
   scanSessionId,
+  resultRevision,
 }) {
   const requestKey =
     trimString(scanRequestId) ||
@@ -29,7 +30,13 @@ export function buildScanResultHydrationKey({
     return "";
   }
 
-  return `${requestKey}:${trimString(productId) || "no-product"}`;
+  const normalizedRevision = Number.isFinite(resultRevision)
+    ? Math.max(0, Math.trunc(resultRevision))
+    : 0;
+  const revisionKey =
+    normalizedRevision > 0 ? `:revision-${normalizedRevision}` : "";
+
+  return `${requestKey}:${trimString(productId) || "no-product"}${revisionKey}`;
 }
 
 export function hydrateScanResultOnce(hydrationKey, hydrate) {
@@ -46,6 +53,14 @@ export function hydrateScanResultOnce(hydrationKey, hydrate) {
   hydrationPromises.set(hydrationKey, hydrationPromise);
   pruneOldest(hydrationPromises);
   return hydrationPromise;
+}
+
+export function invalidateScanResultHydration(hydrationKey) {
+  if (!hydrationKey) {
+    return false;
+  }
+
+  return hydrationPromises.delete(hydrationKey);
 }
 
 export function persistScanResultHistoryOnce(hydrationKey, persist) {

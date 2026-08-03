@@ -1,5 +1,6 @@
 import { supabase } from "@src/lib/supabase";
 import { logScanTiming } from "@/features/scanner/scanTiming";
+import { normalizeIngredientDose } from "@/features/supplements/doseNormalization";
 import { isValidBarcode, normalizeBarcode } from "./getOpenFoodFactsProduct";
 
 function trimString(value) {
@@ -93,20 +94,18 @@ function extractMasterIngredients(activeIngredientsJson) {
     const ingredient =
       item && typeof item === "object"
         ? (() => {
-            const dosageValueRaw = item.dosageValue ?? item.dosage_value;
+            const normalizedDose = normalizeIngredientDose(item);
             return {
               name: trimString(item.name),
-              dosageValue:
-                typeof dosageValueRaw === "number" && Number.isFinite(dosageValueRaw)
-                  ? dosageValueRaw
-                  : null,
-              dosageUnit: trimString(item.dosageUnit ?? item.dosage_unit) || null,
-              dosageDisplay:
-                trimString(
-                  item.dosageDisplay ?? item.dosage_display ?? item.dosage_original_text
-                ) || null,
+              dosageValue: normalizedDose.value,
+              dosageUnit: normalizedDose.unit,
+              dosageOriginalText: normalizedDose.dosageOriginalText,
+              dosageDisplay: normalizedDose.displayText,
               chemicalForm: trimString(item.chemicalForm ?? item.chemical_form) || null,
-              amountBasis: trimString(item.amountBasis ?? item.amount_basis) || null,
+              amountBasis: normalizedDose.amountBasis,
+              doseConfidence: normalizedDose.doseConfidence,
+              doseReviewReason: normalizedDose.doseReviewReason,
+              normalizedDose,
             };
           })()
         : trimString(item);
@@ -145,7 +144,7 @@ export async function fetchSupplementProductsMasterScanProduct(
   const { data: masterBarcodeRows, error: masterBarcodeError } = await supabase
     .from("supplement_products_master")
     .select(
-      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_source_url, image_provider, verification_status"
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_source_url, image_provider, verification_status, photo_improvement_revision"
     )
     .in("barcode", barcodeCandidates);
 
@@ -191,6 +190,16 @@ export async function fetchSupplementProductsMasterScanProduct(
       imageSourceUrl: trimString(masterByBarcode.image_source_url) || null,
       imageProvider: trimString(masterByBarcode.image_provider) || null,
       verificationStatus,
+      photoImprovementRevision: Number.isSafeInteger(
+        Number(masterByBarcode.photo_improvement_revision)
+      )
+        ? Math.max(0, Number(masterByBarcode.photo_improvement_revision))
+        : 0,
+      photo_improvement_revision: Number.isSafeInteger(
+        Number(masterByBarcode.photo_improvement_revision)
+      )
+        ? Math.max(0, Number(masterByBarcode.photo_improvement_revision))
+        : 0,
       hasIncompleteDetails: isProvisionalVerificationStatus(verificationStatus),
     };
   }
@@ -231,7 +240,7 @@ export async function fetchOffProductsBarcodeScanProduct(barcode, barcodeType) {
   const { data: masterRows, error: masterError } = await supabase
     .from("supplement_products_master")
     .select(
-      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_source_url, image_provider, verification_status"
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_source_url, image_provider, verification_status, photo_improvement_revision"
     )
     .eq("product_id", product.id)
     .limit(1);
@@ -281,6 +290,16 @@ export async function fetchOffProductsBarcodeScanProduct(barcode, barcodeType) {
     imageSourceUrl: trimString(master?.image_source_url) || null,
     imageProvider: trimString(master?.image_provider) || null,
     verificationStatus: hasMaster ? verificationStatus : null,
+    photoImprovementRevision:
+      hasMaster &&
+      Number.isSafeInteger(Number(master?.photo_improvement_revision))
+        ? Math.max(0, Number(master.photo_improvement_revision))
+        : 0,
+    photo_improvement_revision:
+      hasMaster &&
+      Number.isSafeInteger(Number(master?.photo_improvement_revision))
+        ? Math.max(0, Number(master.photo_improvement_revision))
+        : 0,
     hasIncompleteDetails:
       hasMaster && isProvisionalVerificationStatus(verificationStatus),
   };

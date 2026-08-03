@@ -1,14 +1,14 @@
+import {
+  DOSE_CONTRACT_VERSION,
+  getDoseUnavailableStatusLabel,
+  normalizeDoseUnit,
+  normalizeIngredientDose,
+} from "./doseNormalization.js";
+
 const BLEND_CORE_INGREDIENT_LIMIT = 3;
 const BLEND_CORE_WEIGHT = 0.8;
 const BLEND_TAIL_WEIGHT = 0.2;
 const COMPARABLE_UNITS = new Set(["mcg", "mg", "ml", "IU", "CFU"]);
-const UNIT_ALIASES = {
-  ug: "mcg",
-  "µg": "mcg",
-  "μg": "mcg",
-  iu: "IU",
-  cfu: "CFU",
-};
 const SERVING_BASIS_KEYWORDS = {
   per_capsule: ["capsule", "capsules", "cap", "caps"],
   per_tablet: ["tablet", "tablets", "tab", "tabs"],
@@ -404,23 +404,6 @@ function buildAggregatedDoseMap(preparedMatches) {
   });
 
   return aggregatedDoseByCatalogId;
-}
-
-export function normalizeDoseUnit(value) {
-  const normalized = trimString(value).replace(/[µμ]/g, "μ");
-  if (!normalized) return null;
-
-  const lowered = normalized.toLowerCase();
-  if (UNIT_ALIASES[normalized]) {
-    return UNIT_ALIASES[normalized];
-  }
-  if (UNIT_ALIASES[lowered]) {
-    return UNIT_ALIASES[lowered];
-  }
-  if (lowered === "mg") return "mg";
-  if (lowered === "g") return "g";
-  if (lowered === "ml") return "ml";
-  return normalized;
 }
 
 export function normalizeComparableDose({ value, unit }) {
@@ -856,7 +839,7 @@ function getDoseScoringProfileForSupplement(supplement, recommendedDose) {
 }
 
 function extractServingSizeMultiplier(servingSizeText, amountBasis) {
-  if (amountBasis === "per_serving" || amountBasis === "unknown" || !amountBasis) {
+  if (amountBasis === "per_serving") {
     return { multiplier: 1, flags: [] };
   }
 
@@ -900,38 +883,66 @@ function extractServingSizeMultiplier(servingSizeText, amountBasis) {
 }
 
 function normalizeServingDose(match, servingSizeText) {
+  const baseNormalizedDose =
+    match?.normalizedDose?.contractVersion === DOSE_CONTRACT_VERSION
+      ? match.normalizedDose
+      : normalizeIngredientDose(match);
+
+  if (!baseNormalizedDose.isScoringEligible) {
+    const status =
+      baseNormalizedDose.unavailableReason || "missing_actual_dose";
+    return {
+      normalizedDose: baseNormalizedDose,
+      normalizedServingDose: null,
+      flags: [status],
+      status,
+    };
+  }
+
   const normalizedDose = normalizeComparableDose({
-    value: match?.dosageValue,
-    unit: match?.dosageUnit,
+    value: baseNormalizedDose.value,
+    unit: baseNormalizedDose.unit,
   });
 
   if (!normalizedDose) {
     return {
+      normalizedDose: {
+        ...baseNormalizedDose,
+        isScoringEligible: false,
+        unavailableReason: "unsupported_dose_unit",
+      },
       normalizedServingDose: null,
-      flags: ["missing_actual_dose"],
-      status: "missing_actual_dose",
+      flags: ["unsupported_dose_unit"],
+      status: "unsupported_dose_unit",
     };
   }
 
-  const amountBasis = trimString(match?.amountBasis) || "unknown";
+  const amountBasis = baseNormalizedDose.amountBasis;
   const { multiplier, flags } = extractServingSizeMultiplier(
     servingSizeText,
     amountBasis
   );
 
   if (!Number.isFinite(multiplier) || multiplier <= 0) {
+    const status =
+      flags[0] === "unknown_amount_basis" ||
+      flags[0] === "missing_amount_basis"
+        ? "unsupported_amount_basis"
+        : "serving_size_unparseable";
     return {
+      normalizedDose: {
+        ...baseNormalizedDose,
+        isScoringEligible: false,
+        unavailableReason: status,
+      },
       normalizedServingDose: null,
       flags,
-      status:
-        flags[0] === "unknown_amount_basis" ||
-        flags[0] === "missing_amount_basis"
-          ? "unknown_amount_basis"
-          : "serving_size_unparseable",
+      status,
     };
   }
 
   return {
+    normalizedDose: baseNormalizedDose,
     normalizedServingDose: {
       value: roundTo(normalizedDose.value * multiplier),
       unit: normalizedDose.unit,
@@ -1072,23 +1083,7 @@ function buildDoseStatusLabel({ doseBand, doseComparisonStatus }) {
     return "Dose target unavailable";
   }
 
-  if (doseComparisonStatus === "missing_actual_dose") {
-    return "Dose unavailable";
-  }
-
-  if (doseComparisonStatus === "serving_size_unparseable") {
-    return "Dose unavailable";
-  }
-
-  if (doseComparisonStatus === "unknown_amount_basis") {
-    return "Dose unavailable";
-  }
-
-  if (doseComparisonStatus === "unit_mismatch") {
-    return "Dose unavailable";
-  }
-
-  return "Dose not scored";
+  return getDoseUnavailableStatusLabel(doseComparisonStatus);
 }
 
 function buildDoseComparisonSummary({
@@ -1276,6 +1271,7 @@ export function scoreMatchedIngredientsForProduct({
       recommendedDose
     );
     const {
+      normalizedDose,
       normalizedServingDose,
       flags: servingFlags,
       status: servingStatus,
@@ -1294,6 +1290,7 @@ export function scoreMatchedIngredientsForProduct({
       evidenceScore,
       recommendedDose,
       doseScoringProfile,
+      normalizedDose,
       servingFlags,
       servingStatus,
       alignedServingDose,
@@ -1314,6 +1311,7 @@ export function scoreMatchedIngredientsForProduct({
       evidenceScore,
       recommendedDose,
       doseScoringProfile,
+      normalizedDose,
       servingFlags,
       servingStatus,
       alignedServingDose,
@@ -1333,15 +1331,9 @@ export function scoreMatchedIngredientsForProduct({
     });
 
     const doseComparisonStatus =
-      comparisonStatus === "missing_actual_dose" &&
-      servingStatus !== "missing_actual_dose"
-        ? servingStatus
-        : comparisonStatus;
+      servingStatus !== "comparable" ? servingStatus : comparisonStatus;
     const effectiveComparisonFlags =
-      comparisonStatus === "missing_actual_dose" &&
-      servingStatus !== "missing_actual_dose"
-        ? []
-        : comparisonFlags;
+      servingStatus !== "comparable" ? [] : comparisonFlags;
     const adjustedEvidenceScore = Number.isFinite(evidenceScore)
       ? roundTo(evidenceScore * doseFactor, 4)
       : null;
@@ -1358,6 +1350,14 @@ export function scoreMatchedIngredientsForProduct({
 
     return {
       ...match,
+      normalizedDose,
+      dosageValue: normalizedDose.value,
+      dosageUnit: normalizedDose.unit,
+      dosageOriginalText: normalizedDose.dosageOriginalText,
+      dosageDisplay: normalizedDose.displayText,
+      amountBasis: normalizedDose.amountBasis,
+      doseConfidence: normalizedDose.doseConfidence,
+      doseReviewReason: normalizedDose.doseReviewReason,
       evidenceScore,
       adjustedEvidenceScore,
       recommendedDose,
@@ -1383,3 +1383,5 @@ export function scoreMatchedIngredientsForProduct({
     };
   });
 }
+
+export { normalizeDoseUnit, normalizeIngredientDose };

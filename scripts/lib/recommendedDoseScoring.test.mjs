@@ -4,7 +4,24 @@ import test from "node:test";
 
 async function importLocalJsModule(relativePath) {
   const sourceUrl = new URL(relativePath, import.meta.url);
-  const sourceText = readFileSync(sourceUrl, "utf8");
+  let sourceText = readFileSync(sourceUrl, "utf8");
+  if (relativePath.endsWith("recommendedDoseScoring.js")) {
+    const doseNormalizationSource = readFileSync(
+      new URL(
+        "../../features/supplements/doseNormalization.js",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const doseNormalizationDataUrl = `data:text/javascript;base64,${Buffer.from(
+      doseNormalizationSource,
+      "utf8",
+    ).toString("base64")}`;
+    sourceText = sourceText.replace(
+      "./doseNormalization.js",
+      doseNormalizationDataUrl,
+    );
+  }
   const dataUrl = `data:text/javascript;base64,${Buffer.from(
     sourceText,
     "utf8"
@@ -14,6 +31,7 @@ async function importLocalJsModule(relativePath) {
 
 const {
   buildProductEvidenceScoreData,
+  normalizeIngredientDose,
   scoreMatchedIngredientsForProduct,
 } = await importLocalJsModule(
   "../../features/supplements/recommendedDoseScoring.js"
@@ -101,6 +119,217 @@ test("normalizes per-capsule doses using serving size text", () => {
   assert.equal(ingredient.doseComparisonValid, true);
   assert.equal(ingredient.adjustedEvidenceScore, 90);
   assert.equal(ingredient.doseBand, "optimal");
+});
+
+test("label dose text without structured fields reports that parsing failed", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "magnesium",
+      evidenceScore: 90,
+      minValue: 200,
+      maxValue: 400,
+    }),
+  ]);
+
+  const [ingredient] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "magnesium",
+        dosageOriginalText: "200 mg",
+        dosageValue: null,
+        dosageUnit: null,
+        amountBasis: "per_serving",
+      },
+    ],
+    supplementsByCatalogId,
+    servingSizeText: "Serving size: 1 capsule",
+  });
+
+  assert.equal(ingredient.dosageDisplay, "200 mg");
+  assert.equal(ingredient.normalizedDose.displayText, "200 mg");
+  assert.equal(ingredient.doseComparisonStatus, "dose_could_not_be_parsed");
+  assert.equal(ingredient.doseStatusLabel, "Dose could not be parsed");
+  assert.equal(ingredient.validatedDoseFactor, null);
+});
+
+test("an unusable dose status takes precedence when the target profile is missing", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "unverified-without-target",
+      evidenceScore: 90,
+    }),
+  ]);
+
+  const [ingredient] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "unverified-without-target",
+        dosageValue: 200,
+        dosageUnit: "mg",
+        amountBasis: "per_serving",
+        doseConfidence: "unverified",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(ingredient.dosageDisplay, "200 mg");
+  assert.equal(ingredient.doseComparisonStatus, "dose_not_verified");
+  assert.equal(ingredient.doseStatusLabel, "Dose not verified");
+  assert.equal(ingredient.validatedDoseFactor, null);
+});
+
+test("verified structured dose uses one display and scoring contract", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "magnesium",
+      evidenceScore: 90,
+      minValue: 200,
+      maxValue: 400,
+    }),
+  ]);
+
+  const [ingredient] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "magnesium",
+        dosageValue: 200,
+        dosageUnit: "mg",
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(ingredient.normalizedDose.displayText, "200 mg");
+  assert.equal(ingredient.dosageDisplay, "200 mg");
+  assert.equal(ingredient.normalizedDose.isStructurallyUsable, true);
+  assert.equal(ingredient.normalizedDose.isVerified, true);
+  assert.equal(ingredient.normalizedDose.isScoringEligible, true);
+  assert.equal(ingredient.doseComparisonStatus, "within_target_range");
+  assert.equal(ingredient.doseStatusLabel, "Meets target dose");
+  assert.equal(ingredient.validatedDoseFactor, 1);
+});
+
+test("partial, unverified, unsupported, and sentinel doses are explicit and unscored", () => {
+  const supplementsByCatalogId = new Map(
+    [
+      "missing-unit",
+      "missing-value",
+      "unsupported-unit",
+      "unverified",
+      "per-100g",
+      "sentinel",
+      "malformed",
+    ].map((id) =>
+      createSupplement({ id, evidenceScore: 80, minValue: 100 }),
+    ),
+  );
+
+  const results = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "missing-unit",
+        dosageValue: 200,
+        dosageUnit: null,
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+      {
+        catalogId: "missing-value",
+        dosageValue: null,
+        dosageUnit: "mg",
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+      {
+        catalogId: "unsupported-unit",
+        dosageValue: 200,
+        dosageUnit: "%",
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+      {
+        catalogId: "unverified",
+        dosageValue: 200,
+        dosageUnit: "mg",
+        amountBasis: "per_serving",
+        doseConfidence: "unverified",
+        doseReviewReason: "OCR row mismatch",
+      },
+      {
+        catalogId: "per-100g",
+        dosageValue: 200,
+        dosageUnit: "mg",
+        amountBasis: "per_100g",
+        doseConfidence: "verified",
+      },
+      {
+        catalogId: "sentinel",
+        dosageValue: "not available",
+        dosageUnit: "unknown",
+        amountBasis: "unknown",
+        doseConfidence: "missing",
+      },
+      {
+        catalogId: "malformed",
+        dosageValue: "two hundred mg",
+        dosageUnit: null,
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+  const byId = new Map(results.map((result) => [result.catalogId, result]));
+
+  assert.equal(byId.get("missing-unit").doseStatusLabel, "Dose unit unavailable");
+  assert.equal(byId.get("missing-value").doseStatusLabel, "Dose could not be parsed");
+  assert.equal(
+    byId.get("unsupported-unit").doseStatusLabel,
+    "Dose unit unsupported",
+  );
+  assert.equal(byId.get("unverified").doseStatusLabel, "Dose not verified");
+  assert.equal(byId.get("unverified").doseReviewReason, "OCR row mismatch");
+  assert.equal(byId.get("per-100g").amountBasis, "per_100g");
+  assert.equal(byId.get("per-100g").doseStatusLabel, "Dose basis unsupported");
+  assert.equal(byId.get("sentinel").dosageValue, null);
+  assert.equal(byId.get("sentinel").dosageUnit, null);
+  assert.equal(byId.get("sentinel").amountBasis, null);
+  assert.equal(
+    byId.get("malformed").doseStatusLabel,
+    "Dose could not be parsed",
+  );
+  results.forEach((result) => {
+    assert.equal(result.validatedDoseFactor, null);
+    assert.equal(result.doseComparisonValid, false);
+  });
+});
+
+test("missing confidence follows the legacy-compatible scoring policy", () => {
+  const normalizedDose = normalizeIngredientDose({
+    dosageValue: "200",
+    dosageUnit: "μg",
+    amountBasis: "per_serving",
+    doseConfidence: null,
+  });
+
+  assert.equal(normalizedDose.value, 200);
+  assert.equal(normalizedDose.unit, "mcg");
+  assert.equal(normalizedDose.confidenceStatus, "legacy");
+  assert.equal(normalizedDose.isVerified, false);
+  assert.equal(normalizedDose.isLegacyConfidence, true);
+  assert.equal(normalizedDose.isScoringEligible, true);
+
+  const zeroDose = normalizeIngredientDose({
+    dosageValue: "0",
+    dosageUnit: "mg",
+    amountBasis: "per_serving",
+  });
+  assert.equal(zeroDose.value, 0);
+  assert.equal(zeroDose.displayText, "0 mg");
+  assert.equal(zeroDose.isScoringEligible, true);
 });
 
 test("aggregates DHA and EPA against a shared omega-3 target", () => {
@@ -472,23 +701,23 @@ test("treats missing actual dose, unknown amount bases, and unclear serving text
       servingSizeText: "Take with breakfast",
     });
 
-  assert.equal(missingActual.doseComparisonStatus, "missing_actual_dose");
+  assert.equal(missingActual.doseComparisonStatus, "missing_dose_information");
   assert.equal(missingActual.doseStatusLabel, "Dose unavailable");
   assert.equal(missingActual.scoreAdjustmentSummary, null);
   assert.equal(missingActual.doseFactor, 1);
   assert.equal(missingActual.validatedDoseFactor, null);
   assert.equal(missingActual.doseComparisonValid, false);
   assert.equal(missingActual.adjustedEvidenceScore, 75);
-  assert.equal(unknownBasis.doseComparisonStatus, "unknown_amount_basis");
-  assert.equal(unknownBasis.doseStatusLabel, "Dose unavailable");
+  assert.equal(unknownBasis.doseComparisonStatus, "unsupported_amount_basis");
+  assert.equal(unknownBasis.doseStatusLabel, "Dose basis unsupported");
   assert.equal(unknownBasis.scoreAdjustmentSummary, null);
   assert.equal(unknownBasis.doseFactor, 1);
   assert.equal(unknownBasis.validatedDoseFactor, null);
   assert.equal(unknownBasis.doseComparisonValid, false);
   assert.equal(unknownBasis.adjustedEvidenceScore, 70);
-  assert.deepEqual(unknownBasis.doseFlags, ["unknown_amount_basis"]);
+  assert.deepEqual(unknownBasis.doseFlags, ["unsupported_amount_basis"]);
   assert.equal(unclearServing.doseComparisonStatus, "serving_size_unparseable");
-  assert.equal(unclearServing.doseStatusLabel, "Dose unavailable");
+  assert.equal(unclearServing.doseStatusLabel, "Serving size unclear");
   assert.equal(unclearServing.scoreAdjustmentSummary, null);
   assert.equal(unclearServing.doseFactor, 1);
   assert.equal(unclearServing.validatedDoseFactor, null);

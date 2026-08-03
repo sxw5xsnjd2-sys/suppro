@@ -66,6 +66,8 @@ function loadScannerStoreModule(overrides = {}) {
     "extractIngredientCandidatesFromList",
     "extractBestIngredientCandidates",
     "matchIngredientsToCatalog",
+    "buildScanResultHydrationKey",
+    "invalidateScanResultHydration",
     `${transformed}
 return { useScannerStore };`
   );
@@ -178,7 +180,17 @@ return { useScannerStore };`
         matchedIngredients: [],
         matches: [],
         unmatchedIngredients: Array.isArray(ingredients) ? ingredients : [],
-      }))
+      })),
+    overrides.buildScanResultHydrationKey ??
+      (({ scanRequestId, productId, scanSessionId, resultRevision }) => {
+        const requestKey = scanRequestId || `session-${scanSessionId}`;
+        const revisionKey =
+          Number.isFinite(resultRevision) && resultRevision > 0
+            ? `:revision-${resultRevision}`
+            : "";
+        return `${requestKey}:${productId || "no-product"}${revisionKey}`;
+      }),
+    overrides.invalidateScanResultHydration ?? (() => {})
   );
 }
 
@@ -197,6 +209,7 @@ test("scanner barcode orchestration checks supplement master before fallbacks", 
         sourceIngredients: [{ name: "Magnesium", dosageValue: 200, dosageUnit: "mg" }],
         scanDataSource: "supplement_products_master",
         sourceStatus: 1,
+        photoImprovementRevision: 4,
       };
     },
     fetchOpenFoodFactsProduct: async () => {
@@ -227,6 +240,7 @@ test("scanner barcode orchestration checks supplement master before fallbacks", 
 
   assert.deepEqual(sequence, ["local"]);
   assert.equal(state.status, "success");
+  assert.equal(state.photoRescueRevision, 4);
   assert.equal(state.product.productId, "prod_local");
   assert.equal(
     state.product.sourceDecision.final_source_used,
@@ -1956,4 +1970,261 @@ test("photo rescue forwards barcodeType from scanner state", async () => {
   assert.equal(capturedPayload?.barcode, "X00131RGZ5");
   assert.equal(capturedPayload?.barcodeType, "code128");
   assert.equal(capturedPayload?.scanSessionId, "11");
+  assert.match(capturedPayload?.photoAttemptId ?? "", /^photo-/u);
+  assert.equal(capturedPayload?.expectedRevision, 0);
+  assert.equal(capturedPayload?.proposedRevision, 1);
+});
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function createPhotoRescueExtraction(version, overrides = {}) {
+  return {
+    productId: "product-1",
+    displayName: `Product version ${version}`,
+    productName: `Product version ${version}`,
+    ingredients: [`Magnesium ${version}00 mg`],
+    servingSizeText: "1 capsule",
+    source: "photo_rescue",
+    confidence: 0.9,
+    classificationConfidence: 0.9,
+    createdProduct: false,
+    wroteCanonicalData: true,
+    isSupplement: true,
+    category: "supplement",
+    message: "",
+    unresolvedIngredientCount: 0,
+    rawText: "",
+    persistenceOutcome: "applied",
+    committedRevision: version - 1,
+    acceptedAttemptId: `attempt-${version - 1}`,
+    storedRevision: version - 1,
+    followUpWarnings: [],
+    ...overrides,
+  };
+}
+
+function setActivePhotoRescueScan(useScannerStore) {
+  useScannerStore.setState({
+    status: "success",
+    scanSessionId: 11,
+    scanRequestId: "scan-request-11",
+    barcode: "X00131RGZ5",
+    barcodeType: "code128",
+    product: {
+      productId: "product-1",
+      productName: "Product version 1",
+    },
+  });
+}
+
+test("two sequential photo improvements increment the result revision", async () => {
+  let extractionVersion = 1;
+  const requests = [];
+  const invalidatedKeys = [];
+  const { useScannerStore } = loadScannerStoreModule({
+    scanSupplementPhotos: async (payload) => {
+      requests.push(payload);
+      extractionVersion += 1;
+      return createPhotoRescueExtraction(extractionVersion, {
+        acceptedAttemptId: payload.photoAttemptId,
+      });
+    },
+    invalidateScanResultHydration: (hydrationKey) => {
+      invalidatedKeys.push(hydrationKey);
+    },
+  });
+  setActivePhotoRescueScan(useScannerStore);
+
+  await useScannerStore.getState().enhanceScanWithPhotos({
+    scanSessionId: 11,
+    ingredientsPhoto: "data:image/png;base64,first-ingredients",
+    productPhoto: "data:image/png;base64,first-product",
+  });
+  const afterFirstImprovement = useScannerStore.getState();
+
+  await useScannerStore.getState().enhanceScanWithPhotos({
+    scanSessionId: 11,
+    ingredientsPhoto: "data:image/png;base64,second-ingredients",
+    productPhoto: "data:image/png;base64,second-product",
+  });
+  const afterSecondImprovement = useScannerStore.getState();
+
+  assert.equal(afterFirstImprovement.photoRescueRevision, 1);
+  assert.equal(afterFirstImprovement.product.productName, "Product version 2");
+  assert.equal(afterSecondImprovement.photoRescueRevision, 2);
+  assert.equal(afterSecondImprovement.product.productName, "Product version 3");
+  assert.deepEqual(invalidatedKeys, [
+    "scan-request-11:product-1",
+    "scan-request-11:product-1:revision-1",
+  ]);
+  assert.deepEqual(
+    requests.map(({ expectedRevision, proposedRevision }) => ({
+      expectedRevision,
+      proposedRevision,
+    })),
+    [
+      { expectedRevision: 0, proposedRevision: 1 },
+      { expectedRevision: 1, proposedRevision: 2 },
+    ],
+  );
+});
+
+test("database-rejected stale photo improvements do not update product or revision", async () => {
+  const invalidatedKeys = [];
+  const { useScannerStore } = loadScannerStoreModule({
+    scanSupplementPhotos: async () =>
+      createPhotoRescueExtraction(5, {
+        persistenceOutcome: "rejected_stale",
+        wroteCanonicalData: false,
+        committedRevision: 4,
+        acceptedAttemptId: 9,
+        storedRevision: 4,
+      }),
+    invalidateScanResultHydration: (hydrationKey) => {
+      invalidatedKeys.push(hydrationKey);
+    },
+  });
+  setActivePhotoRescueScan(useScannerStore);
+  useScannerStore.setState({ photoRescueRevision: 1 });
+
+  const result = await useScannerStore.getState().enhanceScanWithPhotos({
+    scanSessionId: 11,
+    ingredientsPhoto: "data:image/png;base64,stale-ingredients",
+    productPhoto: "data:image/png;base64,stale-product",
+  });
+
+  const finalState = useScannerStore.getState();
+  assert.equal(result, null);
+  assert.equal(finalState.product.productName, "Product version 1");
+  assert.equal(finalState.photoRescueRevision, 1);
+  assert.equal(finalState.photoRescueStatus, "idle");
+  assert.deepEqual(invalidatedKeys, []);
+});
+
+test("photo rescue screen does not navigate when persistence returns no applied state", () => {
+  const screen = readFileSync(
+    new URL("../../app/scanner/photo-rescue.jsx", import.meta.url),
+    "utf8",
+  );
+  const resultGuard = screen.indexOf("if (!improvedScanState)");
+  const firstSuccessNavigation = screen.indexOf("router.replace({", resultGuard);
+
+  assert.ok(resultGuard >= 0);
+  assert.ok(firstSuccessNavigation > resultGuard);
+  assert.match(
+    screen.slice(resultGuard, firstSuccessNavigation),
+    /if \(!improvedScanState\) \{\s*return;\s*\}/u,
+  );
+});
+
+test("out-of-order photo improvements only apply the newest attempt", async () => {
+  const firstExtraction = createDeferred();
+  const secondExtraction = createDeferred();
+  let firstRequest = null;
+  let secondRequest = null;
+  const invalidatedKeys = [];
+  const { useScannerStore } = loadScannerStoreModule({
+    scanSupplementPhotos: (payload) => {
+      if (payload.ingredientsImage.includes("first")) {
+        firstRequest = payload;
+        return firstExtraction.promise;
+      }
+      secondRequest = payload;
+      return secondExtraction.promise;
+    },
+    invalidateScanResultHydration: (hydrationKey) => {
+      invalidatedKeys.push(hydrationKey);
+    },
+  });
+  setActivePhotoRescueScan(useScannerStore);
+
+  const firstAttempt = useScannerStore.getState().enhanceScanWithPhotos({
+    scanSessionId: 11,
+    ingredientsPhoto: "data:image/png;base64,first-ingredients",
+    productPhoto: "data:image/png;base64,first-product",
+  });
+  const secondAttempt = useScannerStore.getState().enhanceScanWithPhotos({
+    scanSessionId: 11,
+    ingredientsPhoto: "data:image/png;base64,second-ingredients",
+    productPhoto: "data:image/png;base64,second-product",
+  });
+
+  assert.notEqual(firstRequest.photoAttemptId, secondRequest.photoAttemptId);
+
+  secondExtraction.resolve(
+    createPhotoRescueExtraction(3, {
+      committedRevision: 1,
+      acceptedAttemptId: secondRequest.photoAttemptId,
+    }),
+  );
+  await secondAttempt;
+  firstExtraction.resolve(
+    createPhotoRescueExtraction(2, {
+      persistenceOutcome: "rejected_stale",
+      wroteCanonicalData: false,
+      committedRevision: 1,
+      acceptedAttemptId: secondRequest.photoAttemptId,
+      storedRevision: 1,
+    }),
+  );
+  const staleResult = await firstAttempt;
+
+  const finalState = useScannerStore.getState();
+  assert.equal(staleResult, null);
+  assert.equal(finalState.photoRescueAttemptId, 2);
+  assert.equal(finalState.photoRescueRevision, 1);
+  assert.equal(finalState.product.productName, "Product version 3");
+  assert.deepEqual(invalidatedKeys, ["scan-request-11:product-1"]);
+});
+
+test("photo improvement is ignored after a different scan becomes active", async () => {
+  const extraction = createDeferred();
+  const invalidatedKeys = [];
+  const { useScannerStore } = loadScannerStoreModule({
+    scanSupplementPhotos: async () => extraction.promise,
+    invalidateScanResultHydration: (hydrationKey) => {
+      invalidatedKeys.push(hydrationKey);
+    },
+  });
+  setActivePhotoRescueScan(useScannerStore);
+
+  const staleAttempt = useScannerStore.getState().enhanceScanWithPhotos({
+    scanSessionId: 11,
+    ingredientsPhoto: "data:image/png;base64,old-ingredients",
+    productPhoto: "data:image/png;base64,old-product",
+  });
+  useScannerStore.setState({
+    status: "success",
+    scanSessionId: 12,
+    scanRequestId: "scan-request-12",
+    barcode: "0999999999999",
+    product: {
+      productId: "product-2",
+      productName: "Different scanned product",
+    },
+    photoRescueStatus: "idle",
+    photoRescueAttemptId: 0,
+    photoRescueRevision: 0,
+  });
+
+  extraction.resolve(
+    createPhotoRescueExtraction(2, { committedRevision: 1 }),
+  );
+  const staleResult = await staleAttempt;
+
+  const finalState = useScannerStore.getState();
+  assert.equal(staleResult, null);
+  assert.equal(finalState.scanSessionId, 12);
+  assert.equal(finalState.product.productId, "product-2");
+  assert.equal(finalState.product.productName, "Different scanned product");
+  assert.equal(finalState.photoRescueRevision, 0);
+  assert.deepEqual(invalidatedKeys, []);
 });

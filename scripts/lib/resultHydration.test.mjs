@@ -15,6 +15,7 @@ function loadResultHydrationModule() {
       buildScanResultHydrationKey,
       clearScanResultHydrationCachesForTests,
       hydrateScanResultOnce,
+      invalidateScanResultHydration,
       persistScanResultHistoryOnce,
     };`,
   )();
@@ -85,6 +86,63 @@ test("a new scan request creates a new hydration", async () => {
   assert.equal(first, 1);
   assert.equal(second, 2);
   assert.equal(hydrationCalls, 2);
+});
+
+test("photo improvements invalidate hydration and load once per revision", async () => {
+  const helpers = loadResultHydrationModule();
+  helpers.clearScanResultHydrationCachesForTests();
+  let canonicalVersion = 1;
+  let hydrationCalls = 0;
+  const hydrate = async () => {
+    hydrationCalls += 1;
+    return { productId: "product-1", canonicalVersion };
+  };
+  const buildKey = (resultRevision) =>
+    helpers.buildScanResultHydrationKey({
+      scanRequestId: "scan-request-1",
+      productId: "product-1",
+      scanSessionId: 1,
+      resultRevision,
+    });
+
+  const initialKey = buildKey(0);
+  const beforePhotoImprovement = await helpers.hydrateScanResultOnce(
+    initialKey,
+    hydrate,
+  );
+  const initialRerender = await helpers.hydrateScanResultOnce(
+    initialKey,
+    hydrate,
+  );
+
+  helpers.invalidateScanResultHydration(initialKey);
+  canonicalVersion = 2;
+  const firstImprovementKey = buildKey(1);
+  const afterFirstImprovement = await helpers.hydrateScanResultOnce(
+    firstImprovementKey,
+    hydrate,
+  );
+  const firstImprovementRerender = await helpers.hydrateScanResultOnce(
+    firstImprovementKey,
+    hydrate,
+  );
+
+  helpers.invalidateScanResultHydration(firstImprovementKey);
+  canonicalVersion = 3;
+  const secondImprovementKey = buildKey(2);
+  const afterSecondImprovement = await helpers.hydrateScanResultOnce(
+    secondImprovementKey,
+    hydrate,
+  );
+
+  assert.equal(beforePhotoImprovement.canonicalVersion, 1);
+  assert.equal(initialRerender.canonicalVersion, 1);
+  assert.equal(afterFirstImprovement.canonicalVersion, 2);
+  assert.equal(firstImprovementRerender.canonicalVersion, 2);
+  assert.equal(afterSecondImprovement.canonicalVersion, 3);
+  assert.notEqual(initialKey, firstImprovementKey);
+  assert.notEqual(firstImprovementKey, secondImprovementKey);
+  assert.equal(hydrationCalls, 3);
 });
 
 test("an older hydration result cannot overwrite a newer scan", async () => {

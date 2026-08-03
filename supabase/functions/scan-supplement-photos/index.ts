@@ -7,12 +7,16 @@ import {
 import { enforceEdgeFunctionQuota } from "../_shared/quota.ts";
 import { enqueueProductScoreRefresh } from "../_shared/product-score-refresh.ts";
 import { validateScanSupplementPhotosRequest } from "../_shared/scan-supplement-photos-policy.js";
-
-declare const EdgeRuntime:
-  | {
-      waitUntil?: (promise: Promise<unknown>) => void;
-    }
-  | undefined;
+import {
+  applyIngredientEvidencePolicy,
+  mergeDoseCorrections,
+  normalizeAzureIngredientPanelOcr,
+  normalizeExtractedDosePair,
+  parseOpenAiStructuredCompletion,
+  validateDoseVerificationModelOutput,
+  validatePhotoRescueModelOutput,
+  verifyDoseAgainstOcr,
+} from "../_shared/photo-extraction-reliability.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,7 +48,7 @@ const RETAIL_BARCODE_TYPES = new Set(["ean13", "ean8", "upc_a", "upc_e"]);
 const ALPHANUMERIC_BARCODE_TYPES = new Set(["code128", "code39", "code93"]);
 const ALLOWED_UNITS = new Set(["mcg", "mg", "g", "ml", "IU", "CFU"]);
 const CLASSIFICATION_PROMPT_VERSION = "photo_rescue_classify_v1";
-const EXTRACTION_PROMPT_VERSION = "photo_rescue_extract_v1";
+const EXTRACTION_PROMPT_VERSION = "photo_rescue_extract_v2";
 const NAMING_PROMPT_VERSION = "photo_rescue_naming_v1";
 const REVIEW_PROCESSOR_FUNCTION = "process-photo-rescue-reviews";
 
@@ -143,6 +147,15 @@ const photoRescueResponseSchema = {
               type: ["string", "null"],
               enum: [...AMOUNT_BASIS_VALUES, null],
             },
+            evidence_source: {
+              type: "string",
+              enum: [
+                "ingredient_panel_ocr",
+                "ingredient_panel_image",
+                "front_label",
+                "unknown",
+              ],
+            },
           },
           required: [
             "raw_name",
@@ -153,6 +166,7 @@ const photoRescueResponseSchema = {
             "dosage_original_text",
             "chemical_form",
             "amount_basis",
+            "evidence_source",
           ],
         },
       },
@@ -199,12 +213,40 @@ const doseVerificationResponseSchema = {
             dosage_value: { type: ["number", "null"] },
             dosage_unit: { type: ["string", "null"] },
             dosage_original_text: { type: ["string", "null"] },
+            decision: {
+              type: "string",
+              enum: [
+                "verified",
+                "corrected",
+                "retracted",
+                "unverified",
+                "missing",
+              ],
+            },
+            review_reason: {
+              type: ["string", "null"],
+              enum: [
+                "ingredient_row_not_found",
+                "dose_not_on_same_row",
+                "ambiguous_neighboring_dose",
+                "verifier_retracted_dose",
+                "front_label_only",
+                "malformed_model_output",
+                "ocr_structure_unavailable",
+                "missing_dose_value",
+                "missing_dose_unit",
+                "unsupported_unit",
+                null,
+              ],
+            },
           },
           required: [
             "index",
             "dosage_value",
             "dosage_unit",
             "dosage_original_text",
+            "decision",
+            "review_reason",
           ],
         },
       },
@@ -253,12 +295,27 @@ type NormalizedIngredient = {
   dosage_original_text: string | null;
   chemical_form: string | null;
   amount_basis: string | null;
+  evidence_source:
+    | "ingredient_panel_ocr"
+    | "ingredient_panel_image"
+    | "front_label"
+    | "unknown";
+  evidence_reference?: string | null;
+  evidence_confidence?: number | null;
+  dose_confidence?: "verified" | "unverified" | "missing";
+  dose_review_reason?: string | null;
+  verifier_decision?: string | null;
+  first_pass_dosage_value?: number | null;
+  first_pass_dosage_unit?: string | null;
+  first_pass_dosage_original_text?: string | null;
 };
 
 type AzureIngredientPanelOcr = {
   fullText: string;
   lines: string[];
   tableRows: string[];
+  structuredLines: Record<string, unknown>[];
+  structuredRows: Record<string, unknown>[];
   combinedText: string;
 };
 
@@ -337,6 +394,59 @@ function normalizeWhitespace(value: unknown): string {
 
 function normalizeTextKey(value: unknown): string {
   return normalizeWhitespace(value).toLowerCase();
+}
+
+function isDevelopmentPhotoLoggingEnabled() {
+  const environment = [
+    Deno.env.get("APP_ENV"),
+    Deno.env.get("DENO_ENV"),
+    Deno.env.get("ENVIRONMENT"),
+    Deno.env.get("SUPABASE_ENV"),
+  ]
+    .map((value) => trimString(value).toLowerCase())
+    .find(Boolean);
+  return (
+    ["development", "dev", "local", "test"].includes(environment || "") ||
+    /(?:localhost|127\.0\.0\.1)/u.test(supabaseUrl || "")
+  );
+}
+
+function logPhotoExtractionDiagnostic(
+  photoAttemptId: string | null,
+  event: string,
+  details: Record<string, unknown>
+) {
+  if (!isDevelopmentPhotoLoggingEnabled()) return;
+  console.info("[photo-extraction-reliability]", {
+    photoAttemptId,
+    event,
+    ...details,
+  });
+}
+
+function logPhotoPersistenceOutcome({
+  productId,
+  photoAttemptId,
+  expectedRevision,
+  proposedRevision,
+  storedRevision,
+  transactionOutcome,
+}: {
+  productId: string;
+  photoAttemptId: string;
+  expectedRevision: number;
+  proposedRevision: number;
+  storedRevision: number | null;
+  transactionOutcome: string;
+}) {
+  console.info("[photo-improvement-persistence]", {
+    productId,
+    photoAttemptId,
+    expectedRevision,
+    proposedRevision,
+    storedRevision,
+    transactionOutcome,
+  });
 }
 
 function canonicalizeBarcodeType(value: unknown): string {
@@ -419,15 +529,6 @@ function normalizeBarcode(value: unknown, barcodeType?: unknown): string {
   return rawBarcode;
 }
 
-function parseIntegerLike(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.trunc(value);
-  }
-
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function parseOptionalNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -506,23 +607,10 @@ function buildBarcodeLookupCandidates(
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-function extractCompletionContent(rawContent: unknown): string {
-  if (typeof rawContent === "string") {
-    return rawContent.trim();
-  }
-
-  if (!Array.isArray(rawContent)) {
-    return "";
-  }
-
-  return rawContent
-    .map((part) => {
-      if (typeof part?.text === "string") return part.text;
-      if (typeof part?.content === "string") return part.content;
-      return "";
-    })
-    .join("")
-    .trim();
+function createPhotoImprovementError(message: string, code: string) {
+  const error = new Error(message) as Error & { code?: string };
+  error.code = code;
+  return error;
 }
 
 function cleanIngredientText(value: unknown): string {
@@ -749,138 +837,6 @@ function normalizeUnit(value: unknown) {
   return normalized;
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function getUnitSearchVariants(rawUnit: string): string[] {
-  const normalized = normalizeUnit(rawUnit);
-  switch (normalized) {
-    case "mcg":
-      return ["mcg", "µg", "μg", "ug", "micrograms", "microgram"];
-    case "mg":
-      return ["mg", "milligrams", "milligram"];
-    case "g":
-      return ["g", "grams", "gram"];
-    case "ml":
-      return ["ml", "mL"];
-    case "IU":
-      return ["IU", "i.u.", "iu"];
-    case "CFU":
-      return ["CFU", "cfu"];
-    default:
-      return rawUnit ? [rawUnit] : [];
-  }
-}
-
-function buildDoseSearchPatterns(
-  rawValue: number,
-  rawUnit: string | null,
-  originalText: string | null
-): RegExp[] {
-  const patterns: RegExp[] = [];
-
-  if (originalText) {
-    try {
-      patterns.push(new RegExp(escapeRegExp(originalText.trim()), "i"));
-    } catch {}
-  }
-
-  if (!rawUnit) return patterns;
-
-  const unitVariants = getUnitSearchVariants(rawUnit);
-  const valueStr = String(rawValue);
-
-  for (const unitVariant of unitVariants) {
-    try {
-      patterns.push(
-        new RegExp(
-          `\\b${escapeRegExp(valueStr)}\\s*${escapeRegExp(unitVariant)}\\b`,
-          "i"
-        )
-      );
-    } catch {}
-  }
-
-  return patterns;
-}
-
-function verifyDoseAgainstOcr({
-  ingredientName,
-  rawDosageValue,
-  rawDosageUnit,
-  dosageOriginalText,
-  ocrText,
-}: {
-  ingredientName: string;
-  rawDosageValue: number | null;
-  rawDosageUnit: string | null;
-  dosageOriginalText: string | null;
-  ocrText: string;
-}): { confidence: "verified" | "unverified" | "missing"; reason: string | null } {
-  if (!Number.isFinite(rawDosageValue)) {
-    return { confidence: "missing", reason: null };
-  }
-
-  const cleanedOcr = ocrText.trim();
-  if (!cleanedOcr) {
-    return {
-      confidence: "unverified",
-      reason: "No OCR text available for verification",
-    };
-  }
-
-  const dosePatterns = buildDoseSearchPatterns(
-    rawDosageValue as number,
-    rawDosageUnit,
-    dosageOriginalText
-  );
-
-  if (!dosePatterns.length) {
-    return { confidence: "unverified", reason: "No dose patterns to verify" };
-  }
-
-  const ingredientKey = normalizeBroadIngredientName(ingredientName);
-  if (!ingredientKey) {
-    return {
-      confidence: "unverified",
-      reason: "Could not normalize ingredient name",
-    };
-  }
-
-  const ingredientWords = ingredientKey.split(" ").filter(Boolean);
-  const lines = cleanedOcr
-    .split(/\n+/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  for (let i = 0; i < lines.length; i++) {
-    const normalizedLine = normalizePlainText(lines[i]);
-
-    const ingredientOnLine =
-      normalizedLine.includes(ingredientKey) ||
-      (ingredientWords.length > 1 &&
-        ingredientWords.every((word) => normalizedLine.includes(word)));
-
-    if (!ingredientOnLine) continue;
-
-    const start = Math.max(0, i - 1);
-    const end = Math.min(lines.length - 1, i + 2);
-    const context = lines.slice(start, end + 1).join(" ");
-
-    for (const pattern of dosePatterns) {
-      if (pattern.test(context)) {
-        return { confidence: "verified", reason: null };
-      }
-    }
-  }
-
-  return {
-    confidence: "unverified",
-    reason: "Extracted dose could not be verified against OCR text",
-  };
-}
-
 function normalizeDosage({
   dosageValue,
   dosageUnit,
@@ -894,30 +850,39 @@ function normalizeDosage({
   const unit = normalizeUnit(dosageUnit);
   const originalText = trimString(dosageOriginalText);
 
-  if (!unit) {
+  if (!Number.isFinite(value) && !unit) {
     return {
-      value,
+      value: null,
       unit: null,
       originalText: originalText || null,
       invalidReason: null,
     };
   }
 
-  if (!ALLOWED_UNITS.has(unit)) {
+  if (Number.isFinite(value) && !unit) {
     return {
-      value,
-      unit,
+      value: null,
+      unit: null,
       originalText: originalText || null,
-      invalidReason: unit === "pg" ? "ocr_unit_noise" : "unsupported_unit",
+      invalidReason: "missing_dose_unit",
     };
   }
 
-  if (!Number.isFinite(value)) {
+  if (!Number.isFinite(value) && unit) {
     return {
       value: null,
-      unit,
+      unit: null,
       originalText: originalText || null,
-      invalidReason: null,
+      invalidReason: "missing_dose_value",
+    };
+  }
+
+  if (!ALLOWED_UNITS.has(unit)) {
+    return {
+      value: null,
+      unit: null,
+      originalText: originalText || null,
+      invalidReason: unit === "pg" ? "ocr_unit_noise" : "unsupported_unit",
     };
   }
 
@@ -973,113 +938,6 @@ function buildAzureDocumentIntelligenceHeaders(apiKey: string) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function extractAzureTableRows(tables: unknown): string[] {
-  if (!Array.isArray(tables)) {
-    return [];
-  }
-
-  const rows: string[] = [];
-
-  tables.forEach((table) => {
-    const cells = Array.isArray((table as Record<string, unknown>)?.cells)
-      ? (((table as Record<string, unknown>).cells as unknown[]) ?? [])
-      : [];
-    const rowMap = new Map<number, Map<number, string>>();
-
-    cells.forEach((candidate) => {
-      const cell = candidate as Record<string, unknown>;
-      const rowIndex = parseIntegerLike(cell?.rowIndex);
-      const columnIndex = parseIntegerLike(cell?.columnIndex);
-      const content = normalizeWhitespace(cell?.content);
-
-      if (rowIndex === null || columnIndex === null || !content) {
-        return;
-      }
-
-      const nextRow = rowMap.get(rowIndex) ?? new Map<number, string>();
-      const existing = nextRow.get(columnIndex);
-      nextRow.set(
-        columnIndex,
-        existing ? `${existing} ${content}`.trim() : content
-      );
-      rowMap.set(rowIndex, nextRow);
-    });
-
-    Array.from(rowMap.keys())
-      .sort((a, b) => a - b)
-      .forEach((rowIndex) => {
-        const columns = rowMap.get(rowIndex);
-        if (!columns) {
-          return;
-        }
-
-        const orderedValues = Array.from(columns.entries())
-          .sort(([left], [right]) => left - right)
-          .map(([, value]) => normalizeWhitespace(value));
-
-        while (orderedValues.length && !orderedValues.at(-1)) {
-          orderedValues.pop();
-        }
-
-        if (!orderedValues.some(Boolean)) {
-          return;
-        }
-
-        rows.push(orderedValues.join("\t"));
-      });
-  });
-
-  return Array.from(new Set(rows));
-}
-
-function normalizeAzureIngredientPanelOcr(
-  value: unknown
-): AzureIngredientPanelOcr | null {
-  const row = (value ?? {}) as Record<string, unknown>;
-  const analyzeResult =
-    row?.analyzeResult && typeof row.analyzeResult === "object"
-      ? (row.analyzeResult as Record<string, unknown>)
-      : row;
-
-  const pages = Array.isArray(analyzeResult?.pages)
-    ? (analyzeResult.pages as unknown[])
-    : [];
-  const lines = Array.from(
-    new Set(
-      pages
-        .flatMap((page) =>
-          Array.isArray((page as Record<string, unknown>)?.lines)
-            ? (((page as Record<string, unknown>).lines as unknown[]) ?? [])
-            : []
-        )
-        .map((line) => normalizeWhitespace((line as Record<string, unknown>)?.content))
-        .filter(Boolean)
-    )
-  );
-  const tableRows = extractAzureTableRows(analyzeResult?.tables);
-  const fullText = trimString(analyzeResult?.content);
-
-  const combinedText = [
-    tableRows.length ? ["Table rows (TSV):", ...tableRows].join("\n") : "",
-    lines.length ? ["OCR lines:", ...lines].join("\n") : "",
-    fullText ? `Full OCR text:\n${fullText}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n")
-    .trim();
-
-  if (!combinedText) {
-    return null;
-  }
-
-  return {
-    fullText,
-    lines,
-    tableRows,
-    combinedText,
-  };
 }
 
 async function fetchAzureIngredientPanelOcr(ingredientsImage: string) {
@@ -1169,6 +1027,11 @@ async function tryFetchAzureIngredientPanelOcr(ingredientsImage: string) {
 function normalizeIngredient(item: unknown): NormalizedIngredient {
   const ingredient = item as Record<string, unknown>;
   const amountBasis = trimString(ingredient?.amount_basis);
+  const dosePair = normalizeExtractedDosePair(
+    ingredient?.dosage_value,
+    ingredient?.dosage_unit
+  );
+  const evidenceSource = trimString(ingredient?.evidence_source);
 
   return {
     raw_name: cleanIngredientText(ingredient?.raw_name),
@@ -1181,14 +1044,31 @@ function normalizeIngredient(item: unknown): NormalizedIngredient {
           | "inactive"
           | "uncertain")
       : "uncertain",
-    dosage_value: parseOptionalNumber(ingredient?.dosage_value),
-    dosage_unit: trimString(ingredient?.dosage_unit) || null,
+    dosage_value: dosePair.value,
+    dosage_unit: dosePair.unit,
     dosage_original_text: trimString(ingredient?.dosage_original_text) || null,
     chemical_form: cleanIngredientText(ingredient?.chemical_form) || null,
     amount_basis: (amountBasis &&
     AMOUNT_BASIS_VALUES.includes(amountBasis as never)
       ? amountBasis
       : "unknown") as (typeof AMOUNT_BASIS_VALUES)[number] | null,
+    evidence_source: [
+      "ingredient_panel_ocr",
+      "ingredient_panel_image",
+      "front_label",
+      "unknown",
+    ].includes(evidenceSource)
+      ? (evidenceSource as NormalizedIngredient["evidence_source"])
+      : "unknown",
+    evidence_reference: null,
+    evidence_confidence: null,
+    dose_confidence:
+      dosePair.isUsable || dosePair.reviewReason ? "unverified" : "missing",
+    dose_review_reason: dosePair.reviewReason,
+    first_pass_dosage_value: parseOptionalNumber(ingredient?.dosage_value),
+    first_pass_dosage_unit: normalizeUnit(ingredient?.dosage_unit),
+    first_pass_dosage_original_text:
+      trimString(ingredient?.dosage_original_text) || null,
   };
 }
 
@@ -1252,6 +1132,8 @@ function buildSystemPrompt({
     "Extract brand_name and product_name separately whenever the front label supports it.",
     "If the front label reads like '<Brand> <Product>', split the first part into brand_name and the remainder into product_name when that split is visually supported.",
     "For extraction, keep only active supplement ingredients where possible.",
+    "For every ingredient, set evidence_source to ingredient_panel_ocr when it comes from the supplied panel OCR, ingredient_panel_image when it is visible on the facts/ingredients image, front_label when it appears only on the front image, or unknown when its source cannot be established.",
+    "Front-label marketing claims must not independently create an active ingredient. Mark front-label-only mentions uncertain with null dose fields.",
     "Internally reconstruct any visible supplement facts or nutrition table row-by-row before producing ingredients_found. Do not output that reconstruction.",
     "Use a dose-extraction hierarchy: structured table first, inline ingredient doses second, ingredient names without doses last.",
     "If a structured table exists, treat it as the primary source of truth and extract every row with an explicit numeric dose.",
@@ -1316,6 +1198,7 @@ Return:
   - dosageValue (number, if shown)
   - dosageUnit (mg, mcg, g, IU, etc.)
   - amountBasis ("per_serving", "per_capsule", "per_tablet", etc.)
+  - evidence_source ("ingredient_panel_ocr", "ingredient_panel_image", "front_label", or "unknown")
 
 Dosage rules:
 - Use ONLY values explicitly visible on the photographed label, especially the supplement facts / ingredients panel
@@ -1333,6 +1216,8 @@ Dosage rules:
 - If dosageValue or dosageUnit is null because of uncertainty, dosage_original_text must include the exact raw row/phrase and briefly explain the uncertainty
 - Ignore % NRV / % DV / RI and similar reference-intake columns for dose extraction
 - Never guess or estimate doses
+- Front-label marketing claims do not count as formal active-ingredient evidence. If a claim appears only on image 2, mark it uncertain, set both dose fields null, and use evidence_source "front_label"
+- If an ingredient appears on both images, it remains eligible only when image 1 or its OCR supplies the formal ingredient evidence
 
 Dose extraction priority (apply in order):
 
@@ -1418,7 +1303,10 @@ async function buildContentHash({
   );
 }
 
-function buildDoseVerificationPrompt(ingredients: NormalizedIngredient[]) {
+function buildDoseVerificationPrompt(
+  ingredients: NormalizedIngredient[],
+  ingredientsOcr: AzureIngredientPanelOcr | null
+) {
   const indexedIngredients = ingredients.map((ingredient, index) => ({
     index,
     raw_name: ingredient.raw_name,
@@ -1426,6 +1314,19 @@ function buildDoseVerificationPrompt(ingredients: NormalizedIngredient[]) {
     dosage_value: ingredient.dosage_value,
     dosage_unit: ingredient.dosage_unit,
     dosage_original_text: ingredient.dosage_original_text,
+    evidence_source: ingredient.evidence_source,
+    evidence_reference: ingredient.evidence_reference || null,
+  }));
+  const evidenceRows = (ingredientsOcr?.structuredRows ?? []).map((row) => ({
+    id: row.id,
+    text: row.text,
+    cells: Array.isArray(row.cells)
+      ? row.cells.map((cell: Record<string, unknown>) => ({
+          columnIndex: cell.columnIndex,
+          text: cell.text,
+          confidence: cell.confidence,
+        }))
+      : [],
   }));
 
   return `
@@ -1441,27 +1342,37 @@ Rules:
 - Use only the visible row containing that ingredient name.
 - Do not use typical supplement doses, prior knowledge, or inferred values.
 - Do not borrow values from neighbouring rows, % NRV, % DV, headers, footnotes, or UI text.
+- When structured OCR rows are supplied, the dose must be present in the same referenced row as the ingredient. A nearby row is not evidence.
 - Correct likely OCR errors when clearly supported by the visible row, including:
   - lost decimal point: 0.5mg vs 5mg, 1.5mg vs 15mg
   - lost zero: 500mg vs 50mg, 50µg vs 5µg
   - added digit: 30mg vs 130mg
   - wrong nearby row: 40mg vs 30mg, 10µg vs 50µg
 - If the visible row clearly supports a better dose, return the corrected dosage_value, dosage_unit, and dosage_original_text.
-- If the row is uncertain or unreadable, keep the original extracted dose unchanged rather than returning null.
+- Set decision to verified only when the original dose is clearly present on that ingredient's row.
+- Set decision to corrected only when a different numeric value and unit are clearly present on that same row.
+- If the ingredient row is missing, the dose is not on the same row, belongs to a neighbouring row, or remains uncertain, set both dose fields to null and use decision retracted or unverified.
+- A retracted first-pass dose must use a precise review_reason such as ingredient_row_not_found, dose_not_on_same_row, ambiguous_neighboring_dose, verifier_retracted_dose, or ocr_structure_unavailable.
+- Use decision missing only when the label has no dose for that ingredient and the first pass also had no usable dose.
 
 Return only JSON matching the schema.
 
 Indexed ingredients:
 ${JSON.stringify(indexedIngredients)}
+
+Structured OCR rows:
+${JSON.stringify(evidenceRows)}
   `.trim();
 }
 
 async function verifyOpenAiExtractedDoses({
   ingredientsImage,
   ingredients,
+  ingredientsOcr,
 }: {
   ingredientsImage: string;
   ingredients: NormalizedIngredient[];
+  ingredientsOcr: AzureIngredientPanelOcr | null;
 }) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -1477,14 +1388,14 @@ async function verifyOpenAiExtractedDoses({
         {
           role: "system",
           content:
-            "You verify supplement ingredient doses from a single ingredient-panel image. Correct only obvious OCR dose errors supported by the visible row. If uncertain, keep the original extracted dose unchanged.",
+            "You verify supplement ingredient doses from one ingredient-panel image and its structured OCR rows. Accept or correct a dose only when that ingredient's own row supports it. Retract uncertain, missing-row, or neighbouring-row doses to null.",
         },
         {
           role: "user",
           content: [
             {
               type: "text",
-              text: buildDoseVerificationPrompt(ingredients),
+              text: buildDoseVerificationPrompt(ingredients, ingredientsOcr),
             },
             {
               type: "image_url",
@@ -1507,93 +1418,19 @@ async function verifyOpenAiExtractedDoses({
   }
 
   const completion = await response.json();
-  const content = extractCompletionContent(
-    completion?.choices?.[0]?.message?.content
-  );
-
-  if (!content) {
-    throw new Error("OpenAI returned empty dose verification content.");
-  }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    throw new Error("Could not parse OpenAI dose verification JSON response.");
-  }
-
-  return Array.isArray(parsed?.verified_ingredients)
-    ? parsed.verified_ingredients
-    : [];
-}
-
-function mergeDoseCorrections(
-  ingredients: NormalizedIngredient[],
-  corrections: unknown[]
-) {
-  const correctionsByIndex = new Map<
-    number,
-    {
-      dosage_value: number | null;
-      dosage_unit: string | null;
-      dosage_original_text: string | null;
-    }
-  >();
-
-  corrections.forEach((candidate) => {
-    const row = candidate as Record<string, unknown>;
-    const index =
-      typeof row?.index === "number" && Number.isInteger(row.index)
-        ? row.index
-        : null;
-
-    if (index === null || index < 0 || index >= ingredients.length) {
-      return;
-    }
-
-    correctionsByIndex.set(index, {
-      dosage_value: parseOptionalNumber(row?.dosage_value),
-      dosage_unit: trimString(row?.dosage_unit) || null,
-      dosage_original_text: trimString(row?.dosage_original_text) || null,
-    });
+  const parsed = parseOpenAiStructuredCompletion({
+    completion,
+    label: "OpenAI dose verification",
+    validate: (value: unknown) =>
+      validateDoseVerificationModelOutput(value, ingredients.length),
   });
 
-  return ingredients.map((ingredient, index) => {
-    const correction = correctionsByIndex.get(index);
-    if (!correction) {
-      return ingredient;
-    }
-
-    const nextValue = correction.dosage_value;
-    const nextUnit = correction.dosage_unit;
-    const hasVerifiedDose = Number.isFinite(nextValue) && Boolean(nextUnit);
-    const hasExistingDose =
-      Number.isFinite(ingredient.dosage_value) && Boolean(ingredient.dosage_unit);
-
-    if (!hasVerifiedDose && hasExistingDose) {
-      return ingredient;
-    }
-
-    if (!hasVerifiedDose && !hasExistingDose) {
-      return {
-        ...ingredient,
-        dosage_original_text:
-          correction.dosage_original_text || ingredient.dosage_original_text,
-      };
-    }
-
-    return {
-      ...ingredient,
-      dosage_value: nextValue,
-      dosage_unit: nextUnit,
-      dosage_original_text:
-        correction.dosage_original_text || ingredient.dosage_original_text,
-    };
-  });
+  return parsed.verified_ingredients;
 }
 
 async function fetchOpenAiExtraction({
   scanSessionId,
+  photoAttemptId,
   barcode,
   currentProduct,
   ingredientsImage,
@@ -1601,6 +1438,7 @@ async function fetchOpenAiExtraction({
   ingredientsOcr,
 }: {
   scanSessionId: number;
+  photoAttemptId: string;
   barcode: string;
   currentProduct: CurrentProductContext;
   ingredientsImage: string;
@@ -1619,15 +1457,13 @@ async function fetchOpenAiExtraction({
     },
   ];
 
-  if (!ingredientsOcr) {
-    userContent.push({
-      type: "image_url",
-      image_url: {
-        url: ingredientsImage,
-        detail: "high",
-      },
-    });
-  }
+  userContent.push({
+    type: "image_url",
+    image_url: {
+      url: ingredientsImage,
+      detail: "high",
+    },
+  });
 
   userContent.push({
     type: "image_url",
@@ -1667,22 +1503,17 @@ async function fetchOpenAiExtraction({
   }
 
   const completion = await response.json();
-  const content = extractCompletionContent(
-    completion?.choices?.[0]?.message?.content
-  );
-
-  if (!content) {
-    throw new Error("OpenAI returned empty content.");
-  }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    throw new Error("Could not parse OpenAI JSON response.");
-  }
+  const parsed = parseOpenAiStructuredCompletion({
+    completion,
+    label: "OpenAI photo extraction",
+    validate: validatePhotoRescueModelOutput,
+  });
 
   const initialResult = normalizePhotoRescueOutput(parsed);
+  initialResult.extraction.ingredients_found = applyIngredientEvidencePolicy(
+    initialResult.extraction.ingredients_found,
+    ingredientsOcr
+  ) as NormalizedIngredient[];
 
   if (ingredientsOcr?.combinedText) {
     initialResult.productText.ingredient_panel_text =
@@ -1703,12 +1534,21 @@ async function fetchOpenAiExtraction({
     const corrections = await verifyOpenAiExtractedDoses({
       ingredientsImage,
       ingredients: initialResult.extraction.ingredients_found,
+      ingredientsOcr,
     });
 
     initialResult.extraction.ingredients_found = mergeDoseCorrections(
       initialResult.extraction.ingredients_found,
-      corrections
-    );
+      corrections,
+      {
+        ocr: ingredientsOcr,
+        onDiagnostic: (diagnostic: Record<string, unknown>) =>
+          logPhotoExtractionDiagnostic(photoAttemptId, "ingredient_decision", {
+            scanSessionId,
+            ...diagnostic,
+          }),
+      }
+    ) as NormalizedIngredient[];
   }
 
   return initialResult;
@@ -1767,6 +1607,18 @@ async function resolveOrCreateProduct({
   if (cleanProductId) {
     const existingById = await fetchOffProductById(cleanProductId);
     if (existingById?.id) {
+      const existingBarcode = trimString(existingById.barcode);
+      const permittedBarcodes = buildBarcodeLookupCandidates(
+        barcode,
+        barcodeType
+      );
+      if (existingBarcode && !permittedBarcodes.includes(existingBarcode)) {
+        throw createPhotoImprovementError(
+          "The requested product does not match the active scan.",
+          "invalid_photo_improvement_target"
+        );
+      }
+
       return {
         productId: trimString(existingById.id),
         product: existingById,
@@ -1925,7 +1777,7 @@ function buildResolvedActiveIngredientRows({
   ingredients,
   aliasIndex,
   supplementNameIndex,
-  ocrText,
+  ingredientsOcr,
 }: {
   productId: string;
   ingredients: NormalizedIngredient[];
@@ -1937,7 +1789,7 @@ function buildResolvedActiveIngredientRows({
     string,
     { supplement_id: string; canonical_name: string }
   >;
-  ocrText: string;
+  ingredientsOcr: AzureIngredientPanelOcr | null;
 }) {
   const rowsBySignature = new Map<string, Record<string, unknown>>();
   const unresolvedRows: {
@@ -1973,10 +1825,16 @@ function buildResolvedActiveIngredientRows({
     const normalizedLookupName = normalizeBroadIngredientName(
       canonicalName || rawName
     );
-    const matchedAlias =
-      aliasIndex.get(normalizedLookupName) ||
-      supplementNameIndex.get(normalizedLookupName) ||
-      null;
+    const hasFormalPanelEvidence =
+      ingredient.ingredient_type === "active" &&
+      ["ingredient_panel_ocr", "ingredient_panel_image"].includes(
+        ingredient.evidence_source
+      );
+    const matchedAlias = hasFormalPanelEvidence
+      ? aliasIndex.get(normalizedLookupName) ||
+        supplementNameIndex.get(normalizedLookupName) ||
+        null
+      : null;
     const dosage = normalizeDosage({
       dosageValue: ingredient.dosage_value,
       dosageUnit: ingredient.dosage_unit,
@@ -1998,13 +1856,20 @@ function buildResolvedActiveIngredientRows({
       });
     }
 
-    const doseVerification = verifyDoseAgainstOcr({
-      ingredientName: canonicalName || rawName,
-      rawDosageValue: ingredient.dosage_value,
-      rawDosageUnit: ingredient.dosage_unit,
-      dosageOriginalText: ingredient.dosage_original_text,
-      ocrText,
-    });
+    const doseVerification = ingredient.dose_confidence
+      ? {
+          confidence: ingredient.dose_confidence,
+          reason: ingredient.dose_review_reason || null,
+        }
+      : verifyDoseAgainstOcr({
+          ingredientName: canonicalName || rawName,
+          rawName,
+          chemicalForm: ingredient.chemical_form,
+          rawDosageValue: ingredient.dosage_value,
+          rawDosageUnit: ingredient.dosage_unit,
+          dosageOriginalText: ingredient.dosage_original_text,
+          ocr: ingredientsOcr,
+        });
 
     if (doseVerification.confidence === "unverified") {
       unverifiedDoses.push({
@@ -2015,7 +1880,7 @@ function buildResolvedActiveIngredientRows({
           null,
         reason:
           doseVerification.reason ||
-          "Extracted dose could not be verified against OCR text",
+          "verifier_retracted_dose",
       });
     }
 
@@ -2139,94 +2004,12 @@ function buildMasterActiveIngredients(activeRows: Record<string, unknown>[]) {
   );
 }
 
-async function fetchProductActiveIngredientSnapshot(productId: string) {
-  const { data, error } = await adminSupabase!
-    .from(TABLES.activeIngredients)
-    .select("*")
-    .eq("product_id", productId);
-
-  if (error) {
-    throw new Error(`[supabase:${TABLES.activeIngredients}] ${error.message}`);
-  }
-
-  return (data ?? []).map((row) => {
-    const { id: _id, ...rest } = row;
-    return rest;
-  });
-}
-
-async function fetchMasterSnapshot(productId: string) {
-  const { data, error } = await adminSupabase!
-    .from(TABLES.supplementMaster)
-    .select("*")
-    .eq("product_id", productId)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`[supabase:${TABLES.supplementMaster}] ${error.message}`);
-  }
-
-  return data;
-}
-
-async function restoreCanonicalSnapshot({
-  productId,
-  activeRows,
-  masterRow,
-}: {
-  productId: string;
-  activeRows: Record<string, unknown>[];
-  masterRow: Record<string, unknown> | null;
-}) {
-  await adminSupabase!
-    .from(TABLES.activeIngredients)
-    .delete()
-    .eq("product_id", productId);
-
-  if (activeRows.length) {
-    const { error: restoreIngredientsError } = await adminSupabase!
-      .from(TABLES.activeIngredients)
-      .insert(activeRows);
-
-    if (restoreIngredientsError) {
-      console.error(
-        "Failed to restore product_active_ingredients",
-        restoreIngredientsError
-      );
-    }
-  }
-
-  if (masterRow) {
-    const { error: restoreMasterError } = await adminSupabase!
-      .from(TABLES.supplementMaster)
-      .upsert(masterRow, {
-        onConflict: "product_id",
-      });
-
-    if (restoreMasterError) {
-      console.error(
-        "Failed to restore supplement_products_master",
-        restoreMasterError
-      );
-    }
-  } else {
-    const { error: deleteMasterError } = await adminSupabase!
-      .from(TABLES.supplementMaster)
-      .delete()
-      .eq("product_id", productId);
-
-    if (deleteMasterError) {
-      console.error(
-        "Failed to clear restored supplement_products_master",
-        deleteMasterError
-      );
-    }
-  }
-}
-
 async function replaceCanonicalRows({
   productId,
   barcode,
+  photoAttemptId,
+  expectedRevision,
+  proposedRevision,
   rowsToInsert,
   masterRows,
   displayName,
@@ -2235,76 +2018,89 @@ async function replaceCanonicalRows({
 }: {
   productId: string;
   barcode: string | null;
+  photoAttemptId: string;
+  expectedRevision: number;
+  proposedRevision: number;
   rowsToInsert: Record<string, unknown>[];
   masterRows: Record<string, unknown>[];
   displayName: string;
   servingSizeText: string | null;
   namingConfidence: number | null;
 }) {
-  const previousActiveRows = await fetchProductActiveIngredientSnapshot(
-    productId
+  const masterActiveIngredients = buildMasterActiveIngredients(masterRows);
+  const { data, error } = await adminSupabase!.rpc(
+    "commit_photo_improvement",
+    {
+      p_product_id: productId,
+      p_barcode: trimString(barcode),
+      p_photo_attempt_id: photoAttemptId,
+      p_expected_revision: expectedRevision,
+      p_proposed_revision: proposedRevision,
+      p_active_ingredient_rows: rowsToInsert,
+      p_master_active_ingredients: masterActiveIngredients,
+      p_display_name: displayName,
+      p_serving_size_text: servingSizeText,
+      p_naming_confidence:
+        typeof namingConfidence === "number" ? namingConfidence : null,
+      p_source_model: openAiModel,
+      p_source_prompt_version: EXTRACTION_PROMPT_VERSION,
+    }
   );
-  const previousMasterRow = await fetchMasterSnapshot(productId);
 
-  try {
-    const { error: deleteIngredientsError } = await adminSupabase!
-      .from(TABLES.activeIngredients)
-      .delete()
-      .eq("product_id", productId);
-
-    if (deleteIngredientsError) {
-      throw new Error(
-        `[supabase:${TABLES.activeIngredients}] ${deleteIngredientsError.message}`
-      );
-    }
-
-    if (rowsToInsert.length) {
-      const { error: insertIngredientsError } = await adminSupabase!
-        .from(TABLES.activeIngredients)
-        .insert(rowsToInsert);
-
-      if (insertIngredientsError) {
-        throw new Error(
-          `[supabase:${TABLES.activeIngredients}] ${insertIngredientsError.message}`
-        );
-      }
-    }
-
-    const masterActiveIngredients = buildMasterActiveIngredients(masterRows);
-    const { error: masterError } = await adminSupabase!
-      .from(TABLES.supplementMaster)
-      .upsert(
-        {
-          product_id: productId,
-          barcode: trimString(barcode) || null,
-          display_name: displayName,
-          serving_size_text: servingSizeText,
-          verification_status: "photo_verified",
-          name_source: "photo_rescue_ai",
-          naming_confidence:
-            typeof namingConfidence === "number" ? namingConfidence : null,
-          active_ingredients_json: masterActiveIngredients,
-          ingredient_count: masterActiveIngredients.length,
-          processed_at: new Date().toISOString(),
-        },
-        {
-          onConflict: "product_id",
-        }
-      );
-
-    if (masterError) {
-      throw new Error(
-        `[supabase:${TABLES.supplementMaster}] ${masterError.message}`
-      );
-    }
-  } catch (error) {
-    await restoreCanonicalSnapshot({
+  if (error) {
+    logPhotoPersistenceOutcome({
       productId,
-      activeRows: previousActiveRows,
-      masterRow: previousMasterRow,
+      photoAttemptId,
+      expectedRevision,
+      proposedRevision,
+      storedRevision: null,
+      transactionOutcome: "failed",
     });
-    throw error;
+    throw new Error("Photo improvement transaction failed.");
   }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  const transactionOutcome = trimString(row?.transaction_outcome);
+  const committedRevision = parseOptionalNumber(row?.committed_revision);
+  const acceptedPhotoAttemptId = trimString(row?.accepted_photo_attempt_id);
+  const storedRevision = parseOptionalNumber(row?.stored_revision);
+  const canonicalProduct =
+    row?.canonical_product && typeof row.canonical_product === "object"
+      ? (row.canonical_product as Record<string, unknown>)
+      : null;
+  const activeIngredientRows = Array.isArray(row?.active_ingredient_rows)
+    ? (row.active_ingredient_rows as Record<string, unknown>[])
+    : [];
+
+  if (
+    !["applied", "already_applied", "rejected_stale"].includes(
+      transactionOutcome
+    ) ||
+    !Number.isSafeInteger(committedRevision) ||
+    !Number.isSafeInteger(storedRevision) ||
+    !canonicalProduct ||
+    !Array.isArray(canonicalProduct.active_ingredients_json)
+  ) {
+    throw new Error("Photo improvement transaction returned invalid data.");
+  }
+
+  logPhotoPersistenceOutcome({
+    productId,
+    photoAttemptId,
+    expectedRevision,
+    proposedRevision,
+    storedRevision,
+    transactionOutcome,
+  });
+
+  return {
+    transactionOutcome,
+    committedRevision,
+    acceptedPhotoAttemptId: acceptedPhotoAttemptId || null,
+    storedRevision,
+    canonicalProduct,
+    activeIngredientRows,
+  };
 }
 
 async function fetchMissingOccurrencesForProduct(productId: string) {
@@ -2620,29 +2416,20 @@ async function replaceReviewArtifacts({
   );
 }
 
-function scheduleBackgroundTask(promise: Promise<unknown>) {
-  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
-    EdgeRuntime.waitUntil(promise);
-    return;
-  }
-
-  promise.catch((error) => {
-    console.error("Background task failed", error);
-  });
-}
-
-function queueReviewCandidateRefresh(normalizedNames: string[]) {
+async function queueReviewCandidateRefresh(normalizedNames: string[]) {
   if (!supabaseUrl || !supabaseServiceRoleKey || !normalizedNames.length) {
-    return;
+    return false;
   }
 
   const uniqueNames = Array.from(new Set(normalizedNames.filter(Boolean)));
   if (!uniqueNames.length) {
-    return;
+    return false;
   }
 
-  scheduleBackgroundTask(
-    fetch(`${supabaseUrl}/functions/v1/${REVIEW_PROCESSOR_FUNCTION}`, {
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/functions/v1/${REVIEW_PROCESSOR_FUNCTION}`,
+      {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2651,14 +2438,12 @@ function queueReviewCandidateRefresh(normalizedNames: string[]) {
       body: JSON.stringify({
         normalizedNames: uniqueNames,
       }),
-    }).then(async (response) => {
-      if (!response.ok) {
-        throw new Error(
-          `Review refresh failed: ${response.status} ${await response.text()}`
-        );
       }
-    })
-  );
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 Deno.serve(async (req) => {
@@ -2712,6 +2497,9 @@ Deno.serve(async (req) => {
 
     const {
       scanSessionId,
+      photoAttemptId,
+      expectedRevision,
+      proposedRevision,
       barcode,
       barcodeType,
       ingredientsImage,
@@ -2737,6 +2525,7 @@ Deno.serve(async (req) => {
     );
     const aiResult = await fetchOpenAiExtraction({
       scanSessionId: scanSessionId!,
+      photoAttemptId,
       barcode,
       currentProduct,
       ingredientsImage,
@@ -2915,16 +2704,12 @@ Deno.serve(async (req) => {
 
     const aliasIndex = buildAliasIndex(aliasRows);
     const supplementNameIndex = buildSupplementNameIndex(approvedSupplements);
-    const rawOcrText =
-      aiResult.productText.ingredient_panel_text ||
-      aiResult.productText.raw_text ||
-      "";
     const resolvedIngredients = buildResolvedActiveIngredientRows({
       productId: productResolution.productId,
       ingredients: aiResult.extraction.ingredients_found,
       aliasIndex,
       supplementNameIndex,
-      ocrText: rawOcrText,
+      ingredientsOcr,
     });
 
     if (!resolvedIngredients.activeRows.length) {
@@ -2937,50 +2722,139 @@ Deno.serve(async (req) => {
       );
     }
 
-    await replaceCanonicalRows({
+    const commitResult = await replaceCanonicalRows({
       productId: productResolution.productId,
       barcode,
+      photoAttemptId,
+      expectedRevision,
+      proposedRevision,
       rowsToInsert: resolvedIngredients.rows,
       masterRows: resolvedIngredients.activeRows,
       displayName,
       servingSizeText: aiResult.extraction.serving_size_text,
       namingConfidence: aiResult.naming.confidence,
     });
-    await enqueueProductScoreRefresh({
-      adminSupabase,
-      productId: productResolution.productId,
-      reason: "photo_product_ingredients_persisted",
-    });
+    const followUpWarnings: string[] = [];
 
-    const affectedReviewNames = await replaceReviewArtifacts({
-      productId: productResolution.productId,
-      unresolvedRows: resolvedIngredients.unresolvedRows,
-      malformedDosages: resolvedIngredients.malformedDosages,
-      unverifiedDoses: resolvedIngredients.unverifiedDoses,
-    });
+    if (commitResult.transactionOutcome === "applied") {
+      try {
+        const queuedScoreRefresh = await enqueueProductScoreRefresh({
+          adminSupabase,
+          productId: productResolution.productId,
+          reason: "photo_product_ingredients_persisted",
+        });
+        if (!queuedScoreRefresh) {
+          followUpWarnings.push("score_refresh_enqueue_failed");
+        }
+      } catch {
+        followUpWarnings.push("score_refresh_enqueue_failed");
+      }
 
-    if (affectedReviewNames.length) {
-      queueReviewCandidateRefresh(affectedReviewNames);
+      try {
+        const affectedReviewNames = await replaceReviewArtifacts({
+          productId: productResolution.productId,
+          unresolvedRows: resolvedIngredients.unresolvedRows,
+          malformedDosages: resolvedIngredients.malformedDosages,
+          unverifiedDoses: resolvedIngredients.unverifiedDoses,
+        });
+
+        if (affectedReviewNames.length) {
+          const queuedReviewRefresh = await queueReviewCandidateRefresh(
+            affectedReviewNames
+          );
+          if (!queuedReviewRefresh) {
+            followUpWarnings.push("review_refresh_enqueue_failed");
+          }
+        }
+      } catch {
+        followUpWarnings.push("review_artifact_creation_failed");
+      }
     }
 
+    for (const warning of followUpWarnings) {
+      console.warn("[photo-improvement-follow-up]", {
+        productId: productResolution.productId,
+        photoAttemptId,
+        expectedRevision,
+        proposedRevision,
+        storedRevision: commitResult.storedRevision,
+        transactionOutcome: commitResult.transactionOutcome,
+        warning,
+      });
+    }
+
+    const committedProduct = commitResult.canonicalProduct;
+    const committedProductId =
+      trimString(committedProduct.product_id) || productResolution.productId;
+    const committedIngredients = Array.isArray(
+      committedProduct.active_ingredients_json
+    )
+      ? committedProduct.active_ingredients_json
+      : [];
+    const committedDisplayName =
+      trimString(committedProduct.display_name) || displayName;
+    const committedServingSize =
+      trimString(committedProduct.serving_size_text) || null;
+    const wroteCanonicalData = ["applied", "already_applied"].includes(
+      commitResult.transactionOutcome
+    );
+
     return jsonResponse({
-      productId: productResolution.productId,
-      displayName,
-      productName: displayName,
+      productId: committedProductId,
+      displayName: committedDisplayName,
+      productName: committedDisplayName,
       createdProduct: productResolution.createdProduct,
-      wroteCanonicalData: true,
+      wroteCanonicalData,
       isSupplement: true,
       classificationConfidence: aiResult.classification.confidence,
       category: aiResult.classification.category,
       source: "photo_rescue_canonical",
       confidence:
         aiResult.naming.confidence || aiResult.classification.confidence,
-      ingredients: buildMasterActiveIngredients(resolvedIngredients.activeRows),
-      servingSizeText: aiResult.extraction.serving_size_text,
+      ingredients: committedIngredients,
+      canonicalProduct: committedProduct,
+      canonicalActiveIngredientRows: commitResult.activeIngredientRows,
+      servingSizeText: committedServingSize,
       rawText: aiResult.productText.raw_text,
       unresolvedIngredientCount: resolvedIngredients.unresolvedRows.length,
+      persistenceOutcome: commitResult.transactionOutcome,
+      committedRevision: commitResult.committedRevision,
+      acceptedAttemptId: commitResult.acceptedPhotoAttemptId,
+      storedRevision: commitResult.storedRevision,
+      followUpWarnings,
     });
   } catch (error) {
+    const modelOutputCode = trimString(
+      (error as Error & { code?: string })?.code
+    );
+    if (
+      [
+        "model_refusal",
+        "truncated_model_output",
+        "incomplete_model_output",
+        "malformed_model_output",
+      ].includes(modelOutputCode)
+    ) {
+      return jsonResponse(
+        {
+          error:
+            "We couldn't reliably read a complete supplement label response from those photos.",
+          code: modelOutputCode,
+        },
+        422
+      );
+    }
+
+    if (modelOutputCode === "invalid_photo_improvement_target") {
+      return jsonResponse(
+        {
+          error: "The requested product does not match the active scan.",
+          code: modelOutputCode,
+        },
+        422
+      );
+    }
+
     return jsonResponse(
       {
         error: "Unexpected scan-supplement-photos failure",

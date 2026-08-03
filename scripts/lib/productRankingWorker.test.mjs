@@ -7,12 +7,22 @@ function dataUrlForSource(source) {
 }
 
 async function loadWorkerModule() {
+  const doseNormalizationSource = readFileSync(
+    new URL(
+      "../../features/supplements/doseNormalization.js",
+      import.meta.url,
+    ),
+    "utf8",
+  );
   const doseSource = readFileSync(
     new URL(
       "../../features/supplements/recommendedDoseScoring.js",
       import.meta.url,
     ),
     "utf8",
+  ).replace(
+    "./doseNormalization.js",
+    dataUrlForSource(doseNormalizationSource),
   );
   const benefitSource = readFileSync(
     new URL(
@@ -51,6 +61,13 @@ async function loadWorkerModule() {
 }
 
 const worker = await loadWorkerModule();
+const workerSource = readFileSync(
+  new URL(
+    "../../supabase/functions/_shared/product-ranking-worker.js",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 function supplement({
   id,
@@ -85,6 +102,8 @@ function ingredient({
   dosageValue = 50,
   dosageUnit = "mg",
   amountBasis = "per_serving",
+  doseConfidence = null,
+  doseReviewReason = null,
 } = {}) {
   return {
     id,
@@ -98,6 +117,8 @@ function ingredient({
     dosage_original_text: null,
     chemical_form: null,
     amount_basis: amountBasis,
+    dose_confidence: doseConfidence,
+    dose_review_reason: doseReviewReason,
   };
 }
 
@@ -136,6 +157,26 @@ test("valid dose produces full-precision benefit score while invalid dose is unr
     supplementRows: [supplement({ id: "ingredient-a" })],
   });
   assert.equal(mismatched.benefitRows.length, 0);
+
+  const unverified = worker.buildProductScoreCachePayload({
+    masterProduct: master({ verification_status: "photo_verified" }),
+    ingredientRows: [
+      ingredient({
+        dosageValue: 200,
+        doseConfidence: "unverified",
+        doseReviewReason: "OCR row mismatch",
+      }),
+    ],
+    supplementRows: [supplement({ id: "ingredient-a" })],
+  });
+  assert.equal(unverified.benefitRows.length, 0);
+  assert.equal(unverified.overallEvidenceScore, 80);
+});
+
+test("ranking hydration selects dose confidence metadata", () => {
+  assert.match(workerSource, /dose_confidence, dose_review_reason/u);
+  assert.match(workerSource, /doseConfidence: trimString\(row\?\.dose_confidence\)/u);
+  assert.match(workerSource, /doseReviewReason: trimString\(row\?\.dose_review_reason\)/u);
 });
 
 test("highest benefit driver wins with deterministic raw, factor, name, and ID ties", () => {

@@ -122,12 +122,28 @@ const DOSE_BAND_PILL_COLORS = {
 };
 
 const DOSE_STATUS_TOOLTIP_COPY = {
-  missing_dose_scoringr_profile:
+  missing_dose_scoring_profile:
     "Dose target unavailable means we do not yet have a reliable target dose range for this ingredient, or it is not a supplement.",
   missing_actual_dose:
     "Dose unavailable means we could not determine a usable amount per serving from this product, so we cannot compare it with the target dose.",
+  missing_dose_information:
+    "Dose unavailable means the label does not provide meaningful dose information for this ingredient.",
+  dose_could_not_be_parsed:
+    "The label includes dose text, but it could not be converted into a reliable numeric dose and unit.",
+  missing_dose_value:
+    "The label includes a dose unit, but no reliable numeric dose could be determined.",
+  missing_dose_unit:
+    "The label includes a numeric dose, but no reliable dose unit could be determined.",
+  unsupported_dose_unit:
+    "This dose uses a unit that Suppro cannot reliably use for dose comparison yet.",
+  dose_not_verified:
+    "This dose has not been verified against the product label, so it is excluded from benefit scoring.",
+  missing_amount_basis:
+    "The label does not say whether this amount is per serving, capsule, tablet, softgel, or scoop.",
+  unsupported_amount_basis:
+    "This amount basis cannot be converted reliably into a per-serving dose, so it is excluded from benefit scoring.",
   serving_size_unparseable:
-    "Dose unavailable means the serving size on this product could not be read clearly enough to calculate the ingredient amount per serving.",
+    "The dose is listed, but the serving size could not be read clearly enough to calculate the amount per serving.",
   unknown_amount_basis:
     "Dose unavailable means the product lists an amount, but not in a form we can confidently convert into a per-serving dose.",
   unit_mismatch:
@@ -1192,6 +1208,9 @@ export default function SupplementInfoModal() {
   const scannerStatus = useScannerStore((state) => state.status);
   const scannerScanSessionId = useScannerStore((state) => state.scanSessionId);
   const scannerError = useScannerStore((state) => state.error);
+  const scannerPhotoRescueRevision = useScannerStore(
+    (state) => state.photoRescueRevision,
+  );
   const scannerProduct = useScannerStore((state) => state.product);
   const scannerMatchedIngredients = useScannerStore(
     (state) => state.matchedIngredients,
@@ -1259,6 +1278,7 @@ export default function SupplementInfoModal() {
     scanRequestId: requestedScanRequestId,
     productId: scanProductId,
     scanSessionId: effectiveScanSessionId,
+    resultRevision: scannerPhotoRescueRevision,
   });
   const isCurrentScanSession =
     Number.isFinite(effectiveScanSessionId) &&
@@ -2896,7 +2916,7 @@ export default function SupplementInfoModal() {
                             "Matched ingredient",
                         );
                         const dosageDisplay = String(
-                          item?.dosageDisplay ?? "",
+                          item?.normalizedDose?.displayText ?? "",
                         ).trim();
                         const canOpenIngredient = Boolean(item?.catalogId);
 
@@ -2935,19 +2955,6 @@ export default function SupplementInfoModal() {
                                   </Text>
                                 ) : null}
                               </View>
-                              {item?.doseConfidence === "unverified" ? (
-                                <View style={styles.doseUnverifiedBadge}>
-                                  <Ionicons
-                                    name="alert-circle-outline"
-                                    size={11}
-                                    color="#7A6010"
-                                    style={styles.doseUnverifiedIcon}
-                                  />
-                                  <Text style={styles.doseUnverifiedText}>
-                                    Unverified dose
-                                  </Text>
-                                </View>
-                              ) : null}
                               {item?.doseStatusLabel
                                 ? (() => {
                                     const tooltipKey = `${

@@ -72,9 +72,12 @@ async function calculateCachedProductEvidence(
     ingredientRaw: trimString(row?.canonical_name),
     dosageValue: Number.isFinite(Number(row?.dosage_value)) ? Number(row.dosage_value) : null,
     dosageUnit: trimString(row?.dosage_unit) || null,
+    dosageOriginalText: trimString(row?.dosage_original_text) || null,
     dosageDisplay: trimString(row?.dosage_original_text) || null,
     chemicalForm: trimString(row?.chemical_form) || null,
     amountBasis: trimString(row?.amount_basis) || null,
+    doseConfidence: trimString(row?.dose_confidence) || null,
+    doseReviewReason: trimString(row?.dose_review_reason) || null,
   }));
   const scored = scoreMatchedIngredientsForProduct({
     matchedIngredients: matches,
@@ -92,7 +95,7 @@ async function loadProductEvidenceSnapshots(adminSupabase: SupabaseClient, rows:
   const { data: ingredientRows, error: ingredientError } = await adminSupabase
     .from("product_active_ingredients")
     .select(
-      "product_id, canonical_supplement_id, canonical_name, dosage_value, dosage_unit, dosage_original_text, chemical_form, amount_basis",
+      "product_id, canonical_supplement_id, canonical_name, dosage_value, dosage_unit, dosage_original_text, chemical_form, amount_basis, dose_confidence, dose_review_reason",
     )
     .in("product_id", productIds)
     .eq("ingredient_type", "active");

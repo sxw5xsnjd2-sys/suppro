@@ -2,6 +2,22 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+function loadDoseNormalizationModule() {
+  const source = readFileSync(
+    new URL(
+      "../../features/supplements/doseNormalization.js",
+      import.meta.url,
+    ),
+    "utf8",
+  ).replace(/\bexport\s+/gu, "");
+
+  return new Function(
+    `${source}\nreturn { normalizeIngredientDose };`,
+  )();
+}
+
+const doseNormalization = loadDoseNormalizationModule();
+
 function loadGetSupplementHelpers(overrides = {}) {
   const source = readFileSync(
     new URL("../../src/data/getSupplement.js", import.meta.url),
@@ -24,8 +40,10 @@ function loadGetSupplementHelpers(overrides = {}) {
     "buildSupplementReferenceItems",
     "fetchIngredientMatchCatalog",
     "logScanTiming",
+    "normalizeIngredientDose",
     `${transformed}
 return {
+  buildProductIngredientMatch,
   dedupeProductIngredientsForDisplay,
   getSupplementById,
 };`
@@ -53,11 +71,40 @@ return {
     overrides.buildSupplementReferenceItems ?? (() => []),
     overrides.fetchIngredientMatchCatalog ?? (async () => []),
     overrides.logScanTiming ?? (() => {}),
+    overrides.normalizeIngredientDose ??
+      doseNormalization.normalizeIngredientDose,
   );
 }
 
 const { dedupeProductIngredientsForDisplay, getSupplementById } =
   loadGetSupplementHelpers();
+
+test("database hydration preserves verified dose confidence and review reason", () => {
+  const helpers = loadGetSupplementHelpers();
+  const match = helpers.buildProductIngredientMatch(
+    {
+      canonical_supplement_id: "magnesium",
+      canonical_name: "Magnesium",
+      dosage_value: "200",
+      dosage_unit: "mg",
+      dosage_original_text: "Magnesium 200 mg",
+      amount_basis: "per_serving",
+      dose_confidence: "verified",
+      dose_review_reason: "Matched the OCR row",
+    },
+    new Map([["magnesium", "Magnesium"]]),
+  );
+
+  assert.equal(match.dosageValue, 200);
+  assert.equal(match.dosageUnit, "mg");
+  assert.equal(match.dosageOriginalText, "Magnesium 200 mg");
+  assert.equal(match.dosageDisplay, "200 mg");
+  assert.equal(match.amountBasis, "per_serving");
+  assert.equal(match.doseConfidence, "verified");
+  assert.equal(match.doseReviewReason, "Matched the OCR row");
+  assert.equal(match.normalizedDose.isVerified, true);
+  assert.equal(match.normalizedDose.isScoringEligible, true);
+});
 
 test("custom supplement ids do not fall through to master supplement lookup", async () => {
   const supplement = await getSupplementById("custom:user-row-id");

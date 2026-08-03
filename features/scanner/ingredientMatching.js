@@ -1,3 +1,8 @@
+import {
+  DOSE_CONTRACT_VERSION,
+  normalizeIngredientDose,
+} from "@/features/supplements/doseNormalization";
+
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -34,17 +39,6 @@ function escapeRegExp(value) {
 }
 
 const DOSAGE_UNIT_PATTERN = "mg|mcg|µg|μg|ug|pg|g|kg|ml|l|iu|%";
-const AMOUNT_BASIS_VALUES = new Set([
-  "per_serving",
-  "per_capsule",
-  "per_tablet",
-  "per_softgel",
-  "per_scoop",
-  "per_drop",
-  "per_2_capsules",
-  "per_3_capsules",
-  "unknown",
-]);
 const STOPWORDS = new Set(["and", "or", "with", "from", "the", "a", "an"]);
 const NON_INGREDIENT_PATTERNS = [
   /\bnutritional information\b/i,
@@ -183,31 +177,6 @@ function normalizePlainText(value) {
     .trim();
 }
 
-function normalizeDosageUnit(value) {
-  const normalized = trimString(value)
-    .toLowerCase()
-    .replace(/[µμ]/g, "u");
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized === "ug") return "mcg";
-  if (normalized === "iu") return "IU";
-  if (normalized === "cfu") return "CFU";
-  return normalized;
-}
-
-function normalizeAmountBasis(value, hasDose) {
-  const normalized = trimString(value);
-
-  if (normalized && normalized !== "unknown" && AMOUNT_BASIS_VALUES.has(normalized)) {
-    return normalized;
-  }
-
-  return hasDose ? "per_serving" : null;
-}
-
 function getFirstValue(source, keys) {
   if (!source || typeof source !== "object") {
     return null;
@@ -225,33 +194,6 @@ function getFirstValue(source, keys) {
   }
 
   return null;
-}
-
-function parseDoseDisplayValue(value) {
-  const text = trimString(value);
-  if (!text) {
-    return null;
-  }
-
-  const match = text.match(
-    new RegExp(
-      `^(\\d+(?:[.,]\\d+)?)\\s*(${DOSAGE_UNIT_PATTERN.replace("|%", "")})\\b(?:\\s*(?:[A-Z]{1,4}|% ?NRV|NRV))?$`,
-      "i"
-    )
-  );
-
-  if (!match) {
-    return null;
-  }
-
-  const amount = parseOptionalNumber(match[1]);
-  const unit = normalizeDosageUnit(match[2]);
-
-  if (!Number.isFinite(amount) || !unit) {
-    return null;
-  }
-
-  return { amount, unit };
 }
 
 function normalizeStructuredIngredientSource(ingredient) {
@@ -281,42 +223,25 @@ function normalizeStructuredIngredientSource(ingredient) {
         "canonical_name",
       ])
     ) || name;
-  const amount = parseOptionalNumber(
-    getFirstValue(ingredient, ["dosageValue", "dosage_value", "amount", "value"])
-  );
-  const unit = normalizeDosageUnit(
-    getFirstValue(ingredient, ["dosageUnit", "dosage_unit", "unit"])
-  );
+  const normalizedDose = normalizeIngredientDose(ingredient, {
+    allowDisplayParsing: true,
+  });
   const chemicalForm =
     trimString(getFirstValue(ingredient, ["chemicalForm", "chemical_form"])) ||
     null;
-  const dosageDisplay =
-    trimString(
-      getFirstValue(ingredient, [
-        "dosageDisplay",
-        "dosage_display",
-        "dosageOriginalText",
-        "dosage_original_text",
-      ])
-    ) || null;
-  const parsedDisplayDose = parseDoseDisplayValue(dosageDisplay);
-  const resolvedAmount = Number.isFinite(amount)
-    ? amount
-    : parsedDisplayDose?.amount ?? null;
-  const resolvedUnit = unit || parsedDisplayDose?.unit || null;
-  const hasDose = Number.isFinite(resolvedAmount) && Boolean(resolvedUnit);
 
   return {
     raw,
     name,
-    amount: hasDose ? resolvedAmount : null,
-    unit: hasDose ? resolvedUnit : null,
-    dosageDisplay,
+    amount: normalizedDose.value,
+    unit: normalizedDose.unit,
+    dosageOriginalText: normalizedDose.dosageOriginalText,
+    dosageDisplay: normalizedDose.displayText,
     chemicalForm,
-    amountBasis: normalizeAmountBasis(
-      getFirstValue(ingredient, ["amountBasis", "amount_basis"]),
-      hasDose
-    ),
+    amountBasis: normalizedDose.amountBasis,
+    doseConfidence: normalizedDose.doseConfidence,
+    doseReviewReason: normalizedDose.doseReviewReason,
+    normalizedDose,
   };
 }
 
@@ -743,9 +668,13 @@ function extractIngredientCandidatesFromSourceIngredients(sourceIngredients) {
           name: structured?.name,
           amount: structured?.amount,
           unit: structured?.unit,
+          dosageOriginalText: structured?.dosageOriginalText,
           dosageDisplay: structured?.dosageDisplay,
           chemicalForm: structured?.chemicalForm,
           amountBasis: structured?.amountBasis,
+          doseConfidence: structured?.doseConfidence,
+          doseReviewReason: structured?.doseReviewReason,
+          normalizedDose: structured?.normalizedDose,
         }
       );
 
@@ -827,11 +756,13 @@ export function extractIngredientCandidatesFromList(values, options = {}) {
           name: structured?.name,
           amount: structured?.amount,
           unit: structured?.unit,
+          dosageOriginalText: structured?.dosageOriginalText,
           dosageDisplay: structured?.dosageDisplay,
           chemicalForm: structured?.chemicalForm,
           amountBasis: structured?.amountBasis,
-          doseConfidence: value.doseConfidence ?? null,
-          doseReviewReason: value.doseReviewReason ?? null,
+          doseConfidence: structured?.doseConfidence,
+          doseReviewReason: structured?.doseReviewReason,
+          normalizedDose: structured?.normalizedDose,
         },
       );
       nameNormalizationDurationMs += nowMs() - stageStartedAt;
@@ -1097,6 +1028,19 @@ function scorePartialIngredientMatch(candidate, catalogEntry) {
 }
 
 function buildMatchedIngredient(ingredient, catalogEntry, scored) {
+  const normalizedDose =
+    ingredient?.normalizedDose?.contractVersion === DOSE_CONTRACT_VERSION
+      ? ingredient.normalizedDose
+      : normalizeIngredientDose({
+          dosageValue: ingredient?.amount,
+          dosageUnit: ingredient?.unit,
+          dosageOriginalText: ingredient?.dosageOriginalText,
+          dosageDisplay: ingredient?.dosageDisplay,
+          amountBasis: ingredient?.amountBasis,
+          doseConfidence: ingredient?.doseConfidence,
+          doseReviewReason: ingredient?.doseReviewReason,
+        });
+
   return {
     ingredientRaw: ingredient.raw,
     ingredientNormalized: ingredient.normalized,
@@ -1107,16 +1051,15 @@ function buildMatchedIngredient(ingredient, catalogEntry, scored) {
     matchType: scored.matchType,
     score: scored.score,
     classification: "active",
-    dosageValue: Number.isFinite(ingredient.amount) ? ingredient.amount : null,
-    dosageUnit: normalizeDosageUnit(ingredient.unit),
-    dosageDisplay: trimString(ingredient.dosageDisplay) || null,
+    dosageValue: normalizedDose.value,
+    dosageUnit: normalizedDose.unit,
+    dosageOriginalText: normalizedDose.dosageOriginalText,
+    dosageDisplay: normalizedDose.displayText,
     chemicalForm: trimString(ingredient.chemicalForm) || null,
-    amountBasis: normalizeAmountBasis(
-      ingredient.amountBasis,
-      Number.isFinite(ingredient.amount) && Boolean(ingredient.unit)
-    ),
-    doseConfidence: ingredient.doseConfidence ?? null,
-    doseReviewReason: ingredient.doseReviewReason ?? null,
+    amountBasis: normalizedDose.amountBasis,
+    doseConfidence: normalizedDose.doseConfidence,
+    doseReviewReason: normalizedDose.doseReviewReason,
+    normalizedDose,
   };
 }
 

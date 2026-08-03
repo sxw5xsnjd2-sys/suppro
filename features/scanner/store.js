@@ -39,6 +39,10 @@ import {
   extractBestIngredientCandidates,
   matchIngredientsToCatalog,
 } from "./ingredientMatching";
+import {
+  buildScanResultHydrationKey,
+  invalidateScanResultHydration,
+} from "./resultHydration";
 import { createScanRequestId, logScanTiming } from "./scanTiming";
 
 function trimString(value) {
@@ -171,6 +175,7 @@ function buildPhotoRescueProduct({
   ingredients,
   servingSizeText,
   wroteCanonicalData,
+  committedRevision,
 }) {
   const nextProductName =
     trimString(displayName) ||
@@ -217,7 +222,39 @@ function buildPhotoRescueProduct({
     servingSizeText:
       trimString(servingSizeText) ||
       trimString(currentProduct?.servingSizeText),
+    photoImprovementRevision: Number.isSafeInteger(committedRevision)
+      ? committedRevision
+      : getPhotoImprovementRevision(currentProduct),
+    photo_improvement_revision: Number.isSafeInteger(committedRevision)
+      ? committedRevision
+      : getPhotoImprovementRevision(currentProduct),
   };
+}
+
+function isCurrentPhotoRescueAttempt(
+  state,
+  { scanSessionId, scanRequestId, photoRescueAttemptId },
+) {
+  return (
+    state.scanSessionId === scanSessionId &&
+    state.scanRequestId === scanRequestId &&
+    state.photoRescueAttemptId === photoRescueAttemptId
+  );
+}
+
+function createPhotoImprovementAttemptId(scanSessionId, attemptSequence) {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) {
+    return `photo-${uuid}`;
+  }
+
+  return [
+    "photo",
+    scanSessionId,
+    Date.now().toString(36),
+    attemptSequence,
+    Math.random().toString(36).slice(2, 12),
+  ].join("-");
 }
 
 function createInitialState() {
@@ -236,6 +273,8 @@ function createInitialState() {
     unmatchedIngredients: [],
     photoRescueStatus: "idle",
     photoRescueError: null,
+    photoRescueAttemptId: 0,
+    photoRescueRevision: 0,
     extractionSource: null,
     extractionConfidence: null,
   };
@@ -406,6 +445,14 @@ function getIngredientCount(product) {
 
   const parsed = Number.parseInt(String(count ?? "").trim(), 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getPhotoImprovementRevision(product) {
+  const value =
+    product?.photoImprovementRevision ?? product?.photo_improvement_revision;
+  const revision =
+    typeof value === "number" ? value : Number(String(value ?? "").trim());
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
 }
 
 function buildIngredientsTextFromActiveIngredients(product) {
@@ -1104,9 +1151,13 @@ export const useScannerStore = create((set, get) => ({
     })),
 
   resetPhotoRescueState: () =>
-    set(() => ({
+    set((state) => ({
       photoRescueStatus: "idle",
       photoRescueError: null,
+      photoRescueAttemptId:
+        (Number.isFinite(state.photoRescueAttemptId)
+          ? state.photoRescueAttemptId
+          : 0) + 1,
     })),
 
   processBarcode: async (barcode, barcodeType, options = {}) => {
@@ -1160,6 +1211,8 @@ export const useScannerStore = create((set, get) => ({
         unmatchedIngredients: [],
         photoRescueStatus: "idle",
         photoRescueError: null,
+        photoRescueAttemptId: 0,
+        photoRescueRevision: 0,
         extractionSource: null,
         extractionConfidence: null,
       }));
@@ -1184,6 +1237,8 @@ export const useScannerStore = create((set, get) => ({
       unmatchedIngredients: [],
       photoRescueStatus: "idle",
       photoRescueError: null,
+      photoRescueAttemptId: 0,
+      photoRescueRevision: 0,
       extractionSource: null,
       extractionConfidence: null,
     }));
@@ -1570,6 +1625,7 @@ export const useScannerStore = create((set, get) => ({
           unmatchedIngredients: [],
           photoRescueStatus: "idle",
           photoRescueError: null,
+          photoRescueRevision: getPhotoImprovementRevision(product),
           extractionSource,
           extractionConfidence: null,
         }));
@@ -1604,6 +1660,7 @@ export const useScannerStore = create((set, get) => ({
           unmatchedIngredients: [],
           photoRescueStatus: "idle",
           photoRescueError: null,
+          photoRescueRevision: getPhotoImprovementRevision(product),
           extractionSource,
           extractionConfidence: null,
         }));
@@ -1652,6 +1709,7 @@ export const useScannerStore = create((set, get) => ({
         unmatchedIngredients,
         photoRescueStatus: "idle",
         photoRescueError: null,
+        photoRescueRevision: getPhotoImprovementRevision(product),
         extractionSource,
         extractionConfidence: null,
       }));
@@ -1763,10 +1821,33 @@ export const useScannerStore = create((set, get) => ({
       throw error;
     }
 
-    set(() => ({
-      photoRescueStatus: "processing",
-      photoRescueError: null,
-    }));
+    let photoRescueAttemptId = 0;
+    const expectedRevision = Number.isSafeInteger(
+      currentState.photoRescueRevision,
+    )
+      ? Math.max(0, currentState.photoRescueRevision)
+      : getPhotoImprovementRevision(currentState.product);
+    const proposedRevision = expectedRevision + 1;
+    set((state) => {
+      photoRescueAttemptId =
+        (Number.isFinite(state.photoRescueAttemptId)
+          ? state.photoRescueAttemptId
+          : 0) + 1;
+      return {
+        photoRescueStatus: "processing",
+        photoRescueError: null,
+        photoRescueAttemptId,
+      };
+    });
+    const attemptIdentity = {
+      scanSessionId: requestedScanSessionId,
+      scanRequestId: currentState.scanRequestId,
+      photoRescueAttemptId,
+    };
+    const photoPersistenceAttemptId = createPhotoImprovementAttemptId(
+      requestedScanSessionId,
+      photoRescueAttemptId,
+    );
 
     try {
       logDevelopmentDiagnostic("info", "[scanner-photo-rescue] submitting", {
@@ -1777,6 +1858,9 @@ export const useScannerStore = create((set, get) => ({
 
       const extraction = await scanSupplementPhotos({
         scanSessionId: String(requestedScanSessionId),
+        photoAttemptId: photoPersistenceAttemptId,
+        expectedRevision,
+        proposedRevision,
         barcode: currentState.barcode,
         barcodeType: currentState.barcodeType,
         productId: trimString(currentState.product?.productId) || undefined,
@@ -1784,6 +1868,48 @@ export const useScannerStore = create((set, get) => ({
         ingredientsImage,
         productImage,
       });
+
+      if (!isCurrentPhotoRescueAttempt(get(), attemptIdentity)) {
+        return null;
+      }
+
+      if (extraction.persistenceOutcome === "rejected_stale") {
+        set((state) =>
+          isCurrentPhotoRescueAttempt(state, attemptIdentity)
+            ? {
+                photoRescueStatus: "idle",
+                photoRescueError: null,
+              }
+            : state,
+        );
+        logDevelopmentDiagnostic(
+          "info",
+          "[scanner-photo-rescue] stale persistence ignored",
+          {
+            expectedRevision,
+            proposedRevision,
+            storedRevision: extraction.storedRevision,
+          },
+        );
+        return null;
+      }
+
+      if (
+        extraction.wroteCanonicalData &&
+        (![
+          "applied",
+          "already_applied",
+        ].includes(extraction.persistenceOutcome) ||
+          extraction.committedRevision !== proposedRevision ||
+          extraction.acceptedAttemptId !== photoPersistenceAttemptId)
+      ) {
+        throw createScannerFailure({
+          category: SCANNER_FAILURE_CATEGORIES.backendValidationFailure,
+          code: "invalid_photo_improvement_commit",
+          message:
+            "Photo rescue returned an invalid canonical persistence result.",
+        });
+      }
 
       const ingredients = extractIngredientCandidatesFromList(
         extraction.ingredients,
@@ -1859,34 +1985,65 @@ export const useScannerStore = create((set, get) => ({
         });
       }
 
-      set(() => ({
-        status: "success",
-        error: null,
-        product: buildPhotoRescueProduct({
-          barcode: currentState.barcode,
-          currentProduct: currentState.product,
-          productId: extraction.productId,
-          displayName: extraction.displayName,
-          productName: extraction.productName,
-          ingredients: extraction.ingredients,
-          servingSizeText: extraction.servingSizeText,
-          wroteCanonicalData: extraction.wroteCanonicalData,
-        }),
-        ingredients,
-        matchedIngredients,
-        matches,
-        unmatchedIngredients,
-        photoRescueStatus: "success",
-        photoRescueError: null,
-        extractionSource: extraction.source || "photo_rescue",
-        extractionConfidence: Number.isFinite(
-          extraction.classificationConfidence,
-        )
-          ? extraction.classificationConfidence
-          : Number.isFinite(extraction.confidence)
-            ? extraction.confidence
-            : null,
-      }));
+      const stateBeforeApply = get();
+      if (!isCurrentPhotoRescueAttempt(stateBeforeApply, attemptIdentity)) {
+        return null;
+      }
+
+      const previousHydrationKey = buildScanResultHydrationKey({
+        scanRequestId: currentState.scanRequestId,
+        productId: stateBeforeApply.product?.productId,
+        scanSessionId: requestedScanSessionId,
+        resultRevision: stateBeforeApply.photoRescueRevision,
+      });
+      invalidateScanResultHydration(previousHydrationKey);
+
+      let applied = false;
+      set((state) => {
+        if (!isCurrentPhotoRescueAttempt(state, attemptIdentity)) {
+          return state;
+        }
+
+        applied = true;
+        return {
+          status: "success",
+          error: null,
+          product: buildPhotoRescueProduct({
+            barcode: currentState.barcode,
+            currentProduct: currentState.product,
+            productId: extraction.productId,
+            displayName: extraction.displayName,
+            productName: extraction.productName,
+            ingredients: extraction.ingredients,
+            servingSizeText: extraction.servingSizeText,
+            wroteCanonicalData: extraction.wroteCanonicalData,
+            committedRevision: extraction.committedRevision,
+          }),
+          ingredients,
+          matchedIngredients,
+          matches,
+          unmatchedIngredients,
+          photoRescueStatus: "success",
+          photoRescueError: null,
+          photoRescueRevision:
+            Number.isSafeInteger(extraction.committedRevision) &&
+            extraction.committedRevision >= 0
+              ? extraction.committedRevision
+              : proposedRevision,
+          extractionSource: extraction.source || "photo_rescue",
+          extractionConfidence: Number.isFinite(
+            extraction.classificationConfidence,
+          )
+            ? extraction.classificationConfidence
+            : Number.isFinite(extraction.confidence)
+              ? extraction.confidence
+              : null,
+        };
+      });
+
+      if (!applied) {
+        return null;
+      }
 
       logDevelopmentDiagnostic("info", "[scanner-photo-rescue] completed", {
         createdProduct: extraction.createdProduct,
@@ -1898,10 +2055,22 @@ export const useScannerStore = create((set, get) => ({
     } catch (error) {
       const normalized = normalizePhotoRescueFailure(error);
 
-      set(() => ({
-        photoRescueStatus: "error",
-        photoRescueError: normalized,
-      }));
+      let applied = false;
+      set((state) => {
+        if (!isCurrentPhotoRescueAttempt(state, attemptIdentity)) {
+          return state;
+        }
+
+        applied = true;
+        return {
+          photoRescueStatus: "error",
+          photoRescueError: normalized,
+        };
+      });
+
+      if (!applied) {
+        return null;
+      }
 
       throw normalized;
     }

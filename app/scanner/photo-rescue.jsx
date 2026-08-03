@@ -310,11 +310,15 @@ export default function ScannerPhotoRescueScreen() {
         return;
       }
 
-      await enhanceScanWithPhotos({
+      const improvedScanState = await enhanceScanWithPhotos({
         scanSessionId: effectiveScanSessionId,
         ingredientsPhoto,
         productPhoto: nextPhoto,
       });
+
+      if (!improvedScanState) {
+        return;
+      }
 
       if (entryParam === "scanner_not_found") {
         const nextScanState = useScannerStore.getState();

@@ -3,16 +3,33 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 function loadIngredientMatchingHelpers() {
+  const doseNormalizationSource = readFileSync(
+    new URL(
+      "../../features/supplements/doseNormalization.js",
+      import.meta.url,
+    ),
+    "utf8",
+  ).replace(/\bexport\s+/gu, "");
+  const doseNormalization = new Function(
+    `${doseNormalizationSource}\nreturn { DOSE_CONTRACT_VERSION, normalizeIngredientDose };`,
+  )();
   const source = readFileSync(
     new URL("../../features/scanner/ingredientMatching.js", import.meta.url),
     "utf8",
   );
-  const transformed = source.replace(/^export function /gm, "function ");
+  const transformed = source
+    .replace(/import\s+\{[\s\S]*?\}\s+from\s+"@\/features\/supplements\/doseNormalization";\n/u, "")
+    .replace(/^export function /gm, "function ");
 
   return new Function(
+    "DOSE_CONTRACT_VERSION",
+    "normalizeIngredientDose",
     `${transformed}
 return { classifyIngredientText, extractIngredientCandidatesFromList, matchIngredientsToCatalog };`,
-  )();
+  )(
+    doseNormalization.DOSE_CONTRACT_VERSION,
+    doseNormalization.normalizeIngredientDose,
+  );
 }
 
 test("exact water is inactive and never matches watermelon extract", () => {
@@ -73,7 +90,14 @@ test("indexed matching preserves exact, alias, fuzzy, and unmatched results", ()
   const { extractIngredientCandidatesFromList, matchIngredientsToCatalog } =
     loadIngredientMatchingHelpers();
   const ingredients = extractIngredientCandidatesFromList([
-    { name: "Magnesium", dosageValue: 200, dosageUnit: "mg" },
+    {
+      name: "Magnesium",
+      dosageValue: 200,
+      dosageUnit: "mg",
+      amountBasis: "per_100g",
+      doseConfidence: "unverified",
+      doseReviewReason: "Panel row unclear",
+    },
     "Ascorbic Acid",
     "Green Tea Extract Powder",
     "Mystery Compound",
@@ -114,6 +138,17 @@ test("indexed matching preserves exact, alias, fuzzy, and unmatched results", ()
   );
   assert.equal(result.matchedIngredients[0].dosageValue, 200);
   assert.equal(result.matchedIngredients[0].dosageUnit, "mg");
+  assert.equal(result.matchedIngredients[0].dosageDisplay, "200 mg");
+  assert.equal(result.matchedIngredients[0].amountBasis, "per_100g");
+  assert.equal(result.matchedIngredients[0].doseConfidence, "unverified");
+  assert.equal(
+    result.matchedIngredients[0].doseReviewReason,
+    "Panel row unclear",
+  );
+  assert.equal(
+    result.matchedIngredients[0].normalizedDose.unavailableReason,
+    "dose_not_verified",
+  );
   assert.deepEqual(result.unmatchedIngredients, ["Mystery Compound"]);
 });
 
