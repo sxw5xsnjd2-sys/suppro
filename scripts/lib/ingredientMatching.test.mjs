@@ -11,7 +11,7 @@ function loadIngredientMatchingHelpers() {
     "utf8",
   ).replace(/\bexport\s+/gu, "");
   const doseNormalization = new Function(
-    `${doseNormalizationSource}\nreturn { DOSE_CONTRACT_VERSION, normalizeIngredientDose };`,
+    `${doseNormalizationSource}\nreturn { DOSE_CONTRACT_VERSION, getProbioticIdentityCompatibility, normalizeIngredientDose };`,
   )();
   const source = readFileSync(
     new URL("../../features/scanner/ingredientMatching.js", import.meta.url),
@@ -23,11 +23,13 @@ function loadIngredientMatchingHelpers() {
 
   return new Function(
     "DOSE_CONTRACT_VERSION",
+    "getProbioticIdentityCompatibility",
     "normalizeIngredientDose",
     `${transformed}
 return { classifyIngredientText, extractIngredientCandidatesFromList, matchIngredientsToCatalog };`,
   )(
     doseNormalization.DOSE_CONTRACT_VERSION,
+    doseNormalization.getProbioticIdentityCompatibility,
     doseNormalization.normalizeIngredientDose,
   );
 }
@@ -84,6 +86,203 @@ test("watermelon extract is still allowed when explicitly extracted", () => {
   assert.equal(result.matches.length, 1);
   assert.equal(result.matches[0].catalogName, "Watermelon Extract");
   assert.equal(result.matches[0].matchType, "exact");
+});
+
+test("structured probiotic candidates preserve strain identifiers and CFU doses", () => {
+  const { extractIngredientCandidatesFromList } =
+    loadIngredientMatchingHelpers();
+  const candidates = extractIngredientCandidatesFromList([
+    {
+      raw_name: "Lactobacillus acidophilus LA-14",
+      canonical_name: "Lactobacillus acidophilus LA-14",
+      dosage_display: "10 billion CFU",
+      amount_basis: "per_serving",
+      dose_confidence: "verified",
+    },
+    {
+      raw_name: "Bacillus coagulans GBI-30, 6086",
+      canonical_name: "Bacillus coagulans GBI-30, 6086",
+      dosage_value: 500_000_000,
+      dosage_unit: "viable organisms",
+      amount_basis: "per_serving",
+      dose_confidence: "verified",
+    },
+  ]);
+
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.raw),
+    [
+      "Lactobacillus acidophilus LA-14",
+      "Bacillus coagulans GBI-30, 6086",
+    ],
+  );
+  assert.deepEqual(
+    candidates.map((candidate) => [candidate.amount, candidate.unit]),
+    [
+      [10_000_000_000, "CFU"],
+      [500_000_000, "CFU"],
+    ],
+  );
+});
+
+test("canonical matching keeps distinct probiotic species on distinct canonical IDs", () => {
+  const { extractIngredientCandidatesFromList, matchIngredientsToCatalog } =
+    loadIngredientMatchingHelpers();
+  const strainNames = [
+    "Lactobacillus acidophilus LA-14",
+    "Bifidobacterium lactis HN019",
+    "Lactobacillus rhamnosus GG",
+    "Bacillus coagulans GBI-30, 6086",
+    "Lactobacillus plantarum Lp-115",
+    "Lactobacillus casei Lc-11",
+    "Lactobacillus paracasei Lpc-37",
+    "Lactobacillus salivarius Ls-33",
+    "Lactobacillus brevis Lbr-35",
+    "Lactobacillus gasseri Lg-36",
+    "Bifidobacterium breve Bb-03",
+    "Bifidobacterium bifidum Bb-06",
+    "Bifidobacterium longum Bl-05",
+    "Lactococcus lactis Ll-23",
+    "Streptococcus thermophilus St-21",
+    "Saccharomyces boulardii SB-01",
+  ];
+  const candidates = extractIngredientCandidatesFromList(
+    strainNames.map((name) => ({
+      name,
+      dosageValue: null,
+      dosageUnit: null,
+      doseConfidence: "missing",
+    })),
+  );
+  const catalog = strainNames.map((catalogName, index) => ({
+    catalogId: `probiotic-strain-${index}`,
+    catalogName,
+    canonicalName: catalogName,
+    verified: true,
+    sourceTable: "supplements",
+  }));
+
+  const result = matchIngredientsToCatalog(candidates, catalog);
+
+  assert.equal(candidates.length, 16);
+  assert.equal(result.matchedIngredients.length, 16);
+  assert.equal(result.matches.length, 16);
+  assert.deepEqual(
+    result.matchedIngredients.map((match) => match.ingredientRaw),
+    strainNames,
+  );
+});
+
+test("species aliases cannot map distinct probiotics onto one generic canonical", () => {
+  const { extractIngredientCandidatesFromList, matchIngredientsToCatalog } =
+    loadIngredientMatchingHelpers();
+  const names = [
+    "Bifidobacterium lactis",
+    "Bifidobacterium longum",
+    "Lactobacillus gasseri",
+    "Streptococcus thermophilus",
+  ];
+  const candidates = extractIngredientCandidatesFromList(names);
+  const catalog = names.map((catalogName) => ({
+    catalogId: "generic-probiotic-id",
+    catalogName,
+    canonicalName: "Probiotics",
+    verified: true,
+    sourceTable: "supplement_aliases",
+  }));
+
+  const result = matchIngredientsToCatalog(candidates, catalog);
+
+  assert.deepEqual(result.matchedIngredients, []);
+  assert.deepEqual(result.matches, []);
+  assert.deepEqual(result.unmatchedIngredients, names);
+});
+
+test("probiotic OCR genus corrections remain species-specific", () => {
+  const { extractIngredientCandidatesFromList, matchIngredientsToCatalog } =
+    loadIngredientMatchingHelpers();
+  const candidates = extractIngredientCandidatesFromList([
+    "Lactobacilus casei",
+    "Bifidobactertum longum",
+    "Lactobilus salivarius",
+  ]);
+  const result = matchIngredientsToCatalog(candidates, [
+    {
+      catalogId: "casei",
+      catalogName: "Lactobacillus casei",
+      canonicalName: "Lactobacillus casei",
+      verified: true,
+      sourceTable: "supplements",
+    },
+    {
+      catalogId: "longum",
+      catalogName: "Bifidobacterium longum",
+      canonicalName: "Bifidobacterium longum",
+      verified: true,
+      sourceTable: "supplements",
+    },
+    {
+      catalogId: "salivarius",
+      catalogName: "Lactobacillus salivarius",
+      canonicalName: "Lactobacillus salivarius",
+      verified: true,
+      sourceTable: "supplements",
+    },
+    {
+      catalogId: "wrong-species",
+      catalogName: "Lactobacillus gasseri",
+      canonicalName: "Lactobacillus gasseri",
+      verified: true,
+      sourceTable: "supplements",
+    },
+  ]);
+
+  assert.deepEqual(
+    result.matchedIngredients.map((match) => match.catalogId),
+    ["casei", "longum", "salivarius"],
+  );
+});
+
+test("embedded mass and enzyme doses are split before ingredient matching", () => {
+  const { extractIngredientCandidatesFromList, matchIngredientsToCatalog } =
+    loadIngredientMatchingHelpers();
+  const candidates = extractIngredientCandidatesFromList([
+    "Vitamin B12 500 μg",
+    "Lactase 3000 FCC",
+  ]);
+
+  assert.deepEqual(
+    candidates.map((candidate) => [candidate.raw, candidate.amount, candidate.unit]),
+    [
+      ["Vitamin B12", 500, "mcg"],
+      ["Lactase", 3000, "FCC"],
+    ],
+  );
+
+  const result = matchIngredientsToCatalog(candidates, [
+    {
+      catalogId: "vitamin-b12",
+      catalogName: "Vitamin B12",
+      verified: true,
+      sourceTable: "supplements",
+    },
+    {
+      catalogId: "lactase",
+      catalogName: "Lactase",
+      verified: true,
+      sourceTable: "supplements",
+    },
+  ]);
+  assert.deepEqual(
+    result.matchedIngredients.map((match) => [
+      match.catalogId,
+      match.dosageDisplay,
+    ]),
+    [
+      ["vitamin-b12", "500 mcg"],
+      ["lactase", "3000 FCC"],
+    ],
+  );
 });
 
 test("indexed matching preserves exact, alias, fuzzy, and unmatched results", () => {

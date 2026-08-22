@@ -173,6 +173,79 @@ test("valid dose produces full-precision benefit score while invalid dose is unr
   assert.equal(unverified.overallEvidenceScore, 80);
 });
 
+test("ranking worker scores verified CFU and excludes explicitly unverified CFU", () => {
+  const probioticProfile = {
+    effective_min_value: 5_000_000_000,
+    target_min_value: 10_000_000_000,
+    target_max_value: 20_000_000_000,
+    unit: "CFU",
+  };
+  const verified = worker.buildProductScoreCachePayload({
+    masterProduct: master({ verification_status: "photo_verified" }),
+    ingredientRows: [
+      ingredient({
+        supplementId: "probiotic-blend",
+        name: "Probiotic blend",
+        dosageValue: 10_000_000_000,
+        dosageUnit: "CFU",
+        doseConfidence: "verified",
+      }),
+    ],
+    supplementRows: [
+      supplement({ id: "probiotic-blend", profile: probioticProfile }),
+    ],
+  });
+  assert.equal(verified.benefitRows.length, 1);
+  assert.equal(verified.benefitRows[0].validatedDoseFactor, 1);
+
+  const unverified = worker.buildProductScoreCachePayload({
+    masterProduct: master({ verification_status: "photo_verified" }),
+    ingredientRows: [
+      ingredient({
+        supplementId: "probiotic-blend",
+        name: "Probiotic blend",
+        dosageValue: 10_000_000_000,
+        dosageUnit: "CFU",
+        doseConfidence: "unverified",
+      }),
+    ],
+    supplementRows: [
+      supplement({ id: "probiotic-blend", profile: probioticProfile }),
+    ],
+  });
+  assert.equal(unverified.benefitRows.length, 0);
+});
+
+test("ranking worker scores a verified enzyme activity dose", () => {
+  const payload = worker.buildProductScoreCachePayload({
+    masterProduct: master({ verification_status: "photo_verified" }),
+    ingredientRows: [
+      ingredient({
+        supplementId: "lactase",
+        name: "Lactase 3000 FCC",
+        dosageValue: 3000,
+        dosageUnit: "FCC",
+        doseConfidence: "verified",
+      }),
+    ],
+    supplementRows: [
+      supplement({
+        id: "lactase",
+        profile: {
+          effective_min_value: 2000,
+          target_min_value: 3000,
+          target_max_value: 4000,
+          unit: "FCC",
+        },
+      }),
+    ],
+  });
+
+  assert.equal(payload.benefitRows.length, 1);
+  assert.equal(payload.benefitRows[0].validatedDoseFactor, 1);
+  assert.equal(payload.benefitRows[0].doseComparisonStatus, "within_target_range");
+});
+
 test("ranking hydration selects dose confidence metadata", () => {
   assert.match(workerSource, /dose_confidence, dose_review_reason/u);
   assert.match(workerSource, /doseConfidence: trimString\(row\?\.dose_confidence\)/u);

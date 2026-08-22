@@ -121,7 +121,60 @@ test("normalizes per-capsule doses using serving size text", () => {
   assert.equal(ingredient.doseBand, "optimal");
 });
 
-test("label dose text without structured fields reports that parsing failed", () => {
+test("treats explicit singular serving wording as a one-unit serving", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "vitamin-d",
+      name: "Vitamin D",
+      evidenceScore: 90,
+      minValue: 5,
+      unit: "mcg",
+    }),
+  ]);
+
+  for (const servingSizeText of [
+    "Each capsule",
+    "Amount per capsule",
+    "Serving size: one capsule",
+    "Take a capsule daily",
+  ]) {
+    const [ingredient] = scoreMatchedIngredientsForProduct({
+      matchedIngredients: [
+        {
+          catalogId: "vitamin-d",
+          ingredientName: "Vitamin D",
+          dosageValue: 5,
+          dosageUnit: "mcg",
+          dosageOriginalText: "5µg (200 I.U.)",
+          amountBasis: "per_capsule",
+          doseConfidence: "verified",
+        },
+      ],
+      supplementsByCatalogId,
+      servingSizeText,
+    });
+
+    assert.deepEqual(
+      ingredient.normalizedServingDose,
+      {
+        value: 5,
+        unit: "mcg",
+        amountBasis: "per_capsule",
+        multiplier: 1,
+      },
+      servingSizeText,
+    );
+    assert.equal(
+      ingredient.doseComparisonStatus,
+      "within_target_range",
+      servingSizeText,
+    );
+    assert.equal(ingredient.doseComparisonValid, true, servingSizeText);
+    assert.equal(ingredient.dosePresentationMatchesScoringDose, true);
+  }
+});
+
+test("label dose text without structured fields is not displayed as a parsed dose", () => {
   const supplementsByCatalogId = new Map([
     createSupplement({
       id: "magnesium",
@@ -145,10 +198,10 @@ test("label dose text without structured fields reports that parsing failed", ()
     servingSizeText: "Serving size: 1 capsule",
   });
 
-  assert.equal(ingredient.dosageDisplay, "200 mg");
-  assert.equal(ingredient.normalizedDose.displayText, "200 mg");
+  assert.equal(ingredient.dosageDisplay, null);
+  assert.equal(ingredient.normalizedDose.displayText, null);
   assert.equal(ingredient.doseComparisonStatus, "dose_could_not_be_parsed");
-  assert.equal(ingredient.doseStatusLabel, "Dose could not be parsed");
+  assert.equal(ingredient.doseStatusLabel, "Dose could not be analysed");
   assert.equal(ingredient.validatedDoseFactor, null);
 });
 
@@ -210,6 +263,256 @@ test("verified structured dose uses one display and scoring contract", () => {
   assert.equal(ingredient.doseComparisonStatus, "within_target_range");
   assert.equal(ingredient.doseStatusLabel, "Meets target dose");
   assert.equal(ingredient.validatedDoseFactor, 1);
+});
+
+test("all supported dose units use the same verified scoring contract", () => {
+  const cases = [
+    ["mcg", 500],
+    ["mg", 200],
+    ["g", 1],
+    ["ml", 5],
+    ["IU", 1000],
+    ["CFU", 10_000_000_000],
+    ["FCC", 3000],
+    ["HUT", 5000],
+    ["DU", 1200],
+    ["FIP", 100],
+    ["ALU", 400],
+    ["GDU", 2400],
+    ["PU", 6000],
+  ];
+  const supplementsByCatalogId = new Map(
+    cases.map(([unit, value]) =>
+      createSupplement({
+        id: `dose-${unit}`,
+        evidenceScore: 80,
+        minValue: value,
+        maxValue: value,
+        unit,
+      }),
+    ),
+  );
+
+  const results = scoreMatchedIngredientsForProduct({
+    matchedIngredients: cases.map(([unit, value]) => ({
+      catalogId: `dose-${unit}`,
+      ingredientName: `Ingredient ${unit}`,
+      dosageValue: value,
+      dosageUnit: unit,
+      amountBasis: "per_serving",
+      doseConfidence: "verified",
+    })),
+    supplementsByCatalogId,
+  });
+
+  results.forEach((result) => {
+    assert.equal(result.normalizedDose.isStructurallyUsable, true, result.catalogId);
+    assert.equal(result.normalizedDose.isScoringEligible, true, result.catalogId);
+    assert.equal(result.doseComparisonStatus, "within_target_range", result.catalogId);
+    assert.equal(result.doseStatusLabel, "Meets target dose", result.catalogId);
+    assert.notEqual(
+      result.dosePresentation.statusLabel,
+      "Dose could not be analysed",
+      result.catalogId,
+    );
+    assert.equal(result.validatedDoseFactor, 1, result.catalogId);
+  });
+});
+
+test("verified CFU is displayed readably and scored while unverified CFU is excluded", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "probiotic-blend",
+      name: "Probiotic blend",
+      evidenceScore: 88,
+      minValue: 10_000_000_000,
+      maxValue: 20_000_000_000,
+      unit: "CFU",
+    }),
+  ]);
+
+  const [verified, unverified] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "probiotic-blend",
+        ingredientRaw: "Probiotic blend",
+        dosageValue: 10_000_000_000,
+        dosageUnit: "CFU",
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+      {
+        catalogId: "probiotic-blend",
+        ingredientRaw: "Lactobacillus acidophilus LA-14",
+        dosageValue: 10_000_000_000,
+        dosageUnit: "CFU",
+        amountBasis: "per_serving",
+        doseConfidence: "unverified",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(verified.dosageDisplay, "10 billion CFU");
+  assert.equal(verified.doseComparisonStatus, "within_target_range");
+  assert.equal(verified.validatedDoseFactor, 1);
+  assert.equal(unverified.dosageDisplay, "10 billion CFU");
+  assert.equal(unverified.doseComparisonStatus, "dose_not_verified");
+  assert.equal(unverified.doseStatusLabel, "Dose not verified");
+  assert.equal(unverified.validatedDoseFactor, null);
+});
+
+test("probiotic CFU display and scoring share the same reconciled magnitude", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "streptococcus-thermophilus",
+      evidenceScore: 88,
+      minValue: 10_000_000_000,
+      maxValue: 20_000_000_000,
+      unit: "CFU",
+    }),
+    createSupplement({
+      id: "lactobacillus-acidophilus",
+      evidenceScore: 86,
+      minValue: 39_500_000_000,
+      maxValue: 50_000_000_000,
+      unit: "CFU",
+    }),
+  ]);
+
+  const [streptococcus, acidophilus] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "streptococcus-thermophilus",
+        ingredientName: "Streptococcus thermophilus",
+        dosageValue: 1,
+        dosageUnit: "CFU",
+        dosageOriginalText: "Streptococcus thermophilus — 1 billion CFU",
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+      {
+        catalogId: "lactobacillus-acidophilus",
+        ingredientName: "Lactobacillus acidophilus",
+        dosageValue: 39.5,
+        dosageUnit: "CFU",
+        dosageOriginalText: "Lactobacillus acidophilus — 39.5 billion CFU",
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(streptococcus.normalizedDose.value, 1_000_000_000);
+  assert.equal(streptococcus.dosePresentation.displayText, "1 billion CFU");
+  assert.equal(streptococcus.normalizedServingDose.value, 1_000_000_000);
+  assert.equal(streptococcus.dosePresentationMatchesScoringDose, true);
+  assert.equal(streptococcus.doseComparisonStatus, "severely_underdosed");
+
+  assert.equal(acidophilus.normalizedDose.value, 39_500_000_000);
+  assert.equal(acidophilus.dosePresentation.displayText, "39.5 billion CFU");
+  assert.equal(acidophilus.normalizedServingDose.value, 39_500_000_000);
+  assert.equal(acidophilus.dosePresentationMatchesScoringDose, true);
+  assert.equal(acidophilus.doseComparisonStatus, "within_target_range");
+});
+
+test("a comparison is rejected when its normalized source dose is not visibly represented", () => {
+  const normalizedDose = normalizeIngredientDose({
+    ingredientName: "Lactobacillus acidophilus",
+    dosageValue: 1_000_000_000,
+    dosageUnit: "CFU",
+    amountBasis: "per_serving",
+    doseConfidence: "verified",
+  });
+  normalizedDose.displayText = null;
+  normalizedDose.presentation = {
+    ...normalizedDose.presentation,
+    displayText: null,
+  };
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "hidden-probiotic-dose",
+      name: "Lactobacillus acidophilus",
+      evidenceScore: 90,
+      minValue: 10_000_000_000,
+      unit: "CFU",
+    }),
+  ]);
+
+  const [ingredient] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "hidden-probiotic-dose",
+        normalizedDose,
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(ingredient.dosePresentation.displayText, null);
+  assert.equal(ingredient.dosePresentationMatchesScoringDose, false);
+  assert.equal(ingredient.doseComparisonStatus, "dose_presentation_mismatch");
+  assert.equal(ingredient.doseStatusLabel, "Dose comparison unavailable");
+  assert.equal(ingredient.doseComparisonValid, false);
+  assert.equal(ingredient.validatedDoseFactor, null);
+  assert.equal(ingredient.doseFactor, 1);
+  assert.equal(ingredient.adjustedEvidenceScore, 90);
+});
+
+test("a probiotic species cannot inherit scoring from an incompatible canonical ingredient", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "shared-probiotic",
+      name: "Bifidobacterium lactis",
+      evidenceScore: 90,
+      minValue: 10_000_000_000,
+      unit: "CFU",
+    }),
+    createSupplement({
+      id: "acidophilus",
+      name: "Lactobacillus acidophilus",
+      evidenceScore: 88,
+      minValue: 10_000_000_000,
+      unit: "CFU",
+    }),
+  ]);
+  const [conflict, compatible] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "shared-probiotic",
+        ingredientName: "Streptococcus thermophilus",
+        dosageValue: 1_000_000_000,
+        dosageUnit: "CFU",
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+      {
+        catalogId: "acidophilus",
+        ingredientName: "Lactobacillus acidophilus",
+        dosageValue: 1_000_000_000,
+        dosageUnit: "CFU",
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(conflict.dosageDisplay, "1 billion CFU");
+  assert.equal(conflict.canonicalIdentityCompatible, false);
+  assert.equal(conflict.evidenceScore, null);
+  assert.equal(conflict.doseScoringProfile, null);
+  assert.equal(conflict.doseComparisonStatus, "canonical_identity_mismatch");
+  assert.equal(conflict.doseComparisonValid, false);
+  assert.equal(conflict.validatedDoseFactor, null);
+  assert.notEqual(conflict.doseStatusLabel, "Severely underdosed");
+
+  assert.equal(compatible.canonicalIdentityCompatible, true);
+  assert.equal(compatible.normalizedDose.value, 1_000_000_000);
+  assert.equal(compatible.normalizedServingDose.value, 1_000_000_000);
+  assert.equal(compatible.dosePresentation.displayText, "1 billion CFU");
+  assert.equal(compatible.doseComparisonStatus, "severely_underdosed");
 });
 
 test("partial, unverified, unsupported, and sentinel doses are explicit and unscored", () => {
@@ -284,22 +587,34 @@ test("partial, unverified, unsupported, and sentinel doses are explicit and unsc
   });
   const byId = new Map(results.map((result) => [result.catalogId, result]));
 
-  assert.equal(byId.get("missing-unit").doseStatusLabel, "Dose unit unavailable");
-  assert.equal(byId.get("missing-value").doseStatusLabel, "Dose could not be parsed");
+  assert.equal(
+    byId.get("missing-unit").doseStatusLabel,
+    "Dose could not be analysed",
+  );
+  assert.equal(
+    byId.get("missing-value").doseStatusLabel,
+    "Dose could not be analysed",
+  );
   assert.equal(
     byId.get("unsupported-unit").doseStatusLabel,
-    "Dose unit unsupported",
+    "Dose could not be analysed",
   );
-  assert.equal(byId.get("unverified").doseStatusLabel, "Dose not verified");
+  assert.equal(
+    byId.get("unverified").doseStatusLabel,
+    "Dose not verified",
+  );
   assert.equal(byId.get("unverified").doseReviewReason, "OCR row mismatch");
   assert.equal(byId.get("per-100g").amountBasis, "per_100g");
-  assert.equal(byId.get("per-100g").doseStatusLabel, "Dose basis unsupported");
+  assert.equal(
+    byId.get("per-100g").doseStatusLabel,
+    "Dose comparison unavailable",
+  );
   assert.equal(byId.get("sentinel").dosageValue, null);
   assert.equal(byId.get("sentinel").dosageUnit, null);
   assert.equal(byId.get("sentinel").amountBasis, null);
   assert.equal(
     byId.get("malformed").doseStatusLabel,
-    "Dose could not be parsed",
+    "Dose could not be analysed",
   );
   results.forEach((result) => {
     assert.equal(result.validatedDoseFactor, null);
@@ -557,6 +872,36 @@ test("falls back to parsing how_to_use when recommended dose columns are missing
   assert.equal(ingredient.doseScoringProfile?.source, "recommended_dose_fallback");
 });
 
+test("parses a CFU target from probiotic how-to-use text", () => {
+  const supplementsByCatalogId = new Map([
+    createSupplement({
+      id: "probiotic-how-to-use",
+      evidenceScore: 86,
+      howToUse: "Take 1 × 10^10 CFU daily.",
+      recommendedDoseStatus: "missing",
+      recommendedDoseJson: null,
+    }),
+  ]);
+
+  const [ingredient] = scoreMatchedIngredientsForProduct({
+    matchedIngredients: [
+      {
+        catalogId: "probiotic-how-to-use",
+        dosageValue: 10_000_000_000,
+        dosageUnit: "CFU",
+        amountBasis: "per_serving",
+        doseConfidence: "verified",
+      },
+    ],
+    supplementsByCatalogId,
+  });
+
+  assert.equal(ingredient.doseComparisonStatus, "within_target_range");
+  assert.equal(ingredient.validatedDoseFactor, 1);
+  assert.equal(ingredient.doseScoringProfile?.unit, "CFU");
+  assert.equal(ingredient.doseScoringProfile?.source, "recommended_dose_fallback");
+});
+
 test("applies a moderate penalty below the effective minimum", () => {
   const supplementsByCatalogId = new Map([
     createSupplement({
@@ -709,7 +1054,7 @@ test("treats missing actual dose, unknown amount bases, and unclear serving text
   assert.equal(missingActual.doseComparisonValid, false);
   assert.equal(missingActual.adjustedEvidenceScore, 75);
   assert.equal(unknownBasis.doseComparisonStatus, "unsupported_amount_basis");
-  assert.equal(unknownBasis.doseStatusLabel, "Dose basis unsupported");
+  assert.equal(unknownBasis.doseStatusLabel, "Dose comparison unavailable");
   assert.equal(unknownBasis.scoreAdjustmentSummary, null);
   assert.equal(unknownBasis.doseFactor, 1);
   assert.equal(unknownBasis.validatedDoseFactor, null);
@@ -717,7 +1062,7 @@ test("treats missing actual dose, unknown amount bases, and unclear serving text
   assert.equal(unknownBasis.adjustedEvidenceScore, 70);
   assert.deepEqual(unknownBasis.doseFlags, ["unsupported_amount_basis"]);
   assert.equal(unclearServing.doseComparisonStatus, "serving_size_unparseable");
-  assert.equal(unclearServing.doseStatusLabel, "Serving size unclear");
+  assert.equal(unclearServing.doseStatusLabel, "Dose comparison unavailable");
   assert.equal(unclearServing.scoreAdjustmentSummary, null);
   assert.equal(unclearServing.doseFactor, 1);
   assert.equal(unclearServing.validatedDoseFactor, null);

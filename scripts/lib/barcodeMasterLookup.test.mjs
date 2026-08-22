@@ -139,3 +139,35 @@ test("EAN-13 with a leading zero resolves a master row stored as UPC-A", async (
   assert.deepEqual(lookup.calls, ["supplement_products_master"]);
   assert.equal(product.productId, "product-upca");
 });
+
+test("legacy display-only master doses are promoted during local hydration", async () => {
+  const lookup = loadMasterLookup([
+    {
+      product_id: "product-display-only",
+      barcode: "0616612990570",
+      display_name: "Legacy enzyme product",
+      active_ingredients_json: [
+        {
+          name: "Lactase",
+          dosageDisplay: "3000 FCC per capsule",
+          doseConfidence: null,
+        },
+      ],
+      verification_status: "verified",
+    },
+  ]);
+
+  const product = await lookup.fetchSupplementProductsMasterScanProduct(
+    "0616612990570",
+    "ean13",
+  );
+  const [ingredient] = product.sourceIngredients;
+
+  assert.equal(ingredient.name, "Lactase");
+  assert.equal(ingredient.dosageValue, 3000);
+  assert.equal(ingredient.dosageUnit, "FCC");
+  assert.equal(ingredient.dosageDisplay, "3000 FCC");
+  assert.equal(ingredient.amountBasis, "per_capsule");
+  assert.equal(ingredient.normalizedDose.isLegacyConfidence, true);
+  assert.equal(ingredient.normalizedDose.isScoringEligible, true);
+});

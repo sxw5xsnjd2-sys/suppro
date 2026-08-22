@@ -1,19 +1,43 @@
 import {
   DOSE_CONTRACT_VERSION,
-  getDoseUnavailableStatusLabel,
+  formatCfuDoseDisplay,
+  getProbioticIdentityCompatibility,
   normalizeDoseUnit,
   normalizeIngredientDose,
+  parseDoseText,
+  resolveNormalizedDosePresentation,
 } from "./doseNormalization.js";
 
 const BLEND_CORE_INGREDIENT_LIMIT = 3;
 const BLEND_CORE_WEIGHT = 0.8;
 const BLEND_TAIL_WEIGHT = 0.2;
-const COMPARABLE_UNITS = new Set(["mcg", "mg", "ml", "IU", "CFU"]);
+const COMPARABLE_UNITS = new Set([
+  "mcg",
+  "mg",
+  "ml",
+  "IU",
+  "CFU",
+  "FCC",
+  "HUT",
+  "DU",
+  "FIP",
+  "ALU",
+  "GDU",
+  "PU",
+]);
 const SERVING_BASIS_KEYWORDS = {
   per_capsule: ["capsule", "capsules", "cap", "caps"],
   per_tablet: ["tablet", "tablets", "tab", "tabs"],
   per_softgel: ["softgel", "softgels"],
   per_scoop: ["scoop", "scoops"],
+  per_drop: ["drop", "drops"],
+};
+const SINGULAR_SERVING_BASIS_KEYWORDS = {
+  per_capsule: ["capsule", "cap"],
+  per_tablet: ["tablet", "tab"],
+  per_softgel: ["softgel"],
+  per_scoop: ["scoop"],
+  per_drop: ["drop"],
 };
 const DOSE_BANDS = {
   OPTIMAL: "optimal",
@@ -30,11 +54,46 @@ const VALID_DOSE_COMPARISON_STATUSES = new Set([
   "severely_underdosed",
   "within_target_range",
 ]);
+
+function doesPresentationMatchNormalizedDose(normalizedDose) {
+  if (normalizedDose?.isStructurallyUsable !== true) {
+    return false;
+  }
+  const presentedDose = parseDoseText(normalizedDose?.displayText);
+  return Boolean(
+    presentedDose &&
+      presentedDose.value === normalizedDose.value &&
+      presentedDose.unit === normalizedDose.unit,
+  );
+}
+
+function warnDosePresentationMismatch({
+  normalizedDose,
+  normalizedServingDose,
+  comparisonStatus,
+}) {
+  if (typeof __DEV__ === "undefined" || !__DEV__) {
+    return;
+  }
+  console.warn("[dose-scoring-invariant]", {
+    ingredientName: normalizedDose?.ingredientName ?? null,
+    normalizedValue: normalizedDose?.value ?? null,
+    normalizedUnit: normalizedDose?.unit ?? null,
+    amountBasis: normalizedDose?.amountBasis ?? null,
+    confidence: normalizedDose?.doseConfidence ?? null,
+    reviewReason: normalizedDose?.doseReviewReason ?? null,
+    displayText: normalizedDose?.displayText ?? null,
+    scoringValue: normalizedServingDose?.value ?? null,
+    scoringUnit: normalizedServingDose?.unit ?? null,
+    scoringStatus: comparisonStatus ?? null,
+  });
+}
 const DEFAULT_EFFECTIVE_MIN_FRACTION = 0.6;
 const HOW_TO_USE_MULTIPLIERS = {
   thousand: 1e3,
   million: 1e6,
   billion: 1e9,
+  trillion: 1e12,
 };
 const VITAMIN_D_IU_PER_MCG = 40;
 const VITAMIN_E_MG_PER_IU = 0.67;
@@ -141,6 +200,10 @@ function formatDisplayNumber(value) {
 function formatDoseText(value, unit) {
   if (!Number.isFinite(value) || !unit) {
     return null;
+  }
+
+  if (unit === "CFU") {
+    return formatCfuDoseDisplay(value);
   }
 
   let displayValue = value;
@@ -560,7 +623,10 @@ function scoreHowToUseFragment(fragment) {
 
   let score = 0;
 
-  if (/\b\d+(?:[.,]\d+)?\s*(?:mcg|mg|g|ml|iu|cfu)\b/i.test(value)) {
+  if (
+    /\b\d+(?:[.,]\d+)?\s*(?:mcg|mg|g|ml|iu)\b/i.test(value) ||
+    parseDoseText(value)
+  ) {
     score += 60;
   }
   if (/\b(?:take|use|dosage|suggested use|direction(?:s)?)\b/i.test(value)) {
@@ -649,10 +715,25 @@ function parseComparableDoseMatchesFromHowToUse(fragment) {
 
   const matches = [];
   const occupiedRanges = [];
+  const parsedDose = parseDoseText(value);
+  if (parsedDose) {
+    const normalized = normalizeDoseMatch({
+      minValue: parsedDose.value,
+      maxValue: parsedDose.maxValue,
+      unit: parsedDose.unit,
+    });
+    if (normalized) {
+      matches.push(normalized);
+      const start = value.indexOf(parsedDose.matchedText);
+      if (start >= 0) {
+        occupiedRanges.push([start, start + parsedDose.matchedText.length]);
+      }
+    }
+  }
   const rangePattern =
-    /(\d+(?:[.,]\d+)?)\s*(thousand|million|billion)?\s*(?:-|–|—|to)\s*(\d+(?:[.,]\d+)?)\s*(thousand|million|billion)?\s*(mcg|mg|g|ml|iu|cfu)\b/gi;
+    /(\d+(?:[.,]\d+)?)\s*(thousand|million|billion|trillion)?\s*(?:-|–|—|to)\s*(\d+(?:[.,]\d+)?)\s*(thousand|million|billion|trillion)?\s*(mcg|mg|g|ml|iu)\b/gi;
   const singlePattern =
-    /(\d+(?:[.,]\d+)?)\s*(thousand|million|billion)?\s*(mcg|mg|g|ml|iu|cfu)\b/gi;
+    /(\d+(?:[.,]\d+)?)\s*(thousand|million|billion|trillion)?\s*(mcg|mg|g|ml|iu)\b/gi;
 
   let match;
 
@@ -839,7 +920,7 @@ function getDoseScoringProfileForSupplement(supplement, recommendedDose) {
 }
 
 function extractServingSizeMultiplier(servingSizeText, amountBasis) {
-  if (amountBasis === "per_serving") {
+  if (amountBasis === "per_serving" || amountBasis === "per_daily_dose") {
     return { multiplier: 1, flags: [] };
   }
 
@@ -871,6 +952,20 @@ function extractServingSizeMultiplier(servingSizeText, amountBasis) {
     if (Number.isFinite(multiplier) && multiplier > 0) {
       return {
         multiplier,
+        flags: [],
+      };
+    }
+  }
+
+  const singularKeywords = SINGULAR_SERVING_BASIS_KEYWORDS[amountBasis] ?? [];
+  for (const keyword of singularKeywords) {
+    if (
+      new RegExp(`\\b(?:each|per|one|a)\\s+${keyword}\\b`, "i").test(
+        normalizedText,
+      )
+    ) {
+      return {
+        multiplier: 1,
         flags: [],
       };
     }
@@ -1058,7 +1153,11 @@ function compareDoseToDoseScoringProfile({
   };
 }
 
-function buildDoseStatusLabel({ doseBand, doseComparisonStatus }) {
+function buildDoseStatusLabel({
+  doseBand,
+  doseComparisonStatus,
+  normalizedDose,
+}) {
   if (doseBand === DOSE_BANDS.OPTIMAL) {
     return "Meets target dose";
   }
@@ -1079,11 +1178,9 @@ function buildDoseStatusLabel({ doseBand, doseComparisonStatus }) {
     return "Above target range";
   }
 
-  if (doseComparisonStatus === "missing_dose_scoring_profile") {
-    return "Dose target unavailable";
-  }
-
-  return getDoseUnavailableStatusLabel(doseComparisonStatus);
+  return resolveNormalizedDosePresentation(normalizedDose, {
+    statusReason: doseComparisonStatus,
+  }).statusLabel;
 }
 
 function buildDoseComparisonSummary({
@@ -1260,16 +1357,27 @@ export function scoreMatchedIngredientsForProduct({
 }) {
   const preparedMatches = (matchedIngredients ?? []).map((match) => {
     const supplement = supplementsByCatalogId.get(match?.catalogId);
+    const canonicalIdentityCompatibility = getProbioticIdentityCompatibility(
+      match?.normalizedDose?.ingredientName ||
+        match?.ingredientName ||
+        match?.ingredientRaw,
+      supplement?.name,
+    );
+    const canonicalIdentityCompatible =
+      !canonicalIdentityCompatibility.applies ||
+      canonicalIdentityCompatibility.compatible;
     const evidenceScore =
+      canonicalIdentityCompatible &&
       typeof supplement?.evidence_score === "number" &&
       Number.isFinite(supplement.evidence_score)
         ? supplement.evidence_score
         : null;
-    const recommendedDose = getRecommendedDoseForSupplement(supplement);
-    const doseScoringProfile = getDoseScoringProfileForSupplement(
-      supplement,
-      recommendedDose
-    );
+    const recommendedDose = canonicalIdentityCompatible
+      ? getRecommendedDoseForSupplement(supplement)
+      : null;
+    const doseScoringProfile = canonicalIdentityCompatible
+      ? getDoseScoringProfileForSupplement(supplement, recommendedDose)
+      : null;
     const {
       normalizedDose,
       normalizedServingDose,
@@ -1290,6 +1398,8 @@ export function scoreMatchedIngredientsForProduct({
       evidenceScore,
       recommendedDose,
       doseScoringProfile,
+      canonicalIdentityCompatibility,
+      canonicalIdentityCompatible,
       normalizedDose,
       servingFlags,
       servingStatus,
@@ -1311,6 +1421,8 @@ export function scoreMatchedIngredientsForProduct({
       evidenceScore,
       recommendedDose,
       doseScoringProfile,
+      canonicalIdentityCompatibility,
+      canonicalIdentityCompatible,
       normalizedDose,
       servingFlags,
       servingStatus,
@@ -1319,21 +1431,60 @@ export function scoreMatchedIngredientsForProduct({
     const effectiveServingDose =
       aggregatedDoseByCatalogId.get(catalogId) ?? alignedServingDose;
 
+    const rawComparison = canonicalIdentityCompatible
+      ? compareDoseToDoseScoringProfile({
+          normalizedServingDose: effectiveServingDose,
+          doseScoringProfile,
+        })
+      : {
+          doseFactor: 1,
+          status: "canonical_identity_mismatch",
+          doseBand: DOSE_BANDS.UNKNOWN,
+          scoreAdjustmentReasonCode: DOSE_BANDS.UNKNOWN,
+          flags: [
+            canonicalIdentityCompatibility.reason ||
+              "canonical_identity_mismatch",
+          ],
+        };
+    const dosePresentationMatchesScoringDose =
+      doesPresentationMatchNormalizedDose(normalizedDose);
+    const rejectsInvisibleComparison =
+      servingStatus === "comparable" &&
+      VALID_DOSE_COMPARISON_STATUSES.has(rawComparison.status) &&
+      !dosePresentationMatchesScoringDose;
+    if (rejectsInvisibleComparison) {
+      warnDosePresentationMismatch({
+        normalizedDose,
+        normalizedServingDose: effectiveServingDose,
+        comparisonStatus: rawComparison.status,
+      });
+    }
+    const comparison = rejectsInvisibleComparison
+      ? {
+          doseFactor: 1,
+          status: "dose_presentation_mismatch",
+          doseBand: DOSE_BANDS.UNKNOWN,
+          scoreAdjustmentReasonCode: DOSE_BANDS.UNKNOWN,
+          flags: ["dose_presentation_mismatch"],
+        }
+      : rawComparison;
     const {
       doseFactor,
       status: comparisonStatus,
       doseBand,
       scoreAdjustmentReasonCode,
       flags: comparisonFlags,
-    } = compareDoseToDoseScoringProfile({
-      normalizedServingDose: effectiveServingDose,
-      doseScoringProfile,
-    });
+    } = comparison;
 
-    const doseComparisonStatus =
-      servingStatus !== "comparable" ? servingStatus : comparisonStatus;
+    const doseComparisonStatus = servingStatus !== "comparable"
+      ? servingStatus
+      : !canonicalIdentityCompatible
+        ? "canonical_identity_mismatch"
+        : comparisonStatus;
     const effectiveComparisonFlags =
-      servingStatus !== "comparable" ? [] : comparisonFlags;
+      !canonicalIdentityCompatible || servingStatus === "comparable"
+        ? comparisonFlags
+        : [];
     const adjustedEvidenceScore = Number.isFinite(evidenceScore)
       ? roundTo(evidenceScore * doseFactor, 4)
       : null;
@@ -1348,9 +1499,22 @@ export function scoreMatchedIngredientsForProduct({
       doseScoringProfile,
     });
 
+    const doseStatusLabel = buildDoseStatusLabel({
+      doseBand,
+      doseComparisonStatus,
+      normalizedDose,
+    });
+    const dosePresentation = {
+      ...resolveNormalizedDosePresentation(normalizedDose, {
+        statusReason: doseComparisonStatus,
+      }),
+      statusLabel: doseStatusLabel,
+    };
+
     return {
       ...match,
       normalizedDose,
+      ingredientName: normalizedDose.ingredientName || match?.ingredientName,
       dosageValue: normalizedDose.value,
       dosageUnit: normalizedDose.unit,
       dosageOriginalText: normalizedDose.dosageOriginalText,
@@ -1366,11 +1530,12 @@ export function scoreMatchedIngredientsForProduct({
       doseFactor,
       validatedDoseFactor,
       doseComparisonValid,
+      dosePresentationMatchesScoringDose,
+      canonicalIdentityCompatible,
+      canonicalIdentityReason: canonicalIdentityCompatibility.reason,
       doseBand,
-      doseStatusLabel: buildDoseStatusLabel({
-        doseBand,
-        doseComparisonStatus,
-      }),
+      dosePresentation,
+      doseStatusLabel,
       scoreAdjustmentReasonCode,
       scoreAdjustmentSummary,
       doseComparisonStatus,

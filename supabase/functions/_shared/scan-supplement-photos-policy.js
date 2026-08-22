@@ -2,9 +2,6 @@ const MAX_REQUEST_BYTES = 8_000_000
 const RETAIL_BARCODE_TYPES = new Set(["ean13", "ean8", "upc_a", "upc_e"])
 const ALPHANUMERIC_BARCODE_TYPES = new Set(["code128", "code39", "code93"])
 const SAFE_ALPHANUMERIC_BARCODE_PATTERN = /^[A-Za-z0-9._-]{4,40}$/
-const SAFE_PHOTO_ATTEMPT_ID_PATTERN = /^[A-Za-z0-9._:-]{8,160}$/
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : ""
@@ -125,11 +122,12 @@ function isValidBarcode(barcode, barcodeType) {
 }
 
 function parseIntegerLike(value) {
-  const parsed =
-    typeof value === "number"
-      ? value
-      : Number(String(value ?? "").trim())
-  return Number.isSafeInteger(parsed) ? parsed : null
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value)
+  }
+
+  const parsed = Number.parseInt(String(value ?? ""), 10)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function sanitizeImageDataUrl(value) {
@@ -200,9 +198,6 @@ export function validateScanSupplementPhotosRequest(rawBodyText) {
   }
 
   const scanSessionId = parseIntegerLike(body.scanSessionId)
-  const photoAttemptId = trimString(body.photoAttemptId)
-  const expectedRevision = parseIntegerLike(body.expectedRevision)
-  const proposedRevision = parseIntegerLike(body.proposedRevision)
   const barcodeType = canonicalizeBarcodeType(body.barcodeType)
   const barcode = normalizeBarcode(body.barcode, barcodeType)
   const ingredientsImage = sanitizeImageDataUrl(body.ingredientsImage)
@@ -215,32 +210,12 @@ export function validateScanSupplementPhotosRequest(rawBodyText) {
     return buildInvalidPayloadResponse("Missing scanSessionId.")
   }
 
-  if (
-    !SAFE_PHOTO_ATTEMPT_ID_PATTERN.test(photoAttemptId) ||
-    !Number.isFinite(expectedRevision) ||
-    (expectedRevision ?? -1) < 0 ||
-    !Number.isFinite(proposedRevision) ||
-    proposedRevision !== expectedRevision + 1
-  ) {
-    return buildInvalidPayloadResponse(
-      "Invalid photo improvement attempt or revision.",
-      "invalid_photo_improvement_version"
-    )
-  }
-
   if (!barcode) {
     return buildInvalidPayloadResponse("Missing barcode.")
   }
 
   if (!isValidBarcode(barcode, barcodeType)) {
     return buildInvalidPayloadResponse("Invalid barcode.")
-  }
-
-  if (requestedProductId && !UUID_PATTERN.test(requestedProductId)) {
-    return buildInvalidPayloadResponse(
-      "Invalid photo improvement target.",
-      "invalid_photo_improvement_target"
-    )
   }
 
   if (!ingredientsImage || !productImage) {
@@ -254,9 +229,6 @@ export function validateScanSupplementPhotosRequest(rawBodyText) {
     value: {
       body,
       scanSessionId,
-      photoAttemptId,
-      expectedRevision,
-      proposedRevision,
       barcode,
       barcodeType,
       ingredientsImage,

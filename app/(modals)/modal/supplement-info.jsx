@@ -78,6 +78,7 @@ import {
   createSupplementProductCatalogId,
 } from "@/features/supplements/catalog";
 import { BenefitIconBadge } from "@/features/supplements/components/BenefitIconBadge";
+import { logDoseContractDiagnostic } from "@/features/supplements/doseNormalization";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
@@ -139,15 +140,19 @@ const DOSE_STATUS_TOOLTIP_COPY = {
   dose_not_verified:
     "This dose has not been verified against the product label, so it is excluded from benefit scoring.",
   missing_amount_basis:
-    "The label does not say whether this amount is per serving, capsule, tablet, softgel, or scoop.",
+    "The label does not say whether this amount is per serving, daily dose, capsule, tablet, softgel, scoop, or drop.",
   unsupported_amount_basis:
     "This amount basis cannot be converted reliably into a per-serving dose, so it is excluded from benefit scoring.",
   serving_size_unparseable:
     "The dose is listed, but the serving size could not be read clearly enough to calculate the amount per serving.",
   unknown_amount_basis:
-    "Dose unavailable means the product lists an amount, but not in a form we can confidently convert into a per-serving dose.",
+    "Dose comparison unavailable means the product lists an amount, but not in a form we can confidently convert into a per-serving dose.",
+  dose_presentation_mismatch:
+    "This dose is excluded because the displayed amount does not match the amount prepared for comparison.",
+  canonical_identity_mismatch:
+    "This dose is excluded because the ingredient identity does not match the canonical supplement used for comparison.",
   unit_mismatch:
-    "Dose unavailable means the product dose and the target dose use units we cannot reliably compare yet.",
+    "Dose comparison unavailable means the product dose and the target dose use units we cannot reliably compare yet.",
 };
 
 const B_COMPLEX_REFERENCE_ID = "68c7b7df-68a3-4c99-81c9-a09a6af9212b";
@@ -1707,6 +1712,21 @@ export default function SupplementInfoModal() {
     () => [...(data?.matchedIngredients ?? [])],
     [data],
   );
+  useEffect(() => {
+    matchedIngredients.forEach((ingredient) => {
+      logDoseContractDiagnostic({
+        barcode: data?.barcode,
+        ingredientName: ingredient?.ingredientName,
+        normalizedDose: ingredient?.normalizedDose,
+        statusLabel:
+          ingredient?.dosePresentation?.statusLabel ??
+          ingredient?.doseStatusLabel,
+        scoringValue: ingredient?.normalizedServingDose?.value ?? null,
+        scoringUnit: ingredient?.normalizedServingDose?.unit ?? null,
+        scoringStatus: ingredient?.doseComparisonStatus ?? null,
+      });
+    });
+  }, [data?.barcode, matchedIngredients]);
   const linkedDetailItemsByHeading = useMemo(() => {
     if (
       !isScanStyledSource &&
@@ -1794,6 +1814,79 @@ export default function SupplementInfoModal() {
     matchedIngredients.length - visibleIngredientCount,
     0,
   );
+  useEffect(() => {
+    if (
+      typeof __DEV__ === "undefined" ||
+      !__DEV__ ||
+      String(data?.barcode ?? "").trim() !== "0616612990570"
+    ) {
+      return;
+    }
+
+    console.info("[photo-improvement-regression] final_render", {
+      photoAttemptId:
+        String(
+          scannerProduct?.photoImprovementAcceptedAttemptId ??
+            data?.photoImprovementAcceptedAttemptId ??
+            "",
+        ).trim() || null,
+      renderedRowCount: visibleIngredients.length,
+      totalFinalRowCount: matchedIngredients.length,
+      normalizedIngredientNames: matchedIngredients
+        .map((ingredient) =>
+          String(
+            ingredient?.normalizedDose?.ingredientName ??
+              ingredient?.ingredientName ??
+              ingredient?.ingredientRaw ??
+              "",
+          ).trim(),
+        )
+        .filter(Boolean),
+      finalDosePresentation: matchedIngredients.map((ingredient) => ({
+        normalizedIngredientName: String(
+          ingredient?.normalizedDose?.ingredientName ??
+            ingredient?.ingredientName ??
+            ingredient?.ingredientRaw ??
+            "",
+        ).trim(),
+        originalDoseText:
+          String(ingredient?.normalizedDose?.dosageOriginalText ?? "").trim() ||
+          null,
+        parsedCoefficient:
+          ingredient?.normalizedDose?.cfuCoefficient ?? null,
+        multiplierToken:
+          ingredient?.normalizedDose?.cfuMultiplierToken ?? null,
+        multiplierValue:
+          ingredient?.normalizedDose?.cfuMultiplierValue ?? null,
+        finalNumericCfuValue:
+          ingredient?.normalizedDose?.unit === "CFU"
+            ? ingredient.normalizedDose.value
+            : null,
+        canonicalUnit: ingredient?.normalizedDose?.unit ?? null,
+        amountBasis: ingredient?.normalizedDose?.amountBasis ?? null,
+        confidence: ingredient?.normalizedDose?.doseConfidence ?? null,
+        reviewReason: ingredient?.normalizedDose?.doseReviewReason ?? null,
+        doseDisplay:
+          String(ingredient?.dosePresentation?.displayText ?? "").trim() ||
+          null,
+        doseStatus:
+          String(ingredient?.dosePresentation?.statusLabel ?? "").trim() ||
+          null,
+        scoringValue: ingredient?.normalizedServingDose?.value ?? null,
+        scoringUnit: ingredient?.normalizedServingDose?.unit ?? null,
+        scoringStatus: ingredient?.doseComparisonStatus ?? null,
+        doseFactor: ingredient?.doseFactor ?? null,
+        presentationMatchesScoringDose:
+          ingredient?.dosePresentationMatchesScoringDose ?? null,
+      })),
+    });
+  }, [
+    data?.barcode,
+    data?.photoImprovementAcceptedAttemptId,
+    matchedIngredients,
+    scannerProduct?.photoImprovementAcceptedAttemptId,
+    visibleIngredients.length,
+  ]);
   const isSupplementProductDetail =
     data?.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT;
   const productId = data?.product_id || data?.id;
@@ -2916,7 +3009,10 @@ export default function SupplementInfoModal() {
                             "Matched ingredient",
                         );
                         const dosageDisplay = String(
-                          item?.normalizedDose?.displayText ?? "",
+                          item?.dosePresentation?.displayText ?? "",
+                        ).trim();
+                        const doseStatusLabel = String(
+                          item?.dosePresentation?.statusLabel ?? "",
                         ).trim();
                         const canOpenIngredient = Boolean(item?.catalogId);
 
@@ -2955,7 +3051,7 @@ export default function SupplementInfoModal() {
                                   </Text>
                                 ) : null}
                               </View>
-                              {item?.doseStatusLabel
+                              {doseStatusLabel
                                 ? (() => {
                                     const tooltipKey = `${
                                       item?.catalogId ?? index
@@ -3020,7 +3116,7 @@ export default function SupplementInfoModal() {
                                               },
                                             ]}
                                           >
-                                            {item.doseStatusLabel}
+                                            {doseStatusLabel}
                                           </Text>
                                           {hasTooltip ? (
                                             <Ionicons

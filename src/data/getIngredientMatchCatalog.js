@@ -16,6 +16,7 @@ function toCatalogRows(rows, { sourceTable, catalogType }) {
     .map((row) => ({
       catalogId: row.id,
       catalogName: row.name.trim(),
+      canonicalName: row.name.trim(),
       verified: row.status === "approved",
       sourceTable,
       catalogType,
@@ -23,24 +24,25 @@ function toCatalogRows(rows, { sourceTable, catalogType }) {
     .filter((row) => row.catalogName.length > 0);
 }
 
-function toAliasCatalogRows(rows, supplementStatusById) {
-  const statusById = supplementStatusById ?? new Map();
+function toAliasCatalogRows(rows, supplementById) {
+  const canonicalById = supplementById ?? new Map();
 
   return (rows ?? [])
     .map((row) => {
       const catalogId = trimString(row?.supplement_id);
       const catalogName =
         trimString(row?.alias) || trimString(row?.alias_normalized);
-      const status = statusById.get(catalogId);
+      const canonicalSupplement = canonicalById.get(catalogId);
 
-      if (!catalogId || !catalogName || !status) {
+      if (!catalogId || !catalogName || !canonicalSupplement?.status) {
         return null;
       }
 
       return {
         catalogId,
         catalogName,
-        verified: status === "approved",
+        canonicalName: canonicalSupplement.name,
+        verified: canonicalSupplement.status === "approved",
         sourceTable: "supplement_aliases",
         catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
       };
@@ -87,8 +89,11 @@ async function loadIngredientMatchCatalog() {
     sourceTable: "supplements",
     catalogType: CATALOG_TYPES.ACTIVE_INGREDIENT,
   });
-  const supplementStatusById = new Map(
-    (data ?? []).map((row) => [row.id, row.status])
+  const supplementById = new Map(
+    (data ?? []).map((row) => [
+      row.id,
+      { name: trimString(row.name), status: row.status },
+    ])
   );
 
   if (aliasesResult.error) {
@@ -99,7 +104,7 @@ async function loadIngredientMatchCatalog() {
     return supplementRows;
   }
 
-  const aliasRows = toAliasCatalogRows(aliasesResult.data, supplementStatusById);
+  const aliasRows = toAliasCatalogRows(aliasesResult.data, supplementById);
 
   return dedupeCatalogRows([...aliasRows, ...supplementRows]);
 }

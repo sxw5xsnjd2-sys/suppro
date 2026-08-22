@@ -21,6 +21,65 @@ function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function logPhotoRegressionHydration({
+  barcode,
+  photoAttemptId,
+  activeIngredients,
+}) {
+  if (
+    typeof __DEV__ === "undefined" ||
+    !__DEV__ ||
+    trimString(barcode) !== "0616612990570"
+  ) {
+    return;
+  }
+
+  const ingredients = Array.isArray(activeIngredients)
+    ? activeIngredients
+    : [];
+  console.info("[photo-improvement-regression] canonical_hydration", {
+    photoAttemptId: trimString(photoAttemptId) || null,
+    hydratedRowCount: ingredients.length,
+    normalizedIngredientNames: ingredients
+      .map((ingredient) =>
+        trimString(
+          ingredient?.normalizedDose?.ingredientName ||
+            ingredient?.ingredientName ||
+            ingredient?.ingredientRaw,
+        ),
+      )
+      .filter(Boolean),
+    finalDosePresentation: ingredients.map((ingredient) => ({
+      normalizedIngredientName: trimString(
+        ingredient?.normalizedDose?.ingredientName ||
+          ingredient?.ingredientName ||
+          ingredient?.ingredientRaw,
+      ),
+      originalDoseText:
+        trimString(ingredient?.normalizedDose?.dosageOriginalText) || null,
+      parsedCoefficient: ingredient?.normalizedDose?.cfuCoefficient ?? null,
+      multiplierToken: ingredient?.normalizedDose?.cfuMultiplierToken ?? null,
+      multiplierValue: ingredient?.normalizedDose?.cfuMultiplierValue ?? null,
+      finalNumericCfuValue:
+        ingredient?.normalizedDose?.unit === "CFU"
+          ? ingredient.normalizedDose.value
+          : null,
+      canonicalUnit: ingredient?.normalizedDose?.unit ?? null,
+      amountBasis: ingredient?.normalizedDose?.amountBasis ?? null,
+      confidence: ingredient?.normalizedDose?.doseConfidence ?? null,
+      reviewReason: ingredient?.normalizedDose?.doseReviewReason ?? null,
+      doseDisplay:
+        trimString(ingredient?.normalizedDose?.presentation?.displayText) ||
+        null,
+      doseStatus:
+        trimString(ingredient?.normalizedDose?.presentation?.statusLabel) ||
+        null,
+      scoringValue: null,
+      scoringStatus: null,
+    })),
+  });
+}
+
 function dedupeByKey(items, getKey) {
   const seen = new Set();
 
@@ -171,12 +230,14 @@ function buildProductIngredientMatch(row, supplementNameById) {
     ...row,
     ingredientName,
   });
+  const normalizedIngredientName =
+    normalizedDose.ingredientName || ingredientName;
 
   return {
     catalogId: supplementId || null,
     catalogName: linkedSupplementName || "",
-    ingredientName,
-    ingredientRaw: canonicalName || ingredientName,
+    ingredientName: normalizedIngredientName,
+    ingredientRaw: normalizedIngredientName,
     classification: "active",
     matchType: supplementId ? "linked" : "product_active_ingredient",
     score: 100,
@@ -487,7 +548,7 @@ async function getSupplementProductById(
   const { data, error } = await supabase
     .from("supplement_products_master")
     .select(
-      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at, verification_status, photo_improvement_revision"
+      "product_id, barcode, display_name, active_ingredients_json, serving_size_text, image_url, image_thumbnail_url, image_source_url, image_provider, image_query, image_confidence, image_status, image_error, image_manual_override, image_last_checked_at, verification_status, photo_improvement_revision, photo_improvement_accepted_attempt_id"
     )
     .eq("product_id", productId)
     .maybeSingle();
@@ -529,6 +590,11 @@ async function getSupplementProductById(
     (await getOffProductBarcode(data.product_id, scanRequestId));
   const verificationStatus =
     trimString(data?.verification_status) || "verified";
+  logPhotoRegressionHydration({
+    barcode,
+    photoAttemptId: data?.photo_improvement_accepted_attempt_id,
+    activeIngredients,
+  });
 
   return {
     ...buildLinkedSupplementPayload({
@@ -572,6 +638,8 @@ async function getSupplementProductById(
     )
       ? Math.max(0, Number(data.photo_improvement_revision))
       : 0,
+    photoImprovementAcceptedAttemptId:
+      trimString(data?.photo_improvement_accepted_attempt_id) || null,
     scanDetailsIncomplete:
       verificationStatus === "go_upc_unverified" ||
       verificationStatus === "ean_search_unverified",

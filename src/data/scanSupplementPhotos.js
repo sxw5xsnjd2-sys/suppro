@@ -5,11 +5,12 @@ import {
   SCANNER_FAILURE_CATEGORIES,
 } from "@src/lib/scannerFailure";
 import { logBuildAwareDiagnostic, SUPABASE_URL } from "@src/lib/runtimeConfig";
-import { normalizeIngredientDose } from "@/features/supplements/doseNormalization";
 
 const FUNCTION_NAME = "scan-supplement-photos";
 const TRAILING_DOSE_PATTERN =
   /^(.*?)\s+(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|μg|ug|pg|g|kg|ml|l|iu|cfu)\b(?:\s*(?:[A-Z]{1,4}|% ?NRV|NRV))?$/i;
+const DOSE_ONLY_PATTERN =
+  /^(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|μg|ug|pg|g|kg|ml|l|iu|cfu)\b(?:\s*(?:[A-Z]{1,4}|% ?NRV|NRV))?$/i;
 
 function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -65,7 +66,6 @@ function readDoseCandidate(source) {
     return {
       dosageValue: null,
       dosageUnit: null,
-      dosageOriginalText: null,
       dosageDisplay: null,
       amountBasis: null,
     };
@@ -87,16 +87,14 @@ function readDoseCandidate(source) {
         source.amount_unit ??
         source.unit
     ),
-    dosageOriginalText: findFirstNonEmptyString(
-      source.dosageOriginalText,
-      source.dosage_original_text,
-      source.originalText,
-      source.original_text
-    ),
     dosageDisplay: findFirstNonEmptyString(
       source.dosageDisplay,
       source.dosage_display,
+      source.dosageOriginalText,
+      source.dosage_original_text,
       source.display,
+      source.originalText,
+      source.original_text,
       source.text,
       source.label
     ),
@@ -104,6 +102,31 @@ function readDoseCandidate(source) {
       source.amountBasis,
       source.amount_basis
     ),
+  };
+}
+
+function parseDoseDisplayText(value) {
+  const text = normalizeString(value);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(DOSE_ONLY_PATTERN);
+  if (!match) {
+    return null;
+  }
+
+  const dosageValue = normalizeNumber(match[1]);
+  const dosageUnit = normalizeDoseUnit(match[2]);
+
+  if (!Number.isFinite(dosageValue) || !dosageUnit) {
+    return null;
+  }
+
+  return {
+    dosageValue,
+    dosageUnit,
+    dosageDisplay: formatDoseDisplay(dosageValue, dosageUnit),
   };
 }
 
@@ -138,27 +161,18 @@ export function normalizePhotoRescueIngredient(item) {
   if (typeof item === "string") {
     const parsed = parseTrailingDoseFromText(item);
     const cleanedName = parsed?.name || normalizeString(item);
-    const normalizedDose = normalizeIngredientDose({
-      dosageValue: parsed?.dosageValue ?? null,
-      dosageUnit: parsed?.dosageUnit ?? null,
-      dosageDisplay: parsed?.dosageDisplay ?? null,
-      amountBasis: null,
-      doseConfidence: null,
-    });
 
     return cleanedName
       ? {
           name: cleanedName,
           raw_name: cleanedName,
-          dosageValue: normalizedDose.value,
-          dosageUnit: normalizedDose.unit,
-          dosageOriginalText: normalizedDose.dosageOriginalText,
-          dosageDisplay: normalizedDose.displayText,
+          dosageValue: parsed?.dosageValue ?? null,
+          dosageUnit: parsed?.dosageUnit ?? null,
+          dosageDisplay: parsed?.dosageDisplay ?? null,
           chemicalForm: null,
-          amountBasis: normalizedDose.amountBasis,
-          doseConfidence: normalizedDose.doseConfidence,
-          doseReviewReason: normalizedDose.doseReviewReason,
-          normalizedDose,
+          amountBasis: null,
+          doseConfidence: null,
+          doseReviewReason: null,
         }
       : null;
   }
@@ -193,44 +207,30 @@ export function normalizePhotoRescueIngredient(item) {
     rootDose.dosageDisplay,
     ...nestedDoseCandidates.map((candidate) => candidate.dosageDisplay)
   );
-  const explicitOriginalText = findFirstNonEmptyString(
-    rootDose.dosageOriginalText,
-    ...nestedDoseCandidates.map((candidate) => candidate.dosageOriginalText)
-  );
   const hasExplicitDose =
     Number.isFinite(explicitValue) && Boolean(explicitUnit);
+  const parsedFromDisplay = parseDoseDisplayText(explicitDisplay);
   const name = parsedFromName?.name || rawName;
   const dosageValue = hasExplicitDose
     ? explicitValue
-    : parsedFromName?.dosageValue ?? null;
+    : parsedFromName?.dosageValue ?? parsedFromDisplay?.dosageValue ?? null;
   const dosageUnit = hasExplicitDose
     ? explicitUnit
-    : parsedFromName?.dosageUnit ?? null;
+    : parsedFromName?.dosageUnit ?? parsedFromDisplay?.dosageUnit ?? null;
   const dosageDisplay =
     explicitDisplay &&
     normalizeString(explicitDisplay).toLowerCase() !== rawName.toLowerCase()
       ? explicitDisplay
       : formatDoseDisplay(dosageValue, dosageUnit) ||
         parsedFromName?.dosageDisplay ||
+        parsedFromDisplay?.dosageDisplay ||
         null;
-  const normalizedDose = normalizeIngredientDose(
-    {
-      dosageValue,
-      dosageUnit,
-      dosageOriginalText: explicitOriginalText,
-      dosageDisplay,
-      amountBasis: findFirstNonEmptyString(
-        item.amountBasis,
-        item.amount_basis,
-        rootDose.amountBasis,
-        ...nestedDoseCandidates.map((candidate) => candidate.amountBasis)
-      ),
-      doseConfidence: item.doseConfidence ?? item.dose_confidence ?? null,
-      doseReviewReason:
-        item.doseReviewReason ?? item.dose_review_reason ?? null,
-    },
-    { allowDisplayParsing: true }
-  );
+  const rawDoseConfidence = item.doseConfidence ?? item.dose_confidence ?? null;
+  const doseConfidence = ["verified", "unverified", "missing"].includes(
+    rawDoseConfidence
+  )
+    ? rawDoseConfidence
+    : null;
 
   if (!name) {
     return null;
@@ -239,16 +239,21 @@ export function normalizePhotoRescueIngredient(item) {
   return {
     name,
     raw_name: name,
-    dosageValue: normalizedDose.value,
-    dosageUnit: normalizedDose.unit,
-    dosageOriginalText: normalizedDose.dosageOriginalText,
-    dosageDisplay: normalizedDose.displayText,
+    dosageValue,
+    dosageUnit,
+    dosageDisplay,
     chemicalForm:
       normalizeString(item.chemicalForm ?? item.chemical_form) || null,
-    amountBasis: normalizedDose.amountBasis,
-    doseConfidence: normalizedDose.doseConfidence,
-    doseReviewReason: normalizedDose.doseReviewReason,
-    normalizedDose,
+    amountBasis:
+      findFirstNonEmptyString(
+        item.amountBasis,
+        item.amount_basis,
+        rootDose.amountBasis,
+        ...nestedDoseCandidates.map((candidate) => candidate.amountBasis)
+      ) || null,
+    doseConfidence,
+    doseReviewReason:
+      normalizeString(item.doseReviewReason ?? item.dose_review_reason) || null,
   };
 }
 
@@ -274,16 +279,16 @@ function normalizeNumber(value) {
 }
 
 function normalizeNonNegativeInteger(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && !value.trim())
+  ) {
+    return null;
+  }
   const numeric =
     typeof value === "number" ? value : Number(String(value ?? "").trim());
   return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : null;
-}
-
-function normalizePersistenceOutcome(value) {
-  const outcome = normalizeString(value);
-  return ["applied", "already_applied", "rejected_stale"].includes(outcome)
-    ? outcome
-    : "";
 }
 
 function firstDefined(...values) {
@@ -313,10 +318,6 @@ export function normalizePhotoRescueResponseShape(payload) {
       data?.unresolvedIngredientCount,
       data?.unresolved_ingredient_count
     )
-  );
-  const followUpWarnings = firstDefined(
-    data?.followUpWarnings,
-    data?.follow_up_warnings
   );
 
   return {
@@ -359,21 +360,12 @@ export function normalizePhotoRescueResponseShape(payload) {
       ? Math.max(0, Math.trunc(unresolvedIngredientCount))
       : 0,
     rawText: normalizeString(firstDefined(data?.rawText, data?.raw_text)),
-    persistenceOutcome: normalizePersistenceOutcome(
-      firstDefined(data?.persistenceOutcome, data?.persistence_outcome)
-    ),
     committedRevision: normalizeNonNegativeInteger(
       firstDefined(data?.committedRevision, data?.committed_revision)
     ),
     acceptedAttemptId: normalizeString(
       firstDefined(data?.acceptedAttemptId, data?.accepted_attempt_id)
     ),
-    storedRevision: normalizeNonNegativeInteger(
-      firstDefined(data?.storedRevision, data?.stored_revision)
-    ),
-    followUpWarnings: Array.isArray(followUpWarnings)
-      ? followUpWarnings.map(normalizeString).filter(Boolean)
-      : [],
   };
 }
 

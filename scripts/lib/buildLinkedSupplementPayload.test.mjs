@@ -55,6 +55,38 @@ function loadBuildLinkedSupplementPayload(scoredMatchedIngredients) {
   ).buildLinkedSupplementPayload;
 }
 
+test("tracked matched-ingredient snapshots keep the normalized ingredient name", () => {
+  const scoredMatchedIngredients = [
+    {
+      catalogId: "lactase",
+      ingredientRaw: "Lactase 3000 FCC",
+      ingredientName: "Lactase 3000 FCC",
+      normalizedDose: {
+        contractVersion: 3,
+        ingredientName: "Lactase",
+        value: 3000,
+        unit: "FCC",
+        displayText: "3000 FCC",
+      },
+    },
+  ];
+  const buildLinkedSupplementPayload =
+    loadBuildLinkedSupplementPayload(scoredMatchedIngredients);
+  const payload = buildLinkedSupplementPayload({
+    name: "Enzyme product",
+    matchedIngredients: scoredMatchedIngredients,
+    supplementsByCatalogId: new Map([
+      ["lactase", { name: "Lactase", supplement_benefits: [] }],
+    ]),
+  });
+
+  assert.equal(payload.matchedIngredients[0].ingredientName, "Lactase");
+  assert.equal(
+    payload.matchedIngredients[0].normalizedDose.displayText,
+    "3000 FCC",
+  );
+});
+
 test("selects the scan support driver by benefit score weighted by dose factor", () => {
   const scoredMatchedIngredients = [
     {
@@ -346,6 +378,44 @@ test("leaves product benefit unrated when every driver has an invalid dose compa
   assert.equal(benefit.productBenefitDrivers.length, 1);
   assert.equal(benefit.productBenefitDrivers[0].ingredientName, "Missing dose");
   assert.equal(benefit.productBenefitDrivers[0].productBenefitScore, null);
+});
+
+test("canonical identity conflicts cannot contribute evidence, benefits, or guidance", () => {
+  const scoredMatchedIngredients = [
+    {
+      catalogId: "wrong-probiotic",
+      ingredientName: "Streptococcus thermophilus",
+      canonicalIdentityCompatible: false,
+      doseFactor: 1,
+      validatedDoseFactor: null,
+      doseComparisonStatus: "canonical_identity_mismatch",
+      doseComparisonValid: false,
+    },
+  ];
+  const buildLinkedSupplementPayload =
+    loadBuildLinkedSupplementPayload(scoredMatchedIngredients);
+  const payload = buildLinkedSupplementPayload({
+    name: "Probiotic product",
+    matchedIngredients: scoredMatchedIngredients,
+    supplementsByCatalogId: new Map([
+      [
+        "wrong-probiotic",
+        {
+          name: "Bifidobacterium lactis",
+          evidence: "Evidence belonging to a different species.",
+          how_to_use: "Dose guidance belonging to a different species.",
+          supplement_benefits: [
+            { label: "Wrong inherited benefit", score: 95 },
+          ],
+        },
+      ],
+    ]),
+  });
+
+  assert.equal(payload.matchedIngredients.length, 1);
+  assert.equal(payload.evidence, null);
+  assert.deepEqual(payload.supplement_benefits, []);
+  assert.equal(payload.how_to_use, null);
 });
 
 test("builds deduplicated reference items with benefit metadata", () => {

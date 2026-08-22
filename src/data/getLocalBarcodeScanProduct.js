@@ -59,24 +59,17 @@ function getIngredientDisplayName(ingredient) {
     return "";
   }
 
-  const name = trimString(ingredient.name);
-  const dosageDisplay = trimString(ingredient.dosageDisplay);
-  const dosageValue =
-    typeof ingredient.dosageValue === "number" && Number.isFinite(ingredient.dosageValue)
-      ? ingredient.dosageValue
-      : null;
-  const dosageUnit = trimString(ingredient.dosageUnit);
+  const normalizedDose = normalizeIngredientDose(ingredient, {
+    allowDisplayParsing: true,
+  });
+  const name = normalizedDose.ingredientName || trimString(ingredient.name);
 
   if (!name) {
     return "";
   }
 
-  if (dosageDisplay) {
-    return `${name} ${dosageDisplay}`;
-  }
-
-  if (Number.isFinite(dosageValue) && dosageUnit) {
-    return `${name} ${dosageValue}${dosageUnit}`;
+  if (normalizedDose.displayText) {
+    return `${name} ${normalizedDose.displayText}`;
   }
 
   return name;
@@ -94,9 +87,11 @@ function extractMasterIngredients(activeIngredientsJson) {
     const ingredient =
       item && typeof item === "object"
         ? (() => {
-            const normalizedDose = normalizeIngredientDose(item);
+            const normalizedDose = normalizeIngredientDose(item, {
+              allowDisplayParsing: true,
+            });
             return {
-              name: trimString(item.name),
+              name: normalizedDose.ingredientName || trimString(item.name),
               dosageValue: normalizedDose.value,
               dosageUnit: normalizedDose.unit,
               dosageOriginalText: normalizedDose.dosageOriginalText,

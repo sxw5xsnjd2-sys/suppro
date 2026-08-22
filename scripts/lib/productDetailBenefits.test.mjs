@@ -21,6 +21,13 @@ const scannerSource = readFileSync(
   new URL("../../app/scanner/index.jsx", import.meta.url),
   "utf8",
 );
+const doseNormalizationSource = readFileSync(
+  new URL(
+    "../../features/supplements/doseNormalization.js",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 test("product detail bars and labels use only canonical product-benefit helpers", () => {
   assert.match(detailSource, /function ProductBenefitScoreBar/u);
@@ -91,7 +98,9 @@ test("overall evidence remains separate from product-benefit display", () => {
 });
 
 test("ingredient rows render the normalized dose contract and explicit statuses", () => {
-  assert.match(detailSource, /item\?\.normalizedDose\?\.displayText/u);
+  assert.match(detailSource, /item\?\.dosePresentation\?\.displayText/u);
+  assert.match(detailSource, /item\?\.dosePresentation\?\.statusLabel/u);
+  assert.match(detailSource, /logDoseContractDiagnostic/u);
   assert.match(detailSource, /dose_could_not_be_parsed:/u);
   assert.match(detailSource, /dose_not_verified:/u);
   assert.match(detailSource, /unsupported_amount_basis:/u);
@@ -99,6 +108,9 @@ test("ingredient rows render the normalized dose contract and explicit statuses"
     detailSource,
     /item\?\.doseConfidence === "unverified"/u,
   );
+  assert.match(doseNormalizationSource, /Dose could not be analysed/u);
+  assert.doesNotMatch(detailSource, /Dose could not be parsed/u);
+  assert.doesNotMatch(doseNormalizationSource, /Dose could not be parsed/u);
 });
 
 test("missing product images use the muted pill placeholder", () => {

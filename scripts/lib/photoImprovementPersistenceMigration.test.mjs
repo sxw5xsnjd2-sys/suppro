@@ -71,6 +71,12 @@ test("ingredient replacement and master update are contained in one database fun
     /canonical_product := pg_catalog\.to_jsonb\(v_master\)/u,
   );
   assert.match(body, /active_ingredient_rows := v_active_rows/u);
+  assert.match(
+    body,
+    /pg_catalog\.jsonb_array_length\(p_master_active_ingredients\)/u,
+  );
+  assert.doesNotMatch(body, /row_data\.dosage_value\s+is\s+not\s+null/iu);
+  assert.doesNotMatch(body, /row_data\.dosage_unit\s+is\s+not\s+null/iu);
   assert.doesNotMatch(body, /exception\s+when[\s\S]*?restore/iu);
 });
 

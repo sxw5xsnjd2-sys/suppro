@@ -1,6 +1,7 @@
 import { normalizeEdgeFunctionInvokeError } from "@src/lib/edgeFunctionErrors";
 import { logBuildAwareDiagnostic } from "@src/lib/runtimeConfig";
 import { getAccessTokenOrCreateSession, supabase } from "@src/lib/supabase";
+import { normalizeIngredientDose } from "@/features/supplements/doseNormalization";
 import {
   isRetailBarcodeType,
   isValidBarcode,
@@ -36,7 +37,7 @@ function normalizeOpenAiIngredient(ingredient) {
   const unit = trimString(ingredient.unit) || null;
   const rawText = trimString(ingredient.raw_text);
   const dosageValue = parseAmountValue(amountText);
-  const dosageDisplay =
+  const rawDosageDisplay =
     amountText && unit
       ? `${amountText} ${unit}`
       : amountText || rawText || null;
@@ -45,14 +46,31 @@ function normalizeOpenAiIngredient(ingredient) {
     return null;
   }
 
+  const normalizedDose = normalizeIngredientDose(
+    {
+      ingredientName: name || rawText,
+      dosageValue: Number.isFinite(dosageValue) ? dosageValue : null,
+      dosageUnit: unit,
+      dosageOriginalText: rawText || rawDosageDisplay,
+      dosageDisplay: rawDosageDisplay,
+      amountBasis:
+        trimString(ingredient.per) === "serving" ? "per_serving" : null,
+    },
+    { allowDisplayParsing: true },
+  );
+
   return {
-    name: name || rawText,
-    amount: Number.isFinite(dosageValue) ? dosageValue : null,
-    unit,
-    dosageValue: Number.isFinite(dosageValue) ? dosageValue : null,
-    dosageUnit: unit,
-    dosageDisplay,
-    amountBasis: trimString(ingredient.per) === "serving" ? "per_serving" : null,
+    name: normalizedDose.ingredientName || name || rawText,
+    amount: normalizedDose.value,
+    unit: normalizedDose.unit,
+    dosageValue: normalizedDose.value,
+    dosageUnit: normalizedDose.unit,
+    dosageOriginalText: normalizedDose.dosageOriginalText,
+    dosageDisplay: normalizedDose.displayText,
+    amountBasis: normalizedDose.amountBasis,
+    doseConfidence: normalizedDose.doseConfidence,
+    doseReviewReason: normalizedDose.doseReviewReason,
+    normalizedDose,
     rawText: rawText || null,
     raw_text: rawText || null,
     source: "openai_web_search",
@@ -67,8 +85,8 @@ function buildIngredientsText(data, sourceIngredients) {
 
   return sourceIngredients
     .map((ingredient) => {
-      if (ingredient.dosageDisplay) {
-        return `${ingredient.name} ${ingredient.dosageDisplay}`;
+      if (ingredient.normalizedDose?.displayText) {
+        return `${ingredient.name} ${ingredient.normalizedDose.displayText}`;
       }
       return trimString(ingredient.name);
     })

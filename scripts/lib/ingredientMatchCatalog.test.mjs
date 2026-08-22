@@ -68,4 +68,11 @@ test("ingredient catalog download is reused for subsequent scans", async () => {
 
   assert.equal(firstRows, secondRows);
   assert.deepEqual(tableCalls, ["supplements", "supplement_aliases"]);
+  assert.deepEqual(
+    firstRows.map((row) => [row.catalogName, row.canonicalName]),
+    [
+      ["Magnesium Citrate", "Magnesium"],
+      ["Magnesium", "Magnesium"],
+    ],
+  );
 });

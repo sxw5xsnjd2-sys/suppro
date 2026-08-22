@@ -501,7 +501,11 @@ function buildMatchedIngredientsPayload(matchedIngredients, supplementsByCatalog
     return {
       ...match,
       ingredientName:
-        trimString(match?.ingredientRaw) || catalogName || "Matched ingredient",
+        trimString(match?.normalizedDose?.ingredientName) ||
+        trimString(match?.ingredientName) ||
+        trimString(match?.ingredientRaw) ||
+        catalogName ||
+        "Matched ingredient",
       catalogName,
     };
   });
@@ -530,9 +534,14 @@ export function buildLinkedSupplementPayload({
           supplementsByCatalogId,
           servingSizeText,
         });
-  const productScore = buildProductEvidenceScoreData(scoredMatchedIngredients);
+  const compatibleScoredIngredients = scoredMatchedIngredients.filter(
+    (match) => match?.canonicalIdentityCompatible !== false,
+  );
+  const productScore = buildProductEvidenceScoreData(
+    compatibleScoredIngredients,
+  );
   const mergedBenefits = mergeBenefits(
-    scoredMatchedIngredients,
+    compatibleScoredIngredients,
     supplementsByCatalogId
   );
 
@@ -546,7 +555,7 @@ export function buildLinkedSupplementPayload({
     score_adjustment_summary: productScore.scoreAdjustmentSummary,
     score_adjustment_reason_code: productScore.scoreAdjustmentReasonCode,
     evidence: buildSupplementEvidence(
-      scoredMatchedIngredients,
+      compatibleScoredIngredients,
       supplementsByCatalogId
     ),
     supplement_benefits: mergedBenefits,
@@ -557,22 +566,22 @@ export function buildLinkedSupplementPayload({
     ),
     serving_size_text: trimString(servingSizeText) || null,
     how_to_use: buildSectionBody(
-      scoredMatchedIngredients,
+      compatibleScoredIngredients,
       supplementsByCatalogId,
       "how_to_use"
     ),
     what_is_it: buildSectionBody(
-      scoredMatchedIngredients,
+      compatibleScoredIngredients,
       supplementsByCatalogId,
       "what_is_it"
     ),
     why_use_it: buildSectionBody(
-      scoredMatchedIngredients,
+      compatibleScoredIngredients,
       supplementsByCatalogId,
       "why_use_it"
     ),
     risks_and_interactions: buildSectionBody(
-      scoredMatchedIngredients,
+      compatibleScoredIngredients,
       supplementsByCatalogId,
       "risks_and_interactions"
     ),

@@ -1,4 +1,5 @@
 import {
+  getProbioticIdentityCompatibility,
   DOSE_CONTRACT_VERSION,
   normalizeIngredientDose,
 } from "@/features/supplements/doseNormalization";
@@ -38,7 +39,8 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const DOSAGE_UNIT_PATTERN = "mg|mcg|µg|μg|ug|pg|g|kg|ml|l|iu|%";
+const DOSAGE_UNIT_PATTERN =
+  "mg|mcg|µg|μg|ug|pg|g|kg|ml|l|iu|cfu|fcc|hut|du|fip|alu|gdu|pu|colony[\\s-]+forming[\\s-]+units?|viable[\\s-]+organisms?|live[\\s-]+cultures?|%";
 const STOPWORDS = new Set(["and", "or", "with", "from", "the", "a", "an"]);
 const NON_INGREDIENT_PATTERNS = [
   /\bnutritional information\b/i,
@@ -226,13 +228,14 @@ function normalizeStructuredIngredientSource(ingredient) {
   const normalizedDose = normalizeIngredientDose(ingredient, {
     allowDisplayParsing: true,
   });
+  const cleanedName = normalizedDose.ingredientName || name;
   const chemicalForm =
     trimString(getFirstValue(ingredient, ["chemicalForm", "chemical_form"])) ||
     null;
 
   return {
-    raw,
-    name,
+    raw: normalizedDose.parsedFromIngredientName ? cleanedName : raw,
+    name: cleanedName,
     amount: normalizedDose.value,
     unit: normalizedDose.unit,
     dosageOriginalText: normalizedDose.dosageOriginalText,
@@ -592,29 +595,50 @@ function toIngredientCandidate(raw, extra = {}) {
   if (!collapsed) {
     return null;
   }
+  const embeddedDose = normalizeIngredientDose(
+    { ingredientName: extra.name ?? collapsed },
+    { allowDisplayParsing: true },
+  );
+  const cleanedName =
+    embeddedDose.ingredientName || extra.name || collapsed;
+  const candidateRaw = embeddedDose.ingredientName || collapsed;
 
-  const rawClassification = classifyIngredientText(collapsed);
+  const rawClassification = classifyIngredientText(candidateRaw);
   if (rawClassification === "ignore") {
     return null;
   }
 
-  const normalized = normalizeIngredientText(extra.name ?? collapsed);
+  const normalized = normalizeIngredientText(cleanedName);
   if (!normalized) {
     return null;
   }
 
-  const classification = resolveIngredientClassification([collapsed, normalized]);
+  const classification = resolveIngredientClassification([
+    candidateRaw,
+    normalized,
+  ]);
 
   if (classification === "ignore") {
     return null;
   }
 
   return {
-    raw: collapsed,
+    ...extra,
+    raw: candidateRaw,
     normalized,
     tokens: tokenize(normalized),
     classification,
-    ...extra,
+    ...(embeddedDose.parsedFromIngredientName
+      ? {
+          name: embeddedDose.ingredientName,
+          amount: embeddedDose.value,
+          unit: embeddedDose.unit,
+          dosageOriginalText: embeddedDose.dosageOriginalText,
+          dosageDisplay: embeddedDose.displayText,
+          amountBasis: embeddedDose.amountBasis,
+          normalizedDose: embeddedDose,
+        }
+      : {}),
   };
 }
 
@@ -957,12 +981,24 @@ function hasDose(match) {
   return Number.isFinite(match?.dosageValue) && Boolean(match?.dosageUnit);
 }
 
+function isCatalogIdentityCompatible(candidate, catalogEntry) {
+  const compatibility = getProbioticIdentityCompatibility(
+    candidate?.raw || candidate?.normalized,
+    catalogEntry?.canonicalName || catalogEntry?.catalogName,
+  );
+  return !compatibility.applies || compatibility.compatible;
+}
+
 export function scoreIngredientMatch(candidate, catalogEntry) {
   if (!candidate?.normalized || !catalogEntry?.normalizedName) {
     return null;
   }
 
   if (getIngredientCandidateClassification(candidate) !== "active") {
+    return null;
+  }
+
+  if (!isCatalogIdentityCompatible(candidate, catalogEntry)) {
     return null;
   }
 
@@ -990,6 +1026,9 @@ export function scoreIngredientMatch(candidate, catalogEntry) {
 }
 
 function scorePartialIngredientMatch(candidate, catalogEntry) {
+  if (!isCatalogIdentityCompatible(candidate, catalogEntry)) {
+    return null;
+  }
   const catalogTokenSet =
     catalogEntry.tokenSet ?? new Set(catalogEntry.tokens ?? []);
   const sharedTokens = candidate.tokens.filter(
@@ -1112,7 +1151,11 @@ export function matchIngredientsToCatalog(
     const exactEntries = catalogLookup.exactByName.get(
       resolution.ingredient.normalized,
     );
-    const catalogEntry = chooseBestCatalogEntry(exactEntries);
+    const catalogEntry = chooseBestCatalogEntry(
+      (exactEntries ?? []).filter((entry) =>
+        isCatalogIdentityCompatible(resolution.ingredient, entry),
+      ),
+    );
     if (catalogEntry) {
       resolution.catalogEntry = catalogEntry;
       resolution.scored = { matchType: "exact", score: 100 };
@@ -1138,7 +1181,10 @@ export function matchIngredientsToCatalog(
     const seenEntries = new Set();
     resolution.ingredient.aliasForms.forEach((alias) => {
       (catalogLookup.byAlias.get(alias) ?? []).forEach((entry) => {
-        if (!seenEntries.has(entry)) {
+        if (
+          !seenEntries.has(entry) &&
+          isCatalogIdentityCompatible(resolution.ingredient, entry)
+        ) {
           seenEntries.add(entry);
           aliasEntries.push(entry);
         }

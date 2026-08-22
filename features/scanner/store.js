@@ -175,7 +175,8 @@ function buildPhotoRescueProduct({
   ingredients,
   servingSizeText,
   wroteCanonicalData,
-  committedRevision,
+  resultRevision,
+  acceptedAttemptId,
 }) {
   const nextProductName =
     trimString(displayName) ||
@@ -222,39 +223,23 @@ function buildPhotoRescueProduct({
     servingSizeText:
       trimString(servingSizeText) ||
       trimString(currentProduct?.servingSizeText),
-    photoImprovementRevision: Number.isSafeInteger(committedRevision)
-      ? committedRevision
+    photoImprovementRevision: Number.isSafeInteger(resultRevision)
+      ? resultRevision
       : getPhotoImprovementRevision(currentProduct),
-    photo_improvement_revision: Number.isSafeInteger(committedRevision)
-      ? committedRevision
+    photo_improvement_revision: Number.isSafeInteger(resultRevision)
+      ? resultRevision
       : getPhotoImprovementRevision(currentProduct),
+    photoImprovementAcceptedAttemptId:
+      trimString(acceptedAttemptId) ||
+      trimString(currentProduct?.photoImprovementAcceptedAttemptId) ||
+      trimString(currentProduct?.photo_improvement_accepted_attempt_id) ||
+      null,
+    photo_improvement_accepted_attempt_id:
+      trimString(acceptedAttemptId) ||
+      trimString(currentProduct?.photoImprovementAcceptedAttemptId) ||
+      trimString(currentProduct?.photo_improvement_accepted_attempt_id) ||
+      null,
   };
-}
-
-function isCurrentPhotoRescueAttempt(
-  state,
-  { scanSessionId, scanRequestId, photoRescueAttemptId },
-) {
-  return (
-    state.scanSessionId === scanSessionId &&
-    state.scanRequestId === scanRequestId &&
-    state.photoRescueAttemptId === photoRescueAttemptId
-  );
-}
-
-function createPhotoImprovementAttemptId(scanSessionId, attemptSequence) {
-  const uuid = globalThis.crypto?.randomUUID?.();
-  if (uuid) {
-    return `photo-${uuid}`;
-  }
-
-  return [
-    "photo",
-    scanSessionId,
-    Date.now().toString(36),
-    attemptSequence,
-    Math.random().toString(36).slice(2, 12),
-  ].join("-");
 }
 
 function createInitialState() {
@@ -1821,33 +1806,10 @@ export const useScannerStore = create((set, get) => ({
       throw error;
     }
 
-    let photoRescueAttemptId = 0;
-    const expectedRevision = Number.isSafeInteger(
-      currentState.photoRescueRevision,
-    )
-      ? Math.max(0, currentState.photoRescueRevision)
-      : getPhotoImprovementRevision(currentState.product);
-    const proposedRevision = expectedRevision + 1;
-    set((state) => {
-      photoRescueAttemptId =
-        (Number.isFinite(state.photoRescueAttemptId)
-          ? state.photoRescueAttemptId
-          : 0) + 1;
-      return {
-        photoRescueStatus: "processing",
-        photoRescueError: null,
-        photoRescueAttemptId,
-      };
-    });
-    const attemptIdentity = {
-      scanSessionId: requestedScanSessionId,
-      scanRequestId: currentState.scanRequestId,
-      photoRescueAttemptId,
-    };
-    const photoPersistenceAttemptId = createPhotoImprovementAttemptId(
-      requestedScanSessionId,
-      photoRescueAttemptId,
-    );
+    set(() => ({
+      photoRescueStatus: "processing",
+      photoRescueError: null,
+    }));
 
     try {
       logDevelopmentDiagnostic("info", "[scanner-photo-rescue] submitting", {
@@ -1858,9 +1820,6 @@ export const useScannerStore = create((set, get) => ({
 
       const extraction = await scanSupplementPhotos({
         scanSessionId: String(requestedScanSessionId),
-        photoAttemptId: photoPersistenceAttemptId,
-        expectedRevision,
-        proposedRevision,
         barcode: currentState.barcode,
         barcodeType: currentState.barcodeType,
         productId: trimString(currentState.product?.productId) || undefined,
@@ -1869,54 +1828,8 @@ export const useScannerStore = create((set, get) => ({
         productImage,
       });
 
-      if (!isCurrentPhotoRescueAttempt(get(), attemptIdentity)) {
-        return null;
-      }
-
-      if (extraction.persistenceOutcome === "rejected_stale") {
-        set((state) =>
-          isCurrentPhotoRescueAttempt(state, attemptIdentity)
-            ? {
-                photoRescueStatus: "idle",
-                photoRescueError: null,
-              }
-            : state,
-        );
-        logDevelopmentDiagnostic(
-          "info",
-          "[scanner-photo-rescue] stale persistence ignored",
-          {
-            expectedRevision,
-            proposedRevision,
-            storedRevision: extraction.storedRevision,
-          },
-        );
-        return null;
-      }
-
-      if (
-        extraction.wroteCanonicalData &&
-        (![
-          "applied",
-          "already_applied",
-        ].includes(extraction.persistenceOutcome) ||
-          extraction.committedRevision !== proposedRevision ||
-          extraction.acceptedAttemptId !== photoPersistenceAttemptId)
-      ) {
-        throw createScannerFailure({
-          category: SCANNER_FAILURE_CATEGORIES.backendValidationFailure,
-          code: "invalid_photo_improvement_commit",
-          message:
-            "Photo rescue returned an invalid canonical persistence result.",
-        });
-      }
-
       const ingredients = extractIngredientCandidatesFromList(
         extraction.ingredients,
-        {
-          scanRequestId: currentState.scanRequestId,
-          logTiming: logScanTiming,
-        },
       );
 
       if (extraction.isSupplement === false) {
@@ -1948,10 +1861,6 @@ export const useScannerStore = create((set, get) => ({
           const nextMatches = matchIngredientsToCatalog(
             ingredients,
             catalogRows,
-            {
-              scanRequestId: currentState.scanRequestId,
-              logTiming: logScanTiming,
-            },
           );
           matchedIngredients = nextMatches.matchedIngredients;
           matches = nextMatches.matches;
@@ -1986,91 +1895,70 @@ export const useScannerStore = create((set, get) => ({
       }
 
       const stateBeforeApply = get();
-      if (!isCurrentPhotoRescueAttempt(stateBeforeApply, attemptIdentity)) {
-        return null;
-      }
-
+      const previousRevision = Math.max(
+        Number.isSafeInteger(stateBeforeApply.photoRescueRevision)
+          ? Math.max(0, stateBeforeApply.photoRescueRevision)
+          : 0,
+        getPhotoImprovementRevision(stateBeforeApply.product),
+      );
+      const resultRevision =
+        Number.isSafeInteger(extraction.committedRevision) &&
+        extraction.committedRevision > previousRevision
+          ? extraction.committedRevision
+          : previousRevision + 1;
       const previousHydrationKey = buildScanResultHydrationKey({
-        scanRequestId: currentState.scanRequestId,
+        scanRequestId: stateBeforeApply.scanRequestId,
         productId: stateBeforeApply.product?.productId,
         scanSessionId: requestedScanSessionId,
-        resultRevision: stateBeforeApply.photoRescueRevision,
+        resultRevision: previousRevision,
       });
       invalidateScanResultHydration(previousHydrationKey);
 
-      let applied = false;
-      set((state) => {
-        if (!isCurrentPhotoRescueAttempt(state, attemptIdentity)) {
-          return state;
-        }
-
-        applied = true;
-        return {
-          status: "success",
-          error: null,
-          product: buildPhotoRescueProduct({
-            barcode: currentState.barcode,
-            currentProduct: currentState.product,
-            productId: extraction.productId,
-            displayName: extraction.displayName,
-            productName: extraction.productName,
-            ingredients: extraction.ingredients,
-            servingSizeText: extraction.servingSizeText,
-            wroteCanonicalData: extraction.wroteCanonicalData,
-            committedRevision: extraction.committedRevision,
-          }),
-          ingredients,
-          matchedIngredients,
-          matches,
-          unmatchedIngredients,
-          photoRescueStatus: "success",
-          photoRescueError: null,
-          photoRescueRevision:
-            Number.isSafeInteger(extraction.committedRevision) &&
-            extraction.committedRevision >= 0
-              ? extraction.committedRevision
-              : proposedRevision,
-          extractionSource: extraction.source || "photo_rescue",
-          extractionConfidence: Number.isFinite(
-            extraction.classificationConfidence,
-          )
-            ? extraction.classificationConfidence
-            : Number.isFinite(extraction.confidence)
-              ? extraction.confidence
-              : null,
-        };
-      });
-
-      if (!applied) {
-        return null;
-      }
+      set(() => ({
+        status: "success",
+        error: null,
+        product: buildPhotoRescueProduct({
+          barcode: currentState.barcode,
+          currentProduct: currentState.product,
+          productId: extraction.productId,
+          displayName: extraction.displayName,
+          productName: extraction.productName,
+          ingredients: extraction.ingredients,
+          servingSizeText: extraction.servingSizeText,
+          wroteCanonicalData: extraction.wroteCanonicalData,
+          resultRevision,
+          acceptedAttemptId: extraction.acceptedAttemptId,
+        }),
+        ingredients,
+        matchedIngredients,
+        matches,
+        unmatchedIngredients,
+        photoRescueStatus: "success",
+        photoRescueError: null,
+        photoRescueRevision: resultRevision,
+        extractionSource: extraction.source || "photo_rescue",
+        extractionConfidence: Number.isFinite(
+          extraction.classificationConfidence,
+        )
+          ? extraction.classificationConfidence
+          : Number.isFinite(extraction.confidence)
+            ? extraction.confidence
+            : null,
+      }));
 
       logDevelopmentDiagnostic("info", "[scanner-photo-rescue] completed", {
         createdProduct: extraction.createdProduct,
         wroteCanonicalData: extraction.wroteCanonicalData,
         unmatchedIngredientCount: unmatchedIngredients.length,
       });
-
       return get();
     } catch (error) {
       const normalized = normalizePhotoRescueFailure(error);
 
-      let applied = false;
-      set((state) => {
-        if (!isCurrentPhotoRescueAttempt(state, attemptIdentity)) {
-          return state;
-        }
-
-        applied = true;
-        return {
-          photoRescueStatus: "error",
-          photoRescueError: normalized,
-        };
-      });
-
-      if (!applied) {
-        return null;
-      }
+      set(() => ({
+        photoRescueStatus: "error",
+        photoRescueError: normalized,
+      }));
 
       throw normalized;
     }

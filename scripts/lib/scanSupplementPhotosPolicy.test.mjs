@@ -76,15 +76,12 @@ test("scan/photo rescue validator normalizes accepted payloads", () => {
   const result = validateScanSupplementPhotosRequest(
     JSON.stringify({
       scanSessionId: "42",
-      photoAttemptId: "attempt-3",
-      expectedRevision: "0",
-      proposedRevision: "1",
       barcode: " 0123-4567-8901 ",
       barcodeType: "ean13",
       ingredientsImage: "data:image/png;base64,abcd",
       productImage: "data:image/jpeg;base64,efgh",
       currentProduct: {
-        productId: " 11111111-1111-4111-8111-111111111111 ",
+        productId: " prod_123 ",
         productName: " Magnesium Glycinate ",
         ingredientsText: " Magnesium 200 mg ",
         sourceIngredients: [" Magnesium ", " Vitamin D3 "],
@@ -96,36 +93,30 @@ test("scan/photo rescue validator normalizes accepted payloads", () => {
   assert.deepEqual(result.value, {
     body: {
       scanSessionId: "42",
-      photoAttemptId: "attempt-3",
-      expectedRevision: "0",
-      proposedRevision: "1",
       barcode: " 0123-4567-8901 ",
       barcodeType: "ean13",
       ingredientsImage: "data:image/png;base64,abcd",
       productImage: "data:image/jpeg;base64,efgh",
       currentProduct: {
-        productId: " 11111111-1111-4111-8111-111111111111 ",
+        productId: " prod_123 ",
         productName: " Magnesium Glycinate ",
         ingredientsText: " Magnesium 200 mg ",
         sourceIngredients: [" Magnesium ", " Vitamin D3 "],
       },
     },
     scanSessionId: 42,
-    photoAttemptId: "attempt-3",
-    expectedRevision: 0,
-    proposedRevision: 1,
     barcode: "0012345678901",
     barcodeType: "ean13",
     ingredientsImage: "data:image/png;base64,abcd",
     productImage: "data:image/jpeg;base64,efgh",
     currentProduct: {
-      productId: "11111111-1111-4111-8111-111111111111",
+      productId: "prod_123",
       productName: "Magnesium Glycinate",
       ingredientsText: "Magnesium 200 mg",
       sourceIngredients: ["Magnesium", "Vitamin D3"],
       sourceStatusVerbose: "",
     },
-    requestedProductId: "11111111-1111-4111-8111-111111111111",
+    requestedProductId: "prod_123",
   })
 })
 
@@ -136,9 +127,6 @@ test("scan/photo rescue validator preserves alphanumeric non-retail barcodes", (
   const result = validateScanSupplementPhotosRequest(
     JSON.stringify({
       scanSessionId: 7,
-      photoAttemptId: "attempt-1",
-      expectedRevision: 0,
-      proposedRevision: 1,
       barcode: " X00131RGZ5 ",
       barcodeType: "code128",
       ingredientsImage: "data:image/png;base64,abcd",
@@ -149,55 +137,4 @@ test("scan/photo rescue validator preserves alphanumeric non-retail barcodes", (
   assert.equal(result.ok, true)
   assert.equal(result.value.barcode, "X00131RGZ5")
   assert.equal(result.value.barcodeType, "code128")
-})
-
-test("scan/photo rescue validator requires a valid optimistic revision contract", () => {
-  const { validateScanSupplementPhotosRequest } =
-    loadScanSupplementPhotosPolicyModule()
-  const basePayload = {
-    scanSessionId: 7,
-    photoAttemptId: "attempt-2",
-    expectedRevision: 1,
-    proposedRevision: 2,
-    barcode: "X00131RGZ5",
-    barcodeType: "code128",
-    ingredientsImage: "data:image/png;base64,abcd",
-    productImage: "data:image/jpeg;base64,efgh",
-  }
-
-  for (const invalidFields of [
-    { photoAttemptId: "bad" },
-    { expectedRevision: -1 },
-    { proposedRevision: 1 },
-    { proposedRevision: 3 },
-  ]) {
-    const result = validateScanSupplementPhotosRequest(
-      JSON.stringify({ ...basePayload, ...invalidFields })
-    )
-    assert.equal(result.ok, false)
-    assert.equal(result.status, 400)
-    assert.equal(result.body.code, "invalid_photo_improvement_version")
-  }
-})
-
-test("scan/photo rescue validator rejects a non-canonical product target", () => {
-  const { validateScanSupplementPhotosRequest } =
-    loadScanSupplementPhotosPolicyModule()
-  const result = validateScanSupplementPhotosRequest(
-    JSON.stringify({
-      scanSessionId: 7,
-      photoAttemptId: "attempt-target",
-      expectedRevision: 0,
-      proposedRevision: 1,
-      barcode: "X00131RGZ5",
-      barcodeType: "code128",
-      productId: "not-a-product-uuid",
-      ingredientsImage: "data:image/png;base64,abcd",
-      productImage: "data:image/jpeg;base64,efgh",
-    })
-  )
-
-  assert.equal(result.ok, false)
-  assert.equal(result.status, 400)
-  assert.equal(result.body.code, "invalid_photo_improvement_target")
 })
