@@ -791,6 +791,7 @@ export async function loadSearchHistory({
   storage = AsyncStorage,
   accountId,
   refreshScores = storage === AsyncStorage,
+  telemetry,
 } = {}) {
   const storageKey = await resolveStorageKey(accountId);
   const existing = parseStoredHistory(await storage.getItem(storageKey));
@@ -800,6 +801,7 @@ export async function loadSearchHistory({
       ? refreshCanonicalProductHistoryScores(existing.items, {
           storage,
           accountId,
+          telemetry,
         })
       : existing.items;
   }
@@ -837,6 +839,7 @@ export async function loadSearchHistory({
     ? refreshCanonicalProductHistoryScores(migratedItems, {
         storage,
         accountId,
+        telemetry,
       })
     : migratedItems;
 }
@@ -858,11 +861,16 @@ export async function refreshCanonicalProductHistoryScores(
     accountId,
     client = supabase,
     maximum = MAX_HISTORY_SCORE_REFRESH_IDS,
+    telemetry,
   } = {},
 ) {
   const productIds = getBoundedCanonicalProductHistoryIds(items, maximum);
   if (!productIds.length || typeof client?.rpc !== "function") return items;
 
+  const finishScoreRefresh = telemetry?.start?.(
+    "search_history_score_refresh",
+    { provider: "supabase" },
+  );
   try {
     const data = await fetchBoundedProductScoreSnapshots(productIds, {
       client,
@@ -874,9 +882,18 @@ export async function refreshCanonicalProductHistoryScores(
       data,
       maximum,
     );
-    if (JSON.stringify(reconciled) === JSON.stringify(items)) return items;
-    return persistSearchHistory(reconciled, { storage, accountId });
+    if (JSON.stringify(reconciled) === JSON.stringify(items)) {
+      finishScoreRefresh?.({ rowCount: data?.length ?? 0, success: true });
+      return items;
+    }
+    const persisted = await persistSearchHistory(reconciled, {
+      storage,
+      accountId,
+    });
+    finishScoreRefresh?.({ rowCount: data?.length ?? 0, success: true });
+    return persisted;
   } catch (error) {
+    finishScoreRefresh?.({ success: false, error });
     console.warn("Failed to refresh Search history score snapshots", error);
     return items;
   }
@@ -991,18 +1008,31 @@ function enqueueHistoryMutation(operation) {
 
 async function recordHistoryItem(
   item,
-  { storage = AsyncStorage, accountId } = {},
+  { storage = AsyncStorage, accountId, telemetry } = {},
 ) {
   if (!item) {
     return loadSearchHistory({ storage, accountId });
   }
 
   return enqueueHistoryMutation(async () => {
-    const items = await loadSearchHistory({ storage, accountId });
-    return persistSearchHistory(upsertSearchHistoryItem(items, item), {
-      storage,
-      accountId,
-    });
+    const finishPersistence = telemetry?.start?.(
+      "search_history_persistence",
+    );
+    try {
+      const items = await loadSearchHistory({ storage, accountId, telemetry });
+      const persisted = await persistSearchHistory(
+        upsertSearchHistoryItem(items, item),
+        {
+          storage,
+          accountId,
+        },
+      );
+      finishPersistence?.({ rowCount: persisted.length, success: true });
+      return persisted;
+    } catch (error) {
+      finishPersistence?.({ success: false, error });
+      throw error;
+    }
   });
 }
 

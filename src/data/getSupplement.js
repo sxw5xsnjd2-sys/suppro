@@ -325,7 +325,7 @@ async function getOffProductBarcode(productId, scanRequestId) {
 
 export async function getSupplementsByIds(
   ids,
-  { scanRequestId, query = "supplements_by_ids" } = {},
+  { scanRequestId, query = "supplements_by_ids", telemetry } = {},
 ) {
   const cleanIds = Array.from(
     new Set((ids ?? []).map((id) => trimString(id)).filter(Boolean))
@@ -336,6 +336,9 @@ export async function getSupplementsByIds(
   }
 
   logScanTiming(scanRequestId, "result_database_query_started", { query });
+  const finishQuery = telemetry?.start?.("database_linked_supplement_query", {
+    provider: "supabase",
+  });
   const { data, error } = await supabase
     .from("supplements")
     .select(SUPPLEMENT_SELECT)
@@ -343,9 +346,12 @@ export async function getSupplementsByIds(
     .in("id", cleanIds);
 
   if (error) {
+    finishQuery?.({ success: false, error });
     console.error(error);
     return [];
   }
+
+  finishQuery?.({ rowCount: data?.length ?? 0, success: true });
 
   logScanTiming(scanRequestId, "result_database_query_completed", {
     query,
@@ -360,7 +366,7 @@ export async function getSupplementsByIds(
 
 async function loadSupplementProductIngredientSets(
   catalogId,
-  { scanRequestId } = {},
+  { scanRequestId, telemetry } = {},
 ) {
   const productId = getCatalogEntityId(catalogId);
   if (!productId) {
@@ -374,6 +380,10 @@ async function loadSupplementProductIngredientSets(
   logScanTiming(scanRequestId, "result_database_query_started", {
     query: "product_active_ingredients_by_product_id",
   });
+  const finishIngredientLinks = telemetry?.start?.(
+    "database_ingredient_link_query",
+    { provider: "supabase" },
+  );
   const { data, error } = await supabase
     .from("product_active_ingredients")
     .select(PRODUCT_ACTIVE_INGREDIENTS_SELECT)
@@ -384,6 +394,7 @@ async function loadSupplementProductIngredientSets(
     .order("dosage_original_text", { ascending: true });
 
   if (error) {
+    finishIngredientLinks?.({ success: false, error });
     console.error("Failed to load product active ingredients", error);
     return {
       activeIngredients: [],
@@ -391,6 +402,7 @@ async function loadSupplementProductIngredientSets(
       supplementRows: [],
     };
   }
+  finishIngredientLinks?.({ rowCount: data?.length ?? 0, success: true });
   logScanTiming(scanRequestId, "result_database_query_completed", {
     query: "product_active_ingredients_by_product_id",
     rowCount: data?.length ?? 0,
@@ -401,6 +413,7 @@ async function loadSupplementProductIngredientSets(
     {
       scanRequestId,
       query: "linked_supplements_by_ids",
+      telemetry,
     },
   );
   const supplementNameById = new Map(
@@ -496,9 +509,13 @@ export async function getSupplementProductActiveIngredients(catalogId) {
   return activeIngredients;
 }
 
-export async function getSupplementProductLinkedIngredients(catalogId) {
+export async function getSupplementProductLinkedIngredients(
+  catalogId,
+  options = {},
+) {
   const { linkedIngredients } = await loadSupplementProductIngredientSets(
-    catalogId
+    catalogId,
+    options,
   );
   return linkedIngredients;
 }

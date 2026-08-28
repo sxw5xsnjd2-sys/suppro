@@ -343,7 +343,7 @@ function scoreLabelMatch(input, label) {
   return { score, confidence, reasons };
 }
 
-async function searchDsldCandidates(input) {
+async function searchDsldCandidates(input, telemetry) {
   const barcodeCandidates = buildBarcodeLookupCandidates(input.barcode, input.barcodeType);
   const queries = Array.from(
     new Set(
@@ -355,35 +355,69 @@ async function searchDsldCandidates(input) {
   );
   const hits = [];
 
-  for (const query of queries) {
-    const payload = await fetchJson(
-      buildSearchUrl("search-filter", {
-        q: query,
-        status: 2,
-        sort_by: "_score",
-        size: 10,
-      })
-    );
+  for (const [attempt, query] of queries.entries()) {
+    const finishSearch = telemetry?.start?.("dsld_search_request", {
+      attempt: attempt + 1,
+      provider: "dsld",
+    });
+    let payload;
+    try {
+      payload = await fetchJson(
+        buildSearchUrl("search-filter", {
+          q: query,
+          status: 2,
+          sort_by: "_score",
+          size: 10,
+        })
+      );
+      finishSearch?.({
+        found: Array.isArray(payload?.hits) && payload.hits.length > 0,
+        success: true,
+      });
+    } catch (error) {
+      finishSearch?.({ success: false, error });
+      throw error;
+    }
     hits.push(...(Array.isArray(payload?.hits) ? payload.hits : []));
   }
 
   if (trimString(input.productName)) {
-    const payload = await fetchJson(
-      buildSearchUrl("search-filter", {
-        q: `"${input.productName}"`,
-        status: 2,
-        sort_by: "_score",
-        size: 10,
-      })
-    );
+    const finishSearch = telemetry?.start?.("dsld_search_request", {
+      attempt: queries.length + 1,
+      provider: "dsld",
+    });
+    let payload;
+    try {
+      payload = await fetchJson(
+        buildSearchUrl("search-filter", {
+          q: `"${input.productName}"`,
+          status: 2,
+          sort_by: "_score",
+          size: 10,
+        })
+      );
+      finishSearch?.({
+        found: Array.isArray(payload?.hits) && payload.hits.length > 0,
+        success: true,
+      });
+    } catch (error) {
+      finishSearch?.({ success: false, error });
+      throw error;
+    }
     hits.push(...(Array.isArray(payload?.hits) ? payload.hits : []));
   }
 
   return Array.from(new Set(hits.map((hit) => trimString(hit?._id)).filter(Boolean)));
 }
 
-async function fetchDsldLabel(labelId) {
-  return fetchJson(`${DSLD_BASE_URL}/label/${labelId}`);
+async function fetchDsldLabel(labelId, telemetry, attempt) {
+  return telemetry?.measure
+    ? telemetry.measure(
+        "dsld_label_fetch",
+        () => fetchJson(`${DSLD_BASE_URL}/label/${labelId}`),
+        { attempt, provider: "dsld" }
+      )
+    : fetchJson(`${DSLD_BASE_URL}/label/${labelId}`);
 }
 
 function flattenLabelIngredientRows(rows, flattened = [], state = { value: 0 }) {
@@ -449,15 +483,30 @@ function buildDsldMatchFromLabel(label, confidence) {
   };
 }
 
-async function insertLookupAttempt(payload) {
+async function insertLookupAttempt(payload, telemetry) {
+  const finish = telemetry?.start?.("dsld_lookup_attempt_write", {
+    provider: "dsld",
+  });
   try {
     await supabase.from("dsld_lookup_attempts").insert(payload);
+    finish?.({ success: true });
   } catch (error) {
+    finish?.({ success: false, error });
     console.warn("[dsld] failed to record lookup attempt", error);
   }
 }
 
-async function cacheDsldLabelMatch(label, match, barcode, barcodeType, productName) {
+async function cacheDsldLabelMatch(
+  label,
+  match,
+  barcode,
+  barcodeType,
+  productName,
+  telemetry
+) {
+  const finish = telemetry?.start?.("dsld_cache_persistence", {
+    provider: "dsld",
+  });
   const barcodeNormalized = normalizeOpenFoodFactsBarcode(barcode, barcodeType);
   const ingredientRows = flattenLabelIngredientRows(label?.ingredientRows).map((row) => ({
     dsld_id: label.id,
@@ -502,7 +551,9 @@ async function cacheDsldLabelMatch(label, match, barcode, barcodeType, productNa
     if (statementRows.length > 0) {
       await supabase.from("dsld_product_label_statements").insert(statementRows);
     }
+    finish?.({ success: true, rowCount: ingredientRows.length });
   } catch (error) {
+    finish?.({ success: false, error });
     console.warn("[dsld] failed to cache label", error);
   }
 
@@ -517,13 +568,14 @@ async function cacheDsldLabelMatch(label, match, barcode, barcodeType, productNa
     search_path: "live_api",
     success: true,
     error_message: null,
-  });
+  }, telemetry);
 }
 
 export async function maybeFetchDsldScanMatch({
   barcode,
   barcodeType,
   productName,
+  telemetry,
 }) {
   const normalizedBarcode = normalizeOpenFoodFactsBarcode(barcode, barcodeType);
   const result = {
@@ -540,7 +592,21 @@ export async function maybeFetchDsldScanMatch({
   result.checked = true;
 
   try {
-    const cachedMatch = await fetchCachedDsldMatch(barcode, barcodeType);
+    const finishCacheLookup = telemetry?.start?.("dsld_cache_lookup", {
+      provider: "dsld",
+    });
+    let cachedMatch;
+    try {
+      cachedMatch = await fetchCachedDsldMatch(barcode, barcodeType);
+      finishCacheLookup?.({
+        cacheHit: Boolean(cachedMatch),
+        cacheStatus: cachedMatch ? "hit" : "miss",
+        success: true,
+      });
+    } catch (error) {
+      finishCacheLookup?.({ success: false, error });
+      throw error;
+    }
     if (cachedMatch) {
       result.cacheHit = true;
       result.confidence = cachedMatch.confidence;
@@ -548,10 +614,13 @@ export async function maybeFetchDsldScanMatch({
       return result;
     }
 
-    const candidateIds = await searchDsldCandidates({ barcode, barcodeType, productName });
+    const candidateIds = await searchDsldCandidates(
+      { barcode, barcodeType, productName },
+      telemetry
+    );
     const labels = [];
-    for (const labelId of candidateIds.slice(0, 6)) {
-      labels.push(await fetchDsldLabel(labelId));
+    for (const [attempt, labelId] of candidateIds.slice(0, 6).entries()) {
+      labels.push(await fetchDsldLabel(labelId, telemetry, attempt + 1));
     }
 
     const ranked = labels
@@ -576,13 +645,20 @@ export async function maybeFetchDsldScanMatch({
         search_path: "live_api",
         success: false,
         error_message: "Low confidence DSLD result",
-      });
+      }, telemetry);
       return result;
     }
 
     const dsldMatch = buildDsldMatchFromLabel(best.label, best.match.confidence);
     result.dsldMatch = dsldMatch;
-    await cacheDsldLabelMatch(best.label, best.match, barcode, barcodeType, productName);
+    await cacheDsldLabelMatch(
+      best.label,
+      best.match,
+      barcode,
+      barcodeType,
+      productName,
+      telemetry
+    );
     return result;
   } catch (error) {
     await insertLookupAttempt({
@@ -596,7 +672,7 @@ export async function maybeFetchDsldScanMatch({
       search_path: "live_api",
       success: false,
       error_message: trimString(error?.message) || "DSLD lookup failed",
-    });
+    }, telemetry);
     console.warn("[dsld] lookup failed", error);
     return result;
   }

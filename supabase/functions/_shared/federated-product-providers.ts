@@ -318,24 +318,45 @@ function flattenDsldIngredients(rows: any[], result: any[] = []) {
   return result.filter((row) => row.name);
 }
 
-async function fetchGoUpcBarcode(barcode: string, goUpcApiKey: string) {
+async function fetchGoUpcBarcode(
+  barcode: string,
+  goUpcApiKey: string,
+  telemetry?: any,
+) {
   if (!barcode || !goUpcApiKey) return null;
+  const finish = telemetry?.start?.("external_provider_call", {
+    provider: "go_upc",
+  });
   try {
-    return await fetchJson(`${GO_UPC_BASE_URL}/${encodeURIComponent(barcode)}`, {
+    const payload = await fetchJson(`${GO_UPC_BASE_URL}/${encodeURIComponent(barcode)}`, {
       headers: { Authorization: `Bearer ${goUpcApiKey}`, accept: "application/json" },
     });
+    finish?.({ found: Boolean(payload?.product), success: true });
+    return payload;
   } catch (error) {
-    if (Number((error as any)?.status) === 404) return null;
+    if (Number((error as any)?.status) === 404) {
+      finish?.({ found: false, httpStatus: 404, success: true });
+      return null;
+    }
+    finish?.({ success: false, error });
     throw error;
   }
 }
 
-async function invokeExistingPersistence({ supabaseUrl, serviceRoleKey, payload }: any) {
+async function invokeExistingPersistence({
+  supabaseUrl,
+  serviceRoleKey,
+  payload,
+  telemetry,
+}: any) {
   const response = await fetch(`${supabaseUrl}/functions/v1/persist-go-upc-product`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${serviceRoleKey}`,
       "Content-Type": "application/json",
+      "x-trace-id": telemetry?.traceId || "",
+      "x-latency-flow": telemetry?.flow || "external_product_selection",
+      "x-latency-action": telemetry?.action || "select_external_product",
     },
     body: JSON.stringify(payload),
   });
@@ -360,6 +381,7 @@ export async function resolveExternalCandidate({
   supabaseUrl,
   serviceRoleKey,
   goUpcApiKey,
+  telemetry,
 }: any) {
   if (candidate.canonicalProductId) {
     return await loadCanonicalProduct(adminSupabase, candidate.canonicalProductId);
@@ -369,11 +391,23 @@ export async function resolveExternalCandidate({
   let usedGoUpcEnrichment = false;
   let persistencePayload: any = null;
   if (candidate.provider === "dsld" || candidate.provider === "dsld_cache") {
-    const label = await fetchJson(`${DSLD_BASE_URL}/label/${encodeURIComponent(candidate.providerStableId)}`, {
-      headers: { accept: "application/json" },
+    const finishDsld = telemetry?.start?.("external_provider_call", {
+      provider: "dsld",
     });
+    let label;
+    try {
+      label = await fetchJson(`${DSLD_BASE_URL}/label/${encodeURIComponent(candidate.providerStableId)}`, {
+        headers: { accept: "application/json" },
+      });
+      finishDsld?.({ found: Boolean(label), success: true });
+    } catch (error) {
+      finishDsld?.({ success: false, error });
+      throw error;
+    }
     const barcode = normalizeSearchBarcode(firstString(label?.upcSku, candidate.barcode));
-    const goPayload = barcode ? await fetchGoUpcBarcode(barcode, goUpcApiKey) : null;
+    const goPayload = barcode
+      ? await fetchGoUpcBarcode(barcode, goUpcApiKey, telemetry)
+      : null;
     usedGoUpcEnrichment = Boolean(goPayload?.product);
     const sourceIngredients = flattenDsldIngredients(label?.ingredientRows);
     descriptor = {
@@ -404,7 +438,7 @@ export async function resolveExternalCandidate({
     }
   } else if (candidate.provider === "ean_search") {
     const goPayload = candidate.barcode
-      ? await fetchGoUpcBarcode(candidate.barcode, goUpcApiKey)
+      ? await fetchGoUpcBarcode(candidate.barcode, goUpcApiKey, telemetry)
       : null;
     usedGoUpcEnrichment = Boolean(goPayload?.product);
     descriptor = {
@@ -431,11 +465,22 @@ export async function resolveExternalCandidate({
   if (!persistencePayload) {
     return normalizeFederatedCandidate(descriptor, candidate.provider);
   }
-  const persisted = await invokeExistingPersistence({
-    supabaseUrl,
-    serviceRoleKey,
-    payload: persistencePayload,
+  const finishPersistence = telemetry?.start?.("product_persistence", {
+    provider: "supabase",
   });
+  let persisted;
+  try {
+    persisted = await invokeExistingPersistence({
+      supabaseUrl,
+      serviceRoleKey,
+      payload: persistencePayload,
+      telemetry,
+    });
+    finishPersistence?.({ found: Boolean(persisted?.productId), success: true });
+  } catch (error) {
+    finishPersistence?.({ success: false, error });
+    throw error;
+  }
   const canonicalProductId = trimString(persisted?.productId);
   if (!canonicalProductId) return normalizeFederatedCandidate(descriptor, candidate.provider);
 
@@ -443,6 +488,9 @@ export async function resolveExternalCandidate({
     { provider: candidate.provider, stableId: candidate.providerStableId },
     ...(usedGoUpcEnrichment ? [{ provider: "go_upc", stableId: candidate.barcode }] : []),
   ].filter((source) => source.stableId);
+  const finishProvenance = telemetry?.start?.("provenance_writes", {
+    provider: "supabase",
+  });
   const { error: provenanceError } = await adminSupabase
     .from("supplement_product_source_links")
     .upsert(sourceRows.map((source) => ({
@@ -452,8 +500,22 @@ export async function resolveExternalCandidate({
       canonical_product_id: canonicalProductId,
       source_metadata: { verificationStatus: descriptor.verificationStatus },
     })), { onConflict: "source,provider_stable_id" });
-  if (provenanceError) throw provenanceError;
-  const canonical = await loadCanonicalProduct(adminSupabase, canonicalProductId);
+  if (provenanceError) {
+    finishProvenance?.({ success: false, error: provenanceError });
+    throw provenanceError;
+  }
+  finishProvenance?.({ rowCount: sourceRows.length, success: true });
+  const finishEvidenceReload = telemetry?.start?.("evidence_reload", {
+    provider: "supabase",
+  });
+  let canonical;
+  try {
+    canonical = await loadCanonicalProduct(adminSupabase, canonicalProductId);
+    finishEvidenceReload?.({ found: Boolean(canonical), success: true });
+  } catch (error) {
+    finishEvidenceReload?.({ success: false, error });
+    throw error;
+  }
   const resolvedDescriptor = normalizeFederatedCandidate({
     ...descriptor,
     canonicalProductId,

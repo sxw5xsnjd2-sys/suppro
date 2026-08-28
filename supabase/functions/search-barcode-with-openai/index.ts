@@ -1,10 +1,17 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  createLatencyTrace,
+  instrumentEdgeRequest,
+} from "../../../src/lib/latencyTelemetry.js";
+
+type LatencyTrace = ReturnType<typeof createLatencyTrace>;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-trace-id, x-latency-flow, x-latency-action",
+  "Access-Control-Expose-Headers": "x-trace-id, x-edge-duration-ms, server-timing",
 };
 
 const TABLES = {
@@ -1094,8 +1101,15 @@ function buildOpenAiRequestBody(
 async function requestOpenAiSearch(
   searchContext: SearchContext,
   mode: SearchMode,
+  telemetry?: LatencyTrace,
 ): Promise<SearchAttemptResult> {
   for (const toolType of OPENAI_WEB_SEARCH_TOOL_TYPES) {
+    const finishSearch = telemetry?.start("openai_web_search_provider_call", {
+      attempt: OPENAI_WEB_SEARCH_TOOL_TYPES.indexOf(toolType) + 1,
+      mode,
+      provider: "openai",
+      timeoutMs: OPENAI_SEARCH_TIMEOUT_MS,
+    });
     const controller = new AbortController();
     const timeoutId = setTimeout(
       () => controller.abort(),
@@ -1134,6 +1148,7 @@ async function requestOpenAiSearch(
           toolType,
           body: body.slice(0, 400),
         });
+        finishSearch?.({ httpStatus: response.status, success: false });
 
         if (shouldTryPreview) {
           continue;
@@ -1150,6 +1165,7 @@ async function requestOpenAiSearch(
       const text = extractResponseText(data);
       const responseSources = Array.from(collectSourceUrls(data)).slice(0, 12);
       if (!text) {
+        finishSearch?.({ found: false, success: true });
         console.log("[search-barcode-with-openai] returning empty result", {
           barcode: searchContext.barcode,
           mode,
@@ -1194,12 +1210,22 @@ async function requestOpenAiSearch(
             ingredientCount: sanitized.result.ingredients.length,
           });
         }
+        finishSearch?.({
+          found: !sanitized.reason,
+          ingredientCount: sanitized.result.ingredients.length,
+          success: true,
+        });
         return {
           result: sanitized.result,
           emptyReason: sanitized.reason,
           mode,
         };
       } catch (error) {
+        finishSearch?.({
+          success: false,
+          error,
+          errorCategory: "invalid_provider_response",
+        });
         console.error("[search-barcode-with-openai] Invalid OpenAI JSON", {
           toolType,
           mode,
@@ -1212,6 +1238,7 @@ async function requestOpenAiSearch(
         };
       }
     } catch (error) {
+      finishSearch?.({ success: false, error });
       console.error("[search-barcode-with-openai] OpenAI request failed", {
         toolType,
         mode,
@@ -1242,8 +1269,15 @@ function shouldUseProductNameFallback(
     (isEmptySearchResult(result) || result.ingredients.length === 0);
 }
 
-async function requestBarcodeSearch(searchContext: SearchContext) {
-  const barcodeAttempt = await requestOpenAiSearch(searchContext, "barcode");
+async function requestBarcodeSearch(
+  searchContext: SearchContext,
+  telemetry?: LatencyTrace,
+) {
+  const barcodeAttempt = await requestOpenAiSearch(
+    searchContext,
+    "barcode",
+    telemetry,
+  );
   if (!barcodeAttempt.result) {
     return barcodeAttempt;
   }
@@ -1266,6 +1300,7 @@ async function requestBarcodeSearch(searchContext: SearchContext) {
   const productNameExactAttempt = await requestOpenAiSearch(
     searchContext,
     "product_name_exact",
+    telemetry,
   );
   if (!productNameExactAttempt.result) {
     return barcodeAttempt;
@@ -1286,6 +1321,7 @@ async function requestBarcodeSearch(searchContext: SearchContext) {
   const productNameBroadAttempt = await requestOpenAiSearch(
     searchContext,
     "product_name_broad",
+    telemetry,
   );
   if (productNameBroadAttempt.result && !productNameBroadAttempt.emptyReason) {
     return productNameBroadAttempt;
@@ -1311,6 +1347,10 @@ Deno.serve(async (request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  return instrumentEdgeRequest(
+    request,
+    { flow: "barcode_scan", action: "resolve_unknown_barcode" },
+    async (telemetry) => {
   if (request.method !== "POST") {
     return jsonResponse(
       { error: "Method not allowed.", code: "method_not_allowed" },
@@ -1376,12 +1416,15 @@ Deno.serve(async (request) => {
     brand: brand || null,
   });
 
-  const searchOutcome = await requestBarcodeSearch({
-    barcode,
-    rawProductName,
-    cleanedProductName,
-    brand,
-  });
+  const searchOutcome = await requestBarcodeSearch(
+    {
+      barcode,
+      rawProductName,
+      cleanedProductName,
+      brand,
+    },
+    telemetry,
+  );
   if (!searchOutcome.result) {
     return jsonResponse(
       { error: "AI service unavailable.", code: "ai_service_unavailable" },
@@ -1391,10 +1434,15 @@ Deno.serve(async (request) => {
 
   const result = searchOutcome.result;
 
+  const finishPersistence = telemetry.start("product_persistence", {
+    provider: "supabase",
+  });
   try {
     const persistence = await persistSearchResult(result);
+    finishPersistence({ success: true });
     return jsonResponse(withPersistenceResult(result, persistence.persisted));
   } catch (error) {
+    finishPersistence({ success: false, error });
     console.error("[search-barcode-with-openai] persistence failed", error);
     return jsonResponse(
       withPersistenceResult(
@@ -1404,4 +1452,6 @@ Deno.serve(async (request) => {
       ),
     );
   }
+    },
+  );
 });

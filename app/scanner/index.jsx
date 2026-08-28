@@ -32,6 +32,11 @@ import {
   getScannerFailureCategory,
   SCANNER_FAILURE_CATEGORIES,
 } from "@src/lib/scannerFailure";
+import {
+  createLatencyTrace,
+  createLatencyTraceId,
+  createLatencyStartMarker,
+} from "@src/lib/latencyTelemetry";
 
 const cameraModule = (() => {
   try {
@@ -81,6 +86,7 @@ function buildScanNavigationDescriptor(scanState, scannerOrigin) {
       origin: scannerOrigin,
       scanSessionId: String(scanState.scanSessionId),
       scanRequestId: scanState.scanRequestId || undefined,
+      latencyTraceId: scanState.latencyTraceId || undefined,
       name:
         scanState.product?.productName ||
         scanState.product?.name ||
@@ -247,11 +253,13 @@ export default function ScannerScreen() {
     }
 
     router.push({
-      pathname: "/scanner/photo-rescue",
+      pathname: "/photo-rescue",
       params: {
         entry: "scanner_not_found",
         scanSessionId: String(scanSessionId),
         origin: scannerOrigin,
+        latencyTraceId: createLatencyTraceId("photo_improvement"),
+        latencyStartedAt: String(createLatencyStartMarker()),
       },
     });
   };
@@ -264,13 +272,26 @@ export default function ScannerScreen() {
     const expectedScanSessionId =
       useScannerStore.getState().scanSessionId + 1;
     const scanRequestId = createScanRequestId(expectedScanSessionId);
+    const latencyTrace = createLatencyTrace({
+      traceId: createLatencyTraceId("barcode_scan"),
+      flow: "barcode_scan",
+      action: "resolve_unknown_barcode",
+    });
+    const finishAction = latencyTrace.start("client_scan_action_total");
     logScanTiming(scanRequestId, "barcode_detected", {
       detectionSource: "manual",
       rawBarcode: manualBarcodeText,
     });
 
     const raw = manualBarcodeText.trim().replace(/[\s-]/g, "");
-    if (!raw) return;
+    if (!raw) {
+      finishAction({
+        resultStatus: "invalid_barcode",
+        success: false,
+        errorCategory: "invalid_barcode",
+      });
+      return;
+    }
 
     const barcodeType = inferBarcodeType(raw);
 
@@ -279,21 +300,43 @@ export default function ScannerScreen() {
       barcode,
       barcodeType,
     });
-    if (!isValidBarcode(barcode, barcodeType)) return;
+    if (!isValidBarcode(barcode, barcodeType)) {
+      finishAction({
+        resultStatus: "invalid_barcode",
+        success: false,
+        errorCategory: "invalid_barcode",
+      });
+      return;
+    }
 
     Keyboard.dismiss();
     setManualEntryOpen(false);
     hasScannedRef.current = true;
     setHasScanned(true);
-    await processBarcode(barcode, barcodeType, { scanRequestId });
+    await processBarcode(barcode, barcodeType, {
+      latencyTraceId: latencyTrace.traceId,
+      scanRequestId,
+    });
 
+    const finishClientProcessing = latencyTrace.start(
+      "client_processing_after_resolution",
+    );
     const nextScanState = useScannerStore.getState();
     const nextScanSessionId = nextScanState.scanSessionId;
     if (
       nextScanSessionId !== expectedScanSessionId ||
       !["success", "no_ingredients"].includes(nextScanState.status)
-    )
+    ) {
+      finishClientProcessing({
+        resultStatus: nextScanState.status,
+        success: nextScanState.status !== "error",
+      });
+      finishAction({
+        resultStatus: nextScanState.status,
+        success: ["success", "no_ingredients"].includes(nextScanState.status),
+      });
       return;
+    }
 
     const navigationDescriptor = buildScanNavigationDescriptor(
       nextScanState,
@@ -313,6 +356,11 @@ export default function ScannerScreen() {
       pathname: navigationDescriptor.pathname,
       params: navigationDescriptor.params,
     });
+    finishClientProcessing({
+      resultStatus: nextScanState.status,
+      success: true,
+    });
+    finishAction({ resultStatus: "navigated", success: true });
   };
 
   const handleBarcodeScanned = async (event) => {
@@ -325,6 +373,12 @@ export default function ScannerScreen() {
     const expectedScanSessionId =
       useScannerStore.getState().scanSessionId + 1;
     const scanRequestId = createScanRequestId(expectedScanSessionId);
+    const latencyTrace = createLatencyTrace({
+      traceId: createLatencyTraceId("barcode_scan"),
+      flow: "barcode_scan",
+      action: "resolve_unknown_barcode",
+    });
+    const finishAction = latencyTrace.start("client_scan_action_total");
     const barcodeType = event?.type;
     logScanTiming(scanRequestId, "barcode_detected", {
       detectionSource: "camera",
@@ -338,13 +392,24 @@ export default function ScannerScreen() {
     });
 
     if (!isValidBarcode(scannedBarcode, barcodeType)) {
+      finishAction({
+        resultStatus: "invalid_barcode",
+        success: false,
+        errorCategory: "invalid_barcode",
+      });
       return;
     }
 
     hasScannedRef.current = true;
     setHasScanned(true);
-    await processBarcode(scannedBarcode, barcodeType, { scanRequestId });
+    await processBarcode(scannedBarcode, barcodeType, {
+      latencyTraceId: latencyTrace.traceId,
+      scanRequestId,
+    });
 
+    const finishClientProcessing = latencyTrace.start(
+      "client_processing_after_resolution",
+    );
     const nextScanState = useScannerStore.getState();
     const nextScanSessionId = nextScanState.scanSessionId;
 
@@ -352,6 +417,14 @@ export default function ScannerScreen() {
       nextScanSessionId !== expectedScanSessionId ||
       !["success", "no_ingredients"].includes(nextScanState.status)
     ) {
+      finishClientProcessing({
+        resultStatus: nextScanState.status,
+        success: nextScanState.status !== "error",
+      });
+      finishAction({
+        resultStatus: nextScanState.status,
+        success: ["success", "no_ingredients"].includes(nextScanState.status),
+      });
       return;
     }
 
@@ -373,26 +446,21 @@ export default function ScannerScreen() {
       pathname: navigationDescriptor.pathname,
       params: navigationDescriptor.params,
     });
+    finishClientProcessing({
+      resultStatus: nextScanState.status,
+      success: true,
+    });
+    finishAction({ resultStatus: "navigated", success: true });
   };
 
-  useEffect(() => {
+  const handleScannerCameraReady = () => {
+    if (!isFocused || !isProcessingScan) return;
+
     const camera = cameraRef.current;
-
-    if (!camera || !isFocused) {
-      return;
-    }
-
-    if (isProcessingScan) {
-      Promise.resolve(camera.pausePreview?.()).catch((error) => {
-        console.warn("[scanner] failed to pause preview", error);
-      });
-      return;
-    }
-
-    Promise.resolve(camera.resumePreview?.()).catch((error) => {
-      console.warn("[scanner] failed to resume preview", error);
+    Promise.resolve(camera?.pausePreview?.()).catch((error) => {
+      console.warn("[scanner] failed to pause preview", error);
     });
-  }, [isFocused, isProcessingScan]);
+  };
 
   if (!hasActiveAccess) {
     return <View style={styles.screen} />;
@@ -447,11 +515,13 @@ export default function ScannerScreen() {
     <View style={styles.screen}>
       {isFocused ? (
         <CameraView
+          key={isProcessingScan ? "scanner-paused" : "scanner-live"}
           ref={cameraRef}
           style={StyleSheet.absoluteFill}
           facing="back"
           barcodeScannerSettings={{ barcodeTypes: BARCODE_TYPES }}
           enableTorch={torchEnabled}
+          onCameraReady={handleScannerCameraReady}
           onBarcodeScanned={isProcessingScan ? undefined : handleBarcodeScanned}
         />
       ) : null}

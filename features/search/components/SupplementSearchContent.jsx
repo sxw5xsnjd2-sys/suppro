@@ -51,6 +51,10 @@ import {
   resolveSearchProductSelection,
   searchSupplementProducts,
 } from "@src/data/searchSupplementProducts";
+import {
+  createLatencyTrace,
+  createLatencyTraceId,
+} from "@src/lib/latencyTelemetry";
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -431,6 +435,12 @@ export function SupplementSearchContent({
 
   const handleSelect = async (selectedItem) => {
     if (!requireSubscriptionAccess("supplement_info") || resolvingId) return;
+    const latencyTrace = createLatencyTrace({
+      traceId: createLatencyTraceId("external_product_selection"),
+      flow: "external_product_selection",
+      action: "select_external_product",
+    });
+    const finishTapToNavigation = latencyTrace.start("tap_to_navigation");
     let item = selectedItem;
     let navigationDescriptor;
 
@@ -441,8 +451,18 @@ export function SupplementSearchContent({
       selectionControllerRef.current?.abort();
       selectionControllerRef.current = new AbortController();
       setResolvingId(item.id);
+      const finishResolution = latencyTrace.start(
+        "resolve_supplement_product_total",
+        { provider: trimString(item?.providerDescriptor?.provider) },
+      );
       const resolution = await resolveSearchProductSelection(item, {
         signal: selectionControllerRef.current.signal,
+        telemetry: latencyTrace,
+      });
+      finishResolution({
+        found: resolution.status === "resolved",
+        resultStatus: resolution.status,
+        success: resolution.status === "resolved",
       });
       item = resolution.product;
       if (resolution.status !== "resolved" || !item.canonicalProductId) {
@@ -452,6 +472,10 @@ export function SupplementSearchContent({
         });
         if (!sessionId) {
           setResolvingId("");
+          finishTapToNavigation({
+            resultStatus: "resolution_session_failed",
+            success: false,
+          });
           Alert.alert("Could not open product", "Please try again.");
           return;
         }
@@ -461,6 +485,7 @@ export function SupplementSearchContent({
           params: {
             source: "search-resolution",
             resolutionSessionId: sessionId,
+            latencyTraceId: latencyTrace.traceId,
             name: item.name,
           },
         };
@@ -480,12 +505,17 @@ export function SupplementSearchContent({
                 newCatalogName: item.name,
                 newCatalogType: item.catalogType,
                 newCustomSupplementId: item.customSupplementId ?? "",
+                latencyTraceId: latencyTrace.traceId,
               },
             }
           : {
               action: "push",
               pathname: "/(modals)/modal/supplement-info",
-              params: { id: item.id, name: item.name },
+              params: {
+                id: item.id,
+                name: item.name,
+                latencyTraceId: latencyTrace.traceId,
+              },
             };
     }
 
@@ -493,13 +523,20 @@ export function SupplementSearchContent({
       const items = await recordSearchSelectionHistory({
         item,
         navigationDescriptor,
-      });
+      }, { telemetry: latencyTrace });
       refreshRecentSearches(items);
     } catch {
       // History failure must not block a valid navigation handoff.
     }
     setResolvingId("");
     navigateWithDescriptor(navigationDescriptor);
+    finishTapToNavigation({
+      externalEnrichment:
+        selectedItem.catalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT &&
+        !selectedItem.canonicalProductId,
+      resultStatus: "navigated",
+      success: true,
+    });
   };
 
   const handleSaveCustomSupplement = async (values) => {

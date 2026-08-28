@@ -1,6 +1,7 @@
 import { normalizeEdgeFunctionInvokeError } from "@src/lib/edgeFunctionErrors";
 import { logBuildAwareDiagnostic } from "@src/lib/runtimeConfig";
 import { getAccessTokenOrCreateSession, supabase } from "@src/lib/supabase";
+import { getLatencyTraceHeaders } from "@src/lib/latencyTelemetry";
 
 function trimString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -41,7 +42,7 @@ function getProvisionalPersistenceSource(product) {
   return SUPPORTED_PROVISIONAL_SOURCES.has(source) ? source : "go_upc";
 }
 
-export async function persistGoUpcProduct(product, barcodeType) {
+export async function persistGoUpcProduct(product, barcodeType, telemetry) {
   if (!product || typeof product !== "object") {
     return null;
   }
@@ -61,13 +62,23 @@ export async function persistGoUpcProduct(product, barcodeType) {
     return null;
   }
 
+  const finishRequest = telemetry?.start?.("persistence_edge_request", {
+    provider: "supabase",
+  });
   try {
-    const accessToken = await getAccessTokenOrCreateSession();
+    const accessToken = await (telemetry?.measure
+      ? telemetry.measure(
+          "persistence_authentication",
+          () => getAccessTokenOrCreateSession(),
+          { provider: "supabase" }
+        )
+      : getAccessTokenOrCreateSession());
     const { data, error } = await supabase.functions.invoke(
       "persist-go-upc-product",
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
+          ...getLatencyTraceHeaders(telemetry),
         },
         body: {
           source: getProvisionalPersistenceSource(product),
@@ -106,11 +117,14 @@ export async function persistGoUpcProduct(product, barcodeType) {
           message: normalizedError.message,
         },
       });
+      finishRequest?.({ success: false, error: normalizedError });
       return null;
     }
 
+    finishRequest?.({ success: true });
     return data ?? null;
   } catch (error) {
+    finishRequest?.({ success: false, error });
     logBuildAwareDiagnostic("warn", "[scanner] Go-UPC persistence failed", {
       developmentDetails: {
         message: error instanceof Error ? error.message : "Unknown error",
@@ -152,7 +166,7 @@ function buildDsldSourceIngredients(product) {
     .filter(Boolean);
 }
 
-export async function persistDsldProduct(product, barcodeType) {
+export async function persistDsldProduct(product, barcodeType, telemetry) {
   if (!product || typeof product !== "object") {
     return null;
   }
@@ -168,13 +182,23 @@ export async function persistDsldProduct(product, barcodeType) {
     return null;
   }
 
+  const finishRequest = telemetry?.start?.("persistence_edge_request", {
+    provider: "supabase",
+  });
   try {
-    const accessToken = await getAccessTokenOrCreateSession();
+    const accessToken = await (telemetry?.measure
+      ? telemetry.measure(
+          "persistence_authentication",
+          () => getAccessTokenOrCreateSession(),
+          { provider: "supabase" }
+        )
+      : getAccessTokenOrCreateSession());
     const { data, error } = await supabase.functions.invoke(
       "persist-go-upc-product",
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
+          ...getLatencyTraceHeaders(telemetry),
         },
         body: {
           source: "dsld",
@@ -209,11 +233,14 @@ export async function persistDsldProduct(product, barcodeType) {
           message: normalizedError.message,
         },
       });
+      finishRequest?.({ success: false, error: normalizedError });
       return null;
     }
 
+    finishRequest?.({ success: true });
     return data ?? null;
   } catch (error) {
+    finishRequest?.({ success: false, error });
     logBuildAwareDiagnostic("warn", "[scanner] DSLD persistence failed", {
       developmentDetails: {
         message: error instanceof Error ? error.message : "Unknown error",

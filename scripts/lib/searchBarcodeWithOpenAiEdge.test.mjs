@@ -370,7 +370,7 @@ function loadSearchBarcodeHelpers({
       source,
       /async function requestBarcodeSearch\([\s\S]*?\)\s*\{/,
       "requestBarcodeSearch",
-      [[/async function requestBarcodeSearch\([\s\S]*?\)\s*\{/, "async function requestBarcodeSearch(searchContext) {"]],
+      [[/async function requestBarcodeSearch\([\s\S]*?\)\s*\{/, "async function requestBarcodeSearch(searchContext, telemetry) {"]],
     ),
   ].join("\n\n");
 

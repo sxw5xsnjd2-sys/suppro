@@ -30,7 +30,9 @@ entrypoint = "./functions/scan-supplement-photos/index.ts"
 
 [functions.process-photo-rescue-reviews]
 enabled = true
-verify_jwt = true
+# This internal worker validates the service API key inside the function so it
+# can accept current opaque credentials as well as legacy service-role JWTs.
+verify_jwt = false
 import_map = "./functions/process-photo-rescue-reviews/deno.json"
 entrypoint = "./functions/process-photo-rescue-reviews/index.ts"
 

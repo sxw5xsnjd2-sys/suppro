@@ -1,6 +1,7 @@
 import { normalizeEdgeFunctionInvokeError } from "@src/lib/edgeFunctionErrors";
 import { logBuildAwareDiagnostic } from "@src/lib/runtimeConfig";
 import { getAccessTokenOrCreateSession, supabase } from "@src/lib/supabase";
+import { getLatencyTraceHeaders } from "@src/lib/latencyTelemetry";
 import { normalizeIngredientDose } from "@/features/supplements/doseNormalization";
 import {
   isRetailBarcodeType,
@@ -161,13 +162,24 @@ export async function searchBarcodeWithOpenAi(barcode, options = {}) {
     return null;
   }
 
+  const telemetry = resolvedOptions.telemetry;
+  const finishRequest = telemetry?.start?.("openai_web_search_request", {
+    provider: "openai",
+  });
   try {
-    const accessToken = await getAccessTokenOrCreateSession();
+    const accessToken = await (telemetry?.measure
+      ? telemetry.measure(
+          "openai_fallback_authentication",
+          () => getAccessTokenOrCreateSession(),
+          { provider: "supabase" }
+        )
+      : getAccessTokenOrCreateSession());
     const { data, error } = await supabase.functions.invoke(
       "search-barcode-with-openai",
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
+          ...getLatencyTraceHeaders(telemetry),
         },
         body: {
           barcode: normalizedBarcode,
@@ -192,11 +204,14 @@ export async function searchBarcodeWithOpenAi(barcode, options = {}) {
           },
         }
       );
+      finishRequest?.({ success: false, error: normalizedError });
       return null;
     }
 
+    finishRequest?.({ success: true, found: Boolean(data) });
     return mapOpenAiBarcodeResult(data, normalizedBarcode);
   } catch (error) {
+    finishRequest?.({ success: false, error });
     logBuildAwareDiagnostic(
       "warn",
       "[scanner] OpenAI barcode fallback failed",

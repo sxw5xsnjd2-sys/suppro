@@ -5,6 +5,7 @@ import {
   SCANNER_FAILURE_CATEGORIES,
 } from "@src/lib/scannerFailure";
 import { logBuildAwareDiagnostic, SUPABASE_URL } from "@src/lib/runtimeConfig";
+import { getLatencyTraceHeaders } from "@src/lib/latencyTelemetry";
 
 const FUNCTION_NAME = "scan-supplement-photos";
 const TRAILING_DOSE_PATTERN =
@@ -369,13 +370,23 @@ export function normalizePhotoRescueResponseShape(payload) {
   };
 }
 
-export async function scanSupplementPhotos(payload) {
+export async function scanSupplementPhotos(payload, options = {}) {
   if (!SUPABASE_URL) {
     throw new Error("Missing EXPO_PUBLIC_SUPABASE_URL");
   }
 
-  const accessToken = await getAccessTokenOrCreateSession();
+  const telemetry = options.telemetry;
+  const accessToken = await (telemetry?.measure
+    ? telemetry.measure(
+        "client_authentication",
+        () => getAccessTokenOrCreateSession(),
+        { provider: "supabase" },
+      )
+    : getAccessTokenOrCreateSession());
   let response;
+  const finishRequest = telemetry?.start?.("request_upload_round_trip", {
+    provider: "supabase_edge_function",
+  });
 
   try {
     response = await fetch(`${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`, {
@@ -383,10 +394,19 @@ export async function scanSupplementPhotos(payload) {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
+        ...getLatencyTraceHeaders(telemetry),
       },
       body: JSON.stringify(payload),
     });
-  } catch {
+    finishRequest?.({
+      edgeDurationMs: Number.parseFloat(
+        response.headers?.get?.("x-edge-duration-ms") || "",
+      ),
+      httpStatus: response.status,
+      success: response.ok,
+    });
+  } catch (error) {
+    finishRequest?.({ success: false, error });
     throw createScannerFailure({
       category: SCANNER_FAILURE_CATEGORIES.networkError,
       code: "network_error",
@@ -436,6 +456,19 @@ export async function scanSupplementPhotos(payload) {
     });
   }
 
-  const data = await response.json();
-  return normalizePhotoRescueResponseShape(data);
+  const finishProcessing = telemetry?.start?.(
+    "client_response_parse_and_normalize",
+  );
+  try {
+    const data = await response.json();
+    const normalized = normalizePhotoRescueResponseShape(data);
+    finishProcessing?.({
+      ingredientCount: normalized.ingredients.length,
+      success: true,
+    });
+    return normalized;
+  } catch (error) {
+    finishProcessing?.({ success: false, error });
+    throw error;
+  }
 }

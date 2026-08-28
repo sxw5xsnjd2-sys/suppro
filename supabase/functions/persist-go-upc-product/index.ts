@@ -1,11 +1,18 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { enqueueProductScoreRefresh } from "../_shared/product-score-refresh.ts";
+import {
+  createLatencyTrace,
+  instrumentEdgeRequest,
+} from "../../../src/lib/latencyTelemetry.js";
+
+type LatencyTrace = ReturnType<typeof createLatencyTrace>;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-trace-id, x-latency-flow, x-latency-action",
+  "Access-Control-Expose-Headers": "x-trace-id, x-edge-duration-ms, server-timing",
 };
 
 const TABLES = {
@@ -608,10 +615,12 @@ async function enrichIngredientsWithOpenAI({
   barcode,
   productName,
   brand,
+  telemetry,
 }: {
   barcode: string;
   productName: string;
   brand: string;
+  telemetry?: LatencyTrace;
 }) {
   if (!openAiApiKey || !productName) {
     return "";
@@ -645,6 +654,11 @@ async function enrichIngredientsWithOpenAI({
   };
 
   for (const toolType of OPENAI_WEB_SEARCH_TOOL_TYPES) {
+    const finishResearch = telemetry?.start("openai_ingredient_research", {
+      attempt: OPENAI_WEB_SEARCH_TOOL_TYPES.indexOf(toolType) + 1,
+      provider: "openai",
+      timeoutMs: OPENAI_ENRICHMENT_TIMEOUT_MS,
+    });
     const controller = new AbortController();
     const timeoutId = setTimeout(
       () => controller.abort(),
@@ -675,6 +689,10 @@ async function enrichIngredientsWithOpenAI({
           toolType,
           body,
         });
+        finishResearch?.({
+          httpStatus: response.status,
+          success: false,
+        });
 
         if (shouldTryPreview) {
           continue;
@@ -687,11 +705,14 @@ async function enrichIngredientsWithOpenAI({
       const text = trimString(data?.output_text);
 
       if (!text || text.length < 5) {
+        finishResearch?.({ found: false, success: true });
         return "";
       }
 
+      finishResearch?.({ found: true, success: true });
       return text.slice(0, 4000);
     } catch (error) {
+      finishResearch?.({ success: false, error });
       console.error("[go-upc-persist] OpenAI enrichment failed", {
         toolType,
         message: error instanceof Error ? error.message : String(error),
@@ -711,6 +732,10 @@ Deno.serve(async (request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  return instrumentEdgeRequest(
+    request,
+    { flow: "product_persistence", action: "persist_external_product" },
+    async (telemetry) => {
   if (!adminSupabase) {
     return jsonResponse(
       { error: "Missing Supabase service role configuration." },
@@ -819,6 +844,7 @@ Deno.serve(async (request) => {
       barcode,
       productName,
       brand,
+      telemetry,
     });
   }
   const usedOpenAiIngredientEnrichment = Boolean(
@@ -860,6 +886,9 @@ Deno.serve(async (request) => {
       )
     : [];
 
+  const finishPersistence = telemetry.start("product_persistence_database_work", {
+    provider: "supabase",
+  });
   try {
     const productResolution = await resolveOrCreateProduct({
       barcode,
@@ -994,11 +1023,20 @@ Deno.serve(async (request) => {
       );
     }
 
-    await enqueueProductScoreRefresh({
-      adminSupabase,
-      productId: productResolution.productId,
-      reason: "external_product_canonicalized",
+    const finishScoreRefresh = telemetry.start("score_refresh_follow_up", {
+      provider: "supabase",
     });
+    try {
+      const queuedScoreRefresh = await enqueueProductScoreRefresh({
+        adminSupabase,
+        productId: productResolution.productId,
+        reason: "external_product_canonicalized",
+      });
+      finishScoreRefresh({ success: Boolean(queuedScoreRefresh) });
+    } catch (error) {
+      finishScoreRefresh({ success: false, error });
+      throw error;
+    }
 
     console.log("[go-upc-persist] persisted product", {
       barcode,
@@ -1012,6 +1050,11 @@ Deno.serve(async (request) => {
       hasImage: Boolean(resolvedImageUrl),
     });
 
+    finishPersistence({
+      createdProduct: productResolution.createdProduct,
+      ingredientCount: resolvedIngredientCount,
+      success: true,
+    });
     return jsonResponse({
       productId: productResolution.productId,
       createdProduct: productResolution.createdProduct,
@@ -1033,6 +1076,7 @@ Deno.serve(async (request) => {
       preservedHigherQualityExisting: shouldPreserveHigherQualityExisting,
     });
   } catch (error) {
+    finishPersistence({ success: false, error });
     console.error("[go-upc-persist] failed", error);
     return jsonResponse(
       {
@@ -1042,4 +1086,6 @@ Deno.serve(async (request) => {
       500,
     );
   }
+    },
+  );
 });

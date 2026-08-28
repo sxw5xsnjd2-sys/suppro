@@ -17,6 +17,7 @@ import {
 import { getNonAnonymousAccessToken } from "@src/lib/authState";
 import { normalizeEdgeFunctionInvokeError } from "@src/lib/edgeFunctionErrors";
 import { supabase } from "@src/lib/supabase";
+import { getLatencyTraceHeaders } from "@src/lib/latencyTelemetry";
 import { searchLocalSupplementCatalog } from "./searchSupplementCatalog";
 
 function trimString(value) {
@@ -261,7 +262,10 @@ export async function searchSupplementProducts(
   };
 }
 
-export async function resolveSearchProductSelection(item, { signal } = {}) {
+export async function resolveSearchProductSelection(
+  item,
+  { signal, telemetry } = {},
+) {
   if (item?.canonicalProductId) {
     return {
       status: "resolved",
@@ -274,15 +278,30 @@ export async function resolveSearchProductSelection(item, { signal } = {}) {
     return { status: "incomplete", product: { ...item, evidenceScore: null } };
   }
 
+  let finishRequest;
   try {
-    const accessToken = await getAuthenticatedAccessToken();
+    const accessToken = await (telemetry?.measure
+      ? telemetry.measure(
+          "client_authentication",
+          () => getAuthenticatedAccessToken(),
+          { provider: "supabase" },
+        )
+      : getAuthenticatedAccessToken());
     if (!accessToken) throw new Error("No authenticated session");
+    finishRequest = telemetry?.start?.(
+      "resolve_edge_request_round_trip",
+      { provider },
+    );
     const { data, error } = await supabase.functions.invoke(
       "resolve-supplement-product",
       {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          ...getLatencyTraceHeaders(telemetry),
+        },
         body: {
-          requestId: `mobile-resolution-${Date.now()}`,
+          requestId:
+            telemetry?.traceId || `mobile-resolution-${Date.now()}`,
           candidate: {
             provider,
             providerStableId,
@@ -297,7 +316,11 @@ export async function resolveSearchProductSelection(item, { signal } = {}) {
         signal,
       },
     );
-    if (error) throw error;
+    if (error) {
+      finishRequest?.({ success: false, error });
+      throw error;
+    }
+    finishRequest?.({ found: Boolean(data?.product), success: true });
     const normalized = normalizeEdgeProduct(data?.product);
     if (!normalized) {
       return { status: "incomplete", product: { ...item, evidenceScore: null } };
@@ -307,6 +330,7 @@ export async function resolveSearchProductSelection(item, { signal } = {}) {
       product: canonicalizeSearchProductSelection(normalized),
     };
   } catch (error) {
+    finishRequest?.({ success: false, error });
     if (error?.name === "AbortError") throw error;
     return {
       status: "incomplete",

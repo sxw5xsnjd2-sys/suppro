@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppButton, PrimaryCard } from "@/components/common/ui";
 import { leaveScannerScreen } from "@/features/scanner/navigation";
 import { useSubscriptionAccess } from "@/features/subscriptions/useSubscriptionAccess";
@@ -20,6 +21,16 @@ import {
   getScannerFailureCategory,
   SCANNER_FAILURE_CATEGORIES,
 } from "@src/lib/scannerFailure";
+import {
+  createLatencyTrace,
+  createLatencyTraceId,
+} from "@src/lib/latencyTelemetry";
+import { analyzeIngredientPhoto } from "@src/lib/analyzeIngredientPhoto";
+import {
+  getIngredientCaptureGuideDimensions,
+  getPhotoCaptureCameraConfig,
+  getPhotoQualityRetakeMessage,
+} from "@src/lib/photoCaptureQuality";
 
 const cameraModule = (() => {
   try {
@@ -53,6 +64,11 @@ function normalizeIntegerParam(value) {
   );
 
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeStringParam(value) {
+  if (Array.isArray(value)) return normalizeStringParam(value[0]);
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function buildPhotoDataUrl(photo) {
@@ -118,7 +134,7 @@ function PhotoRescueFallback({
   );
 }
 
-export default function ScannerPhotoRescueScreen() {
+export function ScannerPhotoRescueScreen() {
   const {
     hasActiveAccess,
     isResolved,
@@ -129,18 +145,36 @@ export default function ScannerPhotoRescueScreen() {
   const requestedScanSessionId = normalizeIntegerParam(params.scanSessionId);
   const originParam = normalizeOriginParam(params.origin);
   const entryParam = normalizeEntryParam(params.entry);
+  const latencyStartedAt = normalizeIntegerParam(params.latencyStartedAt);
+  const latencyTraceRef = useRef(null);
+  if (!latencyTraceRef.current) {
+    latencyTraceRef.current = createLatencyTrace({
+      traceId:
+        normalizeStringParam(params.latencyTraceId) ||
+        createLatencyTraceId("photo_improvement"),
+      flow: "photo_improvement",
+      action:
+        entryParam === "scanner_not_found"
+          ? "add_with_photos"
+          : "improve_with_photos",
+    });
+  }
+  const latencyTrace = latencyTraceRef.current;
   const [permission, requestPermission] = useCameraPermissions();
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [step, setStep] = useState("ingredients");
   const [ingredientsPhoto, setIngredientsPhoto] = useState("");
   const [captureError, setCaptureError] = useState("");
+  const [qualityMessage, setQualityMessage] = useState("");
+  const [isCapturing, setIsCapturing] = useState(false);
   const cameraRef = useRef(null);
 
   const [captureFlashVisible, setCaptureFlashVisible] = useState(false);
   const flashOpacity = useRef(new Animated.Value(0)).current;
   const flashScale = useRef(new Animated.Value(0.85)).current;
   const buttonScale = useRef(new Animated.Value(1)).current;
-  const { height: windowHeight } = useWindowDimensions();
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
 
   const currentScanSessionId = useScannerStore((state) => state.scanSessionId);
   const photoRescueStatus = useScannerStore((state) => state.photoRescueStatus);
@@ -185,6 +219,7 @@ export default function ScannerPhotoRescueScreen() {
     Number.isFinite(effectiveScanSessionId) &&
     effectiveScanSessionId === currentScanSessionId;
   const submitting = photoRescueStatus === "processing";
+  const captureBusy = submitting || isCapturing;
   const visibleError = photoRescueError || captureError;
   const errorPresentation =
     photoRescueError && typeof photoRescueError === "object"
@@ -199,16 +234,31 @@ export default function ScannerPhotoRescueScreen() {
 
   const stepLabel = step === "ingredients" ? "Step 1 of 2" : "Step 2 of 2";
   const isIngredientsStep = step === "ingredients";
-  const usesCompactIngredientsFrame = windowHeight < 760;
+  const cameraConfig = getPhotoCaptureCameraConfig(step);
+  const ingredientGuideDimensions = getIngredientCaptureGuideDimensions({
+    windowWidth,
+    windowHeight,
+    safeAreaTop: safeAreaInsets.top,
+    safeAreaBottom: safeAreaInsets.bottom,
+  });
   const stepTitle = isIngredientsStep
     ? "Capture the ingredients panel"
     : "Capture the product front";
   const stepDescription = isIngredientsStep
-    ? "Fill the frame with the supplement facts or ingredients panel."
+    ? ""
     : "Now capture the front label or product name.";
   const captureLabel = isIngredientsStep
     ? "Capture ingredients photo"
     : "Capture product photo";
+
+  useEffect(() => {
+    latencyTrace.record("camera_zoom_strategy", 0, {
+      mode: isIngredientsStep ? "ingredients" : "product",
+      provider: "expo_camera",
+      resultStatus: "configured",
+      source: cameraConfig.zoomStrategy,
+    });
+  }, [cameraConfig.zoomStrategy, isIngredientsStep, latencyTrace]);
 
   const showCaptureFlash = (onDone) => {
     setCaptureFlashVisible(true);
@@ -259,6 +309,7 @@ export default function ScannerPhotoRescueScreen() {
     setStep("ingredients");
     setIngredientsPhoto("");
     setCaptureError("");
+    setQualityMessage("");
     resetPhotoRescueState();
   };
 
@@ -275,17 +326,25 @@ export default function ScannerPhotoRescueScreen() {
       return;
     }
 
-    if (submitting) return;
+    if (captureBusy) return;
 
     setCaptureError("");
+    setQualityMessage("");
+    setIsCapturing(true);
     animateCaptureButton();
 
+    const captureStep = step === "ingredients" ? "ingredients" : "product";
+    let keepCaptureLocked = false;
     try {
-      const captureStep = step === "ingredients" ? "ingredients" : "product";
-      const photo = await cameraRef.current?.takePictureAsync({
-        base64: true,
-        quality: 0.9,
-      });
+      const photo = await latencyTrace.measure(
+        "base64_capture_conversion",
+        () =>
+          cameraRef.current?.takePictureAsync({
+            base64: true,
+            quality: 0.9,
+          }),
+        { mode: captureStep },
+      );
 
       if (__DEV__) {
         console.log("[scanner-photo-rescue] captured photo", {
@@ -293,29 +352,72 @@ export default function ScannerPhotoRescueScreen() {
           width: photo?.width ?? null,
           height: photo?.height ?? null,
           format: photo?.format ?? null,
-          uri: photo?.uri ?? null,
-          base64Length:
-            typeof photo?.base64 === "string" ? photo.base64.length : null,
         });
       }
 
+      if (captureStep === "ingredients") {
+        const finishQualityCheck = latencyTrace.start(
+          "ingredient_photo_quality_check",
+          { mode: captureStep },
+        );
+        try {
+          const qualityResult = await analyzeIngredientPhoto(photo);
+          const resultStatus = qualityResult.accepted
+            ? "accepted"
+            : `rejected_${qualityResult.rejectionCategory}`;
+          finishQualityCheck({ resultStatus, success: true });
+
+          if (!qualityResult.accepted) {
+            setQualityMessage(
+              getPhotoQualityRetakeMessage(qualityResult.rejectionCategory),
+            );
+            return;
+          }
+        } catch (qualityError) {
+          finishQualityCheck({
+            error: qualityError,
+            resultStatus: "analysis_unavailable_fail_open",
+            success: false,
+          });
+          if (__DEV__) {
+            console.warn(
+              "[scanner-photo-rescue] quality analysis unavailable; accepting photo",
+              { message: qualityError?.message },
+            );
+          }
+        }
+      }
+
+      const finishImagePreparation = latencyTrace.start(
+        "client_image_preparation",
+        { mode: captureStep },
+      );
       const nextPhoto = buildPhotoDataUrl(photo);
+      finishImagePreparation({ success: Boolean(nextPhoto) });
       if (!nextPhoto) {
         throw new Error("We could not capture that photo. Please try again.");
       }
 
       if (step === "ingredients") {
         setIngredientsPhoto(nextPhoto);
-        showCaptureFlash(() => setStep("product"));
+        keepCaptureLocked = true;
+        showCaptureFlash(() => {
+          setStep("product");
+          setIsCapturing(false);
+        });
         return;
       }
 
       await enhanceScanWithPhotos({
         scanSessionId: effectiveScanSessionId,
         ingredientsPhoto,
+        latencyTraceId: latencyTrace.traceId,
         productPhoto: nextPhoto,
       });
 
+      const finishClientProcessing = latencyTrace.start(
+        "client_navigation_after_edge_return",
+      );
       if (entryParam === "scanner_not_found") {
         const nextScanState = useScannerStore.getState();
         const nextScanSessionId = Number.isFinite(nextScanState.scanSessionId)
@@ -328,6 +430,7 @@ export default function ScannerPhotoRescueScreen() {
             source: "scanned",
             origin: originParam || undefined,
             scanSessionId: String(nextScanSessionId),
+            latencyTraceId: latencyTrace.traceId,
             name:
               nextScanState.product?.productName ||
               nextScanState.product?.name ||
@@ -335,11 +438,30 @@ export default function ScannerPhotoRescueScreen() {
               "Scanned supplement",
           },
         });
+        finishClientProcessing({ resultStatus: "navigated", success: true });
+        latencyTrace.finishSince(
+          "photo_improvement_total",
+          latencyStartedAt,
+          { resultStatus: "usable", success: true },
+        );
         return;
       }
 
       router.back();
+      finishClientProcessing({ resultStatus: "navigated", success: true });
+      latencyTrace.finishSince(
+        "photo_improvement_total",
+        latencyStartedAt,
+        { resultStatus: "usable", success: true },
+      );
     } catch (error) {
+      if (captureStep === "product") {
+        latencyTrace.finishSince(
+          "photo_improvement_total",
+          latencyStartedAt,
+          { resultStatus: "failed", success: false, error },
+        );
+      }
       console.warn("[scanner-photo-rescue] screen submit failed", {
         message: error?.message,
         code: error?.code,
@@ -355,6 +477,10 @@ export default function ScannerPhotoRescueScreen() {
           ? error.message
           : "We could not improve that scan with those photos.",
       );
+    } finally {
+      if (!keepCaptureLocked) {
+        setIsCapturing(false);
+      }
     }
   };
 
@@ -422,10 +548,19 @@ export default function ScannerPhotoRescueScreen() {
       <CameraView
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
-        facing="back"
+        facing={cameraConfig.facing}
+        zoom={cameraConfig.zoom}
       />
 
-      <View style={styles.overlay}>
+      <View
+        style={[
+          styles.overlay,
+          {
+            paddingTop: safeAreaInsets.top,
+            paddingBottom: safeAreaInsets.bottom + spacing.xl,
+          },
+        ]}
+      >
         <View style={styles.topBar}>
           <AppButton
             label="Cancel"
@@ -456,13 +591,19 @@ export default function ScannerPhotoRescueScreen() {
           <View
             style={[
               styles.captureFrame,
-              isIngredientsStep && styles.captureFrameIngredients,
-              isIngredientsStep &&
-                usesCompactIngredientsFrame &&
-                styles.captureFrameIngredientsCompact,
+              isIngredientsStep && {
+                width: ingredientGuideDimensions.width,
+                height: ingredientGuideDimensions.height,
+                borderRadius: 32,
+              },
               captureFlashVisible && styles.captureFrameSuccess,
             ]}
           >
+            {qualityMessage ? (
+              <View style={styles.qualityWarning}>
+                <Text style={styles.qualityWarningText}>{qualityMessage}</Text>
+              </View>
+            ) : null}
             {captureFlashVisible ? (
               <Animated.View
                 style={[
@@ -477,8 +618,17 @@ export default function ScannerPhotoRescueScreen() {
               </Animated.View>
             ) : null}
           </View>
-          <Text style={styles.title}>{stepTitle}</Text>
-          <Text style={styles.description}>{stepDescription}</Text>
+          <Text
+            style={styles.title}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.78}
+          >
+            {stepTitle}
+          </Text>
+          {stepDescription ? (
+            <Text style={styles.description}>{stepDescription}</Text>
+          ) : null}
         </View>
 
         <View style={styles.bottomBar}>
@@ -487,7 +637,7 @@ export default function ScannerPhotoRescueScreen() {
               label="Restart photos"
               variant="ghost"
               onPress={restartFlow}
-              disabled={submitting}
+              disabled={captureBusy}
               style={styles.restartButton}
               textStyle={styles.restartButtonText}
             />
@@ -500,11 +650,11 @@ export default function ScannerPhotoRescueScreen() {
               accessibilityRole="button"
               accessibilityLabel={captureLabel}
               onPress={handleCapture}
-              disabled={submitting}
+              disabled={captureBusy}
               style={({ pressed }) => [
                 styles.captureButton,
                 pressed && styles.captureButtonPressed,
-                submitting && styles.captureButtonDisabled,
+                captureBusy && styles.captureButtonDisabled,
               ]}
             >
               <View style={styles.captureButtonInner} />
@@ -559,6 +709,8 @@ export default function ScannerPhotoRescueScreen() {
   );
 }
 
+export default ScannerPhotoRescueScreen;
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -569,8 +721,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     backgroundColor: "rgba(5,5,5,0.28)",
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.xl * 1.4,
-    paddingBottom: spacing.xl,
   },
   topBar: {
     alignItems: "flex-start",
@@ -583,7 +733,7 @@ const styles = StyleSheet.create({
   },
   centerContent: {
     alignItems: "center",
-    gap: spacing.md,
+    gap: spacing.sm,
   },
   stepPill: {
     borderRadius: 999,
@@ -608,15 +758,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
-  captureFrameIngredients: {
-    width: 320,
-    height: 428,
-    borderRadius: 32,
+  qualityWarning: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    bottom: 12,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: "rgba(5,5,5,0.82)",
   },
-  captureFrameIngredientsCompact: {
-    width: 300,
-    height: 392,
-    borderRadius: 30,
+  qualityWarningText: {
+    textAlign: "center",
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: typography.fontFamily.bodySemiBold,
+    color: "#FFFFFF",
   },
   captureFrameSuccess: {
     borderColor: "#4ADE80",

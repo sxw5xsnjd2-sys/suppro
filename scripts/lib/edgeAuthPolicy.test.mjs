@@ -82,6 +82,7 @@ test("trusted edge requests accept service role jwt or trusted api keys", () => 
   assert.equal(
     isTrustedEdgeFunctionRequest({
       authorizationHeader: `Bearer ${serviceRoleJwt}`,
+      serviceRoleKey: serviceRoleJwt,
     }),
     true
   )
@@ -99,5 +100,59 @@ test("trusted edge requests accept service role jwt or trusted api keys", () => 
       internalServiceRoleKey: "internal-secret",
     }),
     false
+  )
+
+  const forgedServiceRoleJwt = createJwt({ role: "service_role" })
+  assert.equal(
+    isTrustedEdgeFunctionRequest({
+      authorizationHeader: `Bearer ${forgedServiceRoleJwt}`,
+      serviceRoleKey: "different-configured-key",
+    }),
+    false
+  )
+
+  assert.equal(
+    isTrustedEdgeFunctionRequest({
+      authorizationHeader: "Bearer sb_secret_example",
+      internalServiceRoleKey: "sb_secret_example",
+    }),
+    false
+  )
+  assert.equal(
+    isTrustedEdgeFunctionRequest({
+      apiKeyHeader: "sb_secret_example",
+      internalServiceRoleKey: "sb_secret_example",
+    }),
+    true
+  )
+})
+
+test("photo review worker authenticates opaque internal calls inside the function", () => {
+  const worker = readFileSync(
+    new URL(
+      "../../supabase/functions/process-photo-rescue-reviews/index.ts",
+      import.meta.url
+    ),
+    "utf8"
+  )
+  const scanner = readFileSync(
+    new URL(
+      "../../supabase/functions/scan-supplement-photos/index.ts",
+      import.meta.url
+    ),
+    "utf8"
+  )
+  const config = readFileSync(
+    new URL("../../supabase/config.toml", import.meta.url),
+    "utf8"
+  )
+
+  assert.match(worker, /isTrustedEdgeFunctionRequest/u)
+  assert.match(worker, /apiKeyHeader:\s*req\.headers\.get\("apikey"\)/u)
+  assert.match(scanner, /apikey:\s*reviewRefreshKey/u)
+  assert.match(scanner, /\.\.\.getLatencyTraceHeaders\(telemetry\)/u)
+  assert.match(
+    config,
+    /\[functions\.process-photo-rescue-reviews\][\s\S]*?verify_jwt = false[\s\S]*?process-photo-rescue-reviews\/index\.ts/u
   )
 })

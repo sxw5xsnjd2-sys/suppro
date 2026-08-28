@@ -44,6 +44,10 @@ import {
 } from "@/features/supplements/catalog";
 import { getSupplementProductLinkedIngredients } from "@src/data/getSupplement";
 import { useToastStore } from "@/features/toast/toastStore";
+import {
+  createLatencyTrace,
+  createLatencyTraceId,
+} from "@src/lib/latencyTelemetry";
 
 const todayYYYYMMDD = () => {
   const now = new Date();
@@ -279,6 +283,7 @@ export default function SupplementModal() {
     scanSessionId,
     scanSource,
     toastTarget,
+    latencyTraceId,
   } = useLocalSearchParams();
   const isEdit = Boolean(id);
   const requestedScanSessionId = normalizeIntegerParam(scanSessionId);
@@ -403,6 +408,17 @@ export default function SupplementModal() {
   const handleSave = async () => {
     if (!canSave || saving) return;
     setSaving(true);
+    const latencyTrace = createLatencyTrace({
+      traceId:
+        trimString(
+          Array.isArray(latencyTraceId) ? latencyTraceId[0] : latencyTraceId,
+        ) || createLatencyTraceId("stack_save"),
+      flow: "external_product_selection",
+      action: "save_to_stack",
+    });
+    const finishStackSave = latencyTrace.start("stack_save_total");
+    let saveSucceeded = false;
+    let saveError;
 
     try {
       const trimmedName = name.trim();
@@ -498,7 +514,9 @@ export default function SupplementModal() {
         payload.scanSource = null;
       } else if (resolvedCatalogType === CATALOG_TYPES.SUPPLEMENT_PRODUCT) {
         const productLinkedIngredients =
-          await getSupplementProductLinkedIngredients(resolvedCatalogId);
+          await getSupplementProductLinkedIngredients(resolvedCatalogId, {
+            telemetry: latencyTrace,
+          });
         if (!productLinkedIngredients.length) {
           Alert.alert(
             "Could not add supplement",
@@ -525,6 +543,7 @@ export default function SupplementModal() {
       if (isEdit && id) {
         updateSupplement(id, payload);
         router.back();
+        saveSucceeded = true;
       } else {
         const resolvedToastTarget =
           typeof toastTarget === "string" && toastTarget.trim().length > 0
@@ -535,14 +554,21 @@ export default function SupplementModal() {
           ...payload,
         });
         router.back();
+        saveSucceeded = true;
         setTimeout(() => {
           showToast("Added to your stack!", resolvedToastTarget);
         }, 250);
       }
     } catch (error) {
+      saveError = error;
       console.error("Failed to save supplement", error);
       Alert.alert("Could not save supplement", "Please try again in a moment.");
     } finally {
+      finishStackSave({
+        resultStatus: saveSucceeded ? "saved" : "not_saved",
+        success: saveSucceeded,
+        error: saveError,
+      });
       setSaving(false);
     }
   };

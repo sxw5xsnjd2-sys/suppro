@@ -500,6 +500,14 @@ function RootNavigator() {
         />
         <Stack.Screen name="ai-chat" options={{ headerShown: false }} />
         <Stack.Screen name="scanner" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="photo-rescue"
+          options={{
+            presentation: "fullScreenModal",
+            headerShown: false,
+            gestureEnabled: false,
+          }}
+        />
         <Stack.Screen name="benefit-ranking" options={{ headerShown: false }} />
         <Stack.Screen name="account" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />

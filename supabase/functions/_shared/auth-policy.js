@@ -59,7 +59,17 @@ export function isTrustedEdgeFunctionRequest({
   serviceRoleKey = "",
   internalServiceRoleKey = "",
 } = {}) {
-  if (isServiceRoleAuthorization(authorizationHeader)) {
+  const trustedKeys = [internalServiceRoleKey, serviceRoleKey]
+    .map(normalizeSecretToken)
+    .filter(Boolean)
+  const candidateAuthorization = normalizeSecretToken(
+    parseBearerToken(authorizationHeader)
+  )
+  if (
+    candidateAuthorization &&
+    isServiceRoleAuthorization(authorizationHeader) &&
+    trustedKeys.includes(candidateAuthorization)
+  ) {
     return true
   }
 
@@ -67,10 +77,6 @@ export function isTrustedEdgeFunctionRequest({
   if (!candidateApiKey) {
     return false
   }
-
-  const trustedKeys = [internalServiceRoleKey, serviceRoleKey]
-    .map(normalizeSecretToken)
-    .filter(Boolean)
 
   return trustedKeys.includes(candidateApiKey)
 }

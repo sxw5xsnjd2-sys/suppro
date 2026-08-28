@@ -92,6 +92,10 @@ import { appTheme, gradients, typography } from "@/theme";
 import { buildSupplementReferenceItems } from "@src/data/buildLinkedSupplementPayload";
 import { getSupplementById } from "@src/data/getSupplement";
 import { enrichProductImageIfNeeded } from "@src/lib/productImages";
+import {
+  createLatencyStartMarker,
+  createLatencyTraceId,
+} from "@src/lib/latencyTelemetry";
 import { supabase } from "@src/lib/supabase";
 
 const DOSE_BAND_PILL_COLORS = {
@@ -2203,10 +2207,12 @@ export default function SupplementInfoModal() {
     }
 
     router.push({
-      pathname: "/scanner/photo-rescue",
+      pathname: "/photo-rescue",
       params: {
         entry: "supplement_info",
         scanSessionId: String(effectiveScanSessionId ?? ""),
+        latencyTraceId: createLatencyTraceId("photo_improvement"),
+        latencyStartedAt: String(createLatencyStartMarker()),
       },
     });
   };

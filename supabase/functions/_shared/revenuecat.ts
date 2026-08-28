@@ -5,6 +5,10 @@ import {
 
 const REVENUECAT_API_BASE = "https://api.revenuecat.com/v1";
 
+type SupabaseAuthResult =
+  | { ok: false; status: number; body: { error: string } }
+  | { ok: true; user: { id: string; is_anonymous?: boolean } };
+
 function trimString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -75,10 +79,12 @@ export async function authenticateSupabaseUser({
 }: {
   adminSupabase: any;
   authHeader: string | null;
-}) {
+}): Promise<SupabaseAuthResult> {
   const token = parseBearerToken(authHeader ?? "")
   if (!token) {
-    return resolveSupabaseAuthResult({ authHeader })
+    return resolveSupabaseAuthResult({
+      authHeader: authHeader ?? undefined,
+    }) as SupabaseAuthResult
   }
 
   const {
@@ -87,10 +93,10 @@ export async function authenticateSupabaseUser({
   } = await adminSupabase.auth.getUser(token)
 
   return resolveSupabaseAuthResult({
-    authHeader,
+    authHeader: authHeader ?? undefined,
     user,
     authError,
-  })
+  }) as SupabaseAuthResult
 }
 
 export async function assertActiveRevenueCatEntitlement({

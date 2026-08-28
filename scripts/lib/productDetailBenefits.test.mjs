@@ -173,7 +173,7 @@ test("incomplete scanner results keep the warning and photo-rescue route", () =>
     detailSource,
     /const canImproveScanWithPhotos = Boolean\(\s*isLiveScanSource && isCurrentScanSession/u,
   );
-  assert.match(detailSource, /pathname: "\/scanner\/photo-rescue"/u);
+  assert.match(detailSource, /pathname: "\/photo-rescue"/u);
   assert.match(detailSource, /label="Improve with photos"/u);
 });
 

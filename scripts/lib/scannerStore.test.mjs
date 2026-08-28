@@ -61,6 +61,8 @@ function loadScannerStoreModule(overrides = {}) {
     "ENABLE_DSLD_LOOKUP",
     "logBuildAwareDiagnostic",
     "logDevelopmentDiagnostic",
+    "createLatencyTrace",
+    "createLatencyTraceId",
     "createScanRequestId",
     "logScanTiming",
     "extractIngredientCandidatesFromList",
@@ -168,6 +170,16 @@ return { useScannerStore };`
     overrides.ENABLE_DSLD_LOOKUP ?? true,
     overrides.logBuildAwareDiagnostic ?? (() => {}),
     overrides.logDevelopmentDiagnostic ?? (() => {}),
+    overrides.createLatencyTrace ??
+      (({ traceId, flow, action } = {}) => ({
+        traceId: traceId || "test-trace",
+        flow: flow || "test-flow",
+        action: action || "test-action",
+        start: () => () => {},
+        record: () => {},
+        measure: async (_stage, operation) => operation(),
+      })),
+    overrides.createLatencyTraceId ?? (() => "test-trace"),
     overrides.createScanRequestId ??
       ((scanSessionId) => `test-scan-${scanSessionId}`),
     overrides.logScanTiming ?? (() => {}),
@@ -193,6 +205,20 @@ return { useScannerStore };`
     overrides.invalidateScanResultHydration ?? (() => {})
   );
 }
+
+test("the user-facing scanner source has no AI barcode lookup invocation", () => {
+  const source = readFileSync(
+    new URL("../../features/scanner/store.js", import.meta.url),
+    "utf8"
+  );
+
+  assert.doesNotMatch(source, /searchBarcodeWithOpenAi/u);
+  assert.doesNotMatch(source, /search-barcode-with-openai/u);
+  assert.doesNotMatch(
+    source,
+    /provider:\s*["']openai_web_search["']/u
+  );
+});
 
 test("scanner barcode orchestration checks supplement master before fallbacks", async () => {
   const sequence = [];
@@ -246,6 +272,39 @@ test("scanner barcode orchestration checks supplement master before fallbacks", 
     state.product.sourceDecision.final_source_used,
     "supplement_products_master"
   );
+});
+
+test("barcode normalization is preserved before the database lookup", async () => {
+  let receivedBarcode = null;
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => {
+      const digits = value.replace(/\D/g, "");
+      return digits.length === 12 ? `0${digits}` : digits;
+    },
+    fetchLocalBarcodeScanProduct: async (barcode) => {
+      receivedBarcode = barcode;
+      return {
+        barcode,
+        productId: "normalized_master_product",
+        productName: "Normalized master product",
+        ingredientsText: "Magnesium 200 mg",
+        sourceIngredients: [{ name: "Magnesium", dosageValue: 200, dosageUnit: "mg" }],
+        scanDataSource: "supplement_products_master",
+        verificationStatus: "verified",
+      };
+    },
+    extractIngredientCandidatesFromList: (ingredients) => ingredients,
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("123-456-789-012", "ean13");
+
+  assert.equal(receivedBarcode, "0123456789012");
+  assert.equal(state.barcode, "0123456789012");
+  assert.equal(state.status, "success");
+  assert.equal(state.product.productId, "normalized_master_product");
 });
 
 test("verified master products publish success before ingredient matching finishes", async () => {
@@ -722,7 +781,7 @@ test("scanner barcode orchestration does not call OpenAI for complete Go-UPC pro
   assert.equal(state.product.sourceDecision.final_source_used, "go_upc");
 });
 
-test("scanner barcode orchestration enriches EAN-Search products after Go-UPC misses", async () => {
+test("scanner barcode orchestration uses incomplete EAN-Search products without AI enrichment", async () => {
   const sequence = [];
   let openAiOptions = null;
   const persistedPayloads = [];
@@ -826,45 +885,16 @@ test("scanner barcode orchestration enriches EAN-Search products after Go-UPC mi
     "dsld",
     "go_upc",
     "ean_search",
-    "openai_web_search",
   ]);
-  assert.equal(openAiOptions?.barcodeType, "ean13");
-  assert.equal(openAiOptions?.fallbackSource, "ean_search_incomplete");
-  assert.equal(persistedPayloads.length, 2);
+  assert.equal(openAiOptions, null);
+  assert.equal(persistedPayloads.length, 1);
   assert.equal(persistedPayloads[0].scanDataSource, "ean_search");
-  assert.equal(persistedPayloads[1].scanDataSource, "ean_search_plus_openai");
-  assert.equal(persistedPayloads[1].source, "ean_search_plus_openai");
-  assert.equal(persistedPayloads[1].servingSizeText, "2 tablets");
-  assert.equal(persistedPayloads[1].ingredient_count, 1);
-  assert.deepEqual(persistedPayloads[1].active_ingredients_json, [
-    {
-      name: "Magnesium",
-      dosageValue: 200,
-      dosageUnit: "mg",
-      amountBasis: "per_serving",
-    },
-  ]);
-  assert.equal(state.status, "success");
+  assert.equal(state.status, "no_ingredients");
   assert.equal(state.product.productId, "prod_ean_search");
-  assert.equal(state.product.scanDataSource, "ean_search_plus_openai");
-  assert.equal(
-    state.product.sourceDecision.final_source_used,
-    "ean_search_plus_openai"
-  );
+  assert.equal(state.product.scanDataSource, "ean_search");
+  assert.equal(state.product.sourceDecision.final_source_used, "ean_search");
   assert.equal(state.product.verificationStatus, "ean_search_unverified");
-  assert.equal(
-    state.product.imageUrl,
-    "https://cdn.example.com/fallback-image.png"
-  );
-  assert.equal(state.product.imageProvider, "openai_image_lookup");
-  assert.deepEqual(state.ingredients, [
-    {
-      name: "Magnesium",
-      dosageValue: 200,
-      dosageUnit: "mg",
-      amountBasis: "per_serving",
-    },
-  ]);
+  assert.deepEqual(state.ingredients, []);
 });
 
 test("scanner barcode orchestration does not call OpenAI when EAN-Search has complete details", async () => {
@@ -940,7 +970,7 @@ test("scanner barcode orchestration does not call OpenAI when EAN-Search has com
   assert.equal(state.product.sourceDecision.final_source_used, "ean_search");
 });
 
-test("scanner barcode orchestration enriches incomplete Go-UPC products with OpenAI ingredients", async () => {
+test("scanner barcode orchestration keeps incomplete Go-UPC products without AI enrichment", async () => {
   const sequence = [];
   let openAiOptions = null;
   const persistedPayloads = [];
@@ -1033,80 +1063,27 @@ test("scanner barcode orchestration enriches incomplete Go-UPC products with Ope
     .getState()
     .processBarcode("0123456789012", "ean13");
 
-  assert.deepEqual(sequence, ["local", "dsld", "go_upc", "openai_web_search"]);
-  assert.equal(openAiOptions?.barcodeType, "ean13");
-  assert.equal(openAiOptions?.fallbackSource, "go_upc_incomplete");
-  assert.equal(persistedPayloads.length, 2);
+  assert.deepEqual(sequence, ["local", "dsld", "go_upc"]);
+  assert.equal(openAiOptions, null);
+  assert.equal(persistedPayloads.length, 1);
   assert.equal(persistedPayloads[0].scanDataSource, "go_upc");
-  assert.equal(persistedPayloads[1].scanDataSource, "go_upc_plus_openai");
-  assert.equal(persistedPayloads[1].source, "go_upc_plus_openai");
-  assert.equal(persistedPayloads[1].servingSizeText, "2 tablets");
-  assert.equal(persistedPayloads[1].serving_size_text, "2 tablets");
-  assert.equal(persistedPayloads[1].ingredient_count, 1);
-  assert.equal(persistedPayloads[1].ingredientCount, 1);
-  assert.deepEqual(persistedPayloads[1].active_ingredients_json, [
-    {
-      name: "Magnesium",
-      dosageValue: 200,
-      dosageUnit: "mg",
-      amountBasis: "per_serving",
-    },
-  ]);
-  assert.deepEqual(persistedPayloads[1].activeIngredientsJson, [
-    {
-      name: "Magnesium",
-      dosageValue: 200,
-      dosageUnit: "mg",
-      amountBasis: "per_serving",
-    },
-  ]);
-  assert.equal(state.status, "success");
-  assert.equal(state.product.scanDataSource, "go_upc_plus_openai");
-  assert.equal(state.product.sourceDecision.final_source_used, "go_upc_plus_openai");
+  assert.equal(state.status, "no_ingredients");
+  assert.equal(state.product.scanDataSource, "go_upc");
+  assert.equal(state.product.sourceDecision.final_source_used, "go_upc");
   assert.equal(state.product.productId, "prod_go_upc");
   assert.equal(state.product.barcode, "0123456789012");
   assert.equal(state.product.imageUrl, "https://cdn.example.com/go-upc.png");
   assert.equal(state.product.imageSourceUrl, "https://cdn.example.com/go-upc.png");
-  assert.equal(state.product.productName, "Go UPC Magnesium Citrate 200 mg Tablets");
-  assert.equal(state.product.servingSizeText, "2 tablets");
-  assert.equal(state.product.serving_size_text, "2 tablets");
-  assert.equal(state.product.ingredient_count, 1);
-  assert.equal(state.product.ingredientCount, 1);
-  assert.deepEqual(state.product.active_ingredients_json, [
-    {
-      name: "Magnesium",
-      dosageValue: 200,
-      dosageUnit: "mg",
-      amountBasis: "per_serving",
-    },
-  ]);
-  assert.deepEqual(state.product.activeIngredientsJson, [
-    {
-      name: "Magnesium",
-      dosageValue: 200,
-      dosageUnit: "mg",
-      amountBasis: "per_serving",
-    },
-  ]);
-  assert.deepEqual(state.ingredients, [
-    {
-      name: "Magnesium",
-      dosageValue: 200,
-      dosageUnit: "mg",
-      amountBasis: "per_serving",
-    },
-  ]);
+  assert.equal(state.product.productName, "Go UPC Magnesium");
+  assert.equal(state.product.ingredient_count, 0);
+  assert.deepEqual(state.ingredients, []);
   assert.equal(state.product.verificationStatus, "go_upc_unverified");
   assert.equal(state.product.hasIncompleteDetails, true);
 });
 
-test("scanner barcode orchestration enriches cached incomplete provisional products from local master", async () => {
+test("scanner barcode orchestration does not schedule AI enrichment for cached incomplete products", async () => {
   const sequence = [];
   const persistedPayloads = [];
-  let resolveOpenAi;
-  const pendingOpenAiResult = new Promise((resolve) => {
-    resolveOpenAi = resolve;
-  });
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
     normalizeBarcode: (value) => value.replace(/\D/g, ""),
@@ -1138,7 +1115,7 @@ test("scanner barcode orchestration enriches cached incomplete provisional produ
     },
     searchBarcodeWithOpenAi: async () => {
       sequence.push("openai_web_search");
-      return pendingOpenAiResult;
+      return null;
     },
     extractBestIngredientCandidates: (product) => product.sourceIngredients,
     matchIngredientsToCatalog: () => ({
@@ -1159,61 +1136,13 @@ test("scanner barcode orchestration enriches cached incomplete provisional produ
   assert.equal(state.product.scanDataSource, "supplement_products_master");
 
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(sequence, ["local", "openai_web_search"]);
-
-  resolveOpenAi({
-        barcode: "0123456789012",
-        productName: "Cached Go UPC Magnesium 200 mg",
-        ingredientsText: "Magnesium 200 mg",
-        sourceIngredients: [
-          {
-            name: "Magnesium",
-            dosageValue: 200,
-            dosageUnit: "mg",
-            amountBasis: "per_serving",
-          },
-        ],
-        active_ingredients_json: [
-          {
-            name: "Magnesium",
-            dosageValue: 200,
-            dosageUnit: "mg",
-            amountBasis: "per_serving",
-          },
-        ],
-        ingredient_count: 1,
-        scanDataSource: "openai_web_search",
-        verificationStatus: "go_upc_unverified",
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(persistedPayloads.length, 1);
-  assert.equal(persistedPayloads[0].productId, "prod_go_upc");
-  assert.equal(persistedPayloads[0].scanDataSource, "go_upc_plus_openai");
-  const enrichedState = useScannerStore.getState();
-  assert.equal(enrichedState.status, "no_ingredients");
-  assert.equal(enrichedState.product.productId, "prod_go_upc");
-  assert.equal(enrichedState.product.scanDataSource, "go_upc_plus_openai");
-  assert.equal(
-    enrichedState.product.productName,
-    "Cached Go UPC Magnesium 200 mg",
-  );
-  assert.equal(enrichedState.product.ingredientCount, 1);
-  assert.deepEqual(enrichedState.product.active_ingredients_json, [
-    {
-      name: "Magnesium",
-      dosageValue: 200,
-      dosageUnit: "mg",
-      amountBasis: "per_serving",
-    },
-  ]);
-  assert.equal(
-    enrichedState.product.sourceDecision.final_source_used,
-    "supplement_products_master",
-  );
+  assert.deepEqual(sequence, ["local"]);
+  assert.equal(persistedPayloads.length, 0);
+  assert.equal(useScannerStore.getState().product.productName, "Cached Go UPC Magnesium");
+  assert.equal(useScannerStore.getState().product.scanDataSource, "supplement_products_master");
 });
 
-test("deferred master enrichment cannot modify a newer scan session", async () => {
+test("removed deferred AI enrichment cannot modify a newer scan session", async () => {
   let resolveFirstEnrichment;
   const firstEnrichment = new Promise((resolve) => {
     resolveFirstEnrichment = resolve;
@@ -1281,7 +1210,7 @@ test("deferred master enrichment cannot modify a newer scan session", async () =
   assert.equal(currentState.product.productName, "Second complete product");
 });
 
-test("scanner barcode orchestration keeps metadata-only Go-UPC products when OpenAI misses", async () => {
+test("scanner barcode orchestration keeps metadata-only Go-UPC products without AI", async () => {
   const sequence = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
@@ -1334,7 +1263,7 @@ test("scanner barcode orchestration keeps metadata-only Go-UPC products when Ope
     .getState()
     .processBarcode("0123456789012", "ean13");
 
-  assert.deepEqual(sequence, ["local", "dsld", "go_upc", "openai_web_search"]);
+  assert.deepEqual(sequence, ["local", "dsld", "go_upc"]);
   assert.equal(state.status, "no_ingredients");
   assert.equal(state.product.scanDataSource, "go_upc");
   assert.equal(state.product.sourceDecision.final_source_used, "go_upc");
@@ -1345,7 +1274,7 @@ test("scanner barcode orchestration keeps metadata-only Go-UPC products when Ope
   assert.equal(state.product.hasIncompleteDetails, true);
 });
 
-test("OpenAI barcode hit stops before Open Food Facts", async () => {
+test("unknown barcode never invokes AI and reaches not_found after database providers", async () => {
   const sequence = [];
   let offCalled = false;
   const { useScannerStore } = loadScannerStoreModule({
@@ -1414,18 +1343,15 @@ test("OpenAI barcode hit stops before Open Food Facts", async () => {
     "dsld",
     "go_upc",
     "ean_search",
-    "openai_web_search",
+    "open_food_facts",
   ]);
-  assert.equal(offCalled, false);
-  assert.equal(state.status, "success");
-  assert.equal(state.product.scanDataSource, "openai_web_search");
-  assert.equal(
-    state.product.sourceDecision.final_source_used,
-    "openai_web_search"
-  );
+  assert.equal(offCalled, true);
+  assert.equal(state, null);
+  assert.equal(useScannerStore.getState().status, "not_found");
+  assert.equal(useScannerStore.getState().error.code, "product_not_found");
 });
 
-test("OpenAI miss then Open Food Facts hit returns and persists product", async () => {
+test("Open Food Facts hit after EAN miss returns and persists product without AI", async () => {
   const sequence = [];
   let persistedPayload = null;
   const { useScannerStore } = loadScannerStoreModule({
@@ -1522,7 +1448,6 @@ test("OpenAI miss then Open Food Facts hit returns and persists product", async 
     "dsld",
     "go_upc",
     "ean_search",
-    "openai_web_search",
     "open_food_facts",
     "persist_open_food_facts",
   ]);
@@ -1540,7 +1465,7 @@ test("OpenAI miss then Open Food Facts hit returns and persists product", async 
   );
 });
 
-test("Open Food Facts miss returns not_found after OpenAI miss", async () => {
+test("database-provider misses return not_found without an AI wait", async () => {
   const sequence = [];
   const { useScannerStore } = loadScannerStoreModule({
     canonicalizeBarcodeType: () => "ean13",
@@ -1589,7 +1514,6 @@ test("Open Food Facts miss returns not_found after OpenAI miss", async () => {
     "dsld",
     "go_upc",
     "ean_search",
-    "openai_web_search",
     "open_food_facts",
   ]);
 });
@@ -1837,7 +1761,7 @@ test("Open Food Facts missing ingredient text can use OpenAI ingredient enrichme
   );
 });
 
-test("Open Food Facts network, rate-limit, and 503 errors do not throw to the UI", async () => {
+test("provider failures remain distinguishable from a genuine product miss", async () => {
   for (const failure of [
     { code: "network_error" },
     { code: "open_food_facts_rate_limited", status: 429 },
@@ -1870,9 +1794,41 @@ test("Open Food Facts network, rate-limit, and 503 errors do not throw to the UI
     const finalState = useScannerStore.getState();
 
     assert.equal(state, null);
-    assert.equal(finalState.status, "not_found");
-    assert.equal(finalState.error.code, "product_not_found");
+    assert.equal(finalState.status, "error");
+    assert.equal(finalState.error.category, "network_error");
+    assert.equal(finalState.error.code, "barcode_lookup_failed");
   }
+});
+
+test("a master database failure is not mislabeled as product not found", async () => {
+  const { useScannerStore } = loadScannerStoreModule({
+    canonicalizeBarcodeType: () => "ean13",
+    normalizeBarcode: (value) => value.replace(/\D/g, ""),
+    fetchLocalBarcodeScanProduct: async () => {
+      const error = new Error("Database request failed");
+      error.code = "network_error";
+      throw error;
+    },
+    maybeFetchDsldScanMatch: async () => ({
+      checked: true,
+      cacheHit: false,
+      confidence: "low",
+      dsldMatch: null,
+    }),
+    fetchGoUpcProduct: async () => null,
+    fetchEanSearchProduct: async () => null,
+    fetchOpenFoodFactsProduct: async () => null,
+  });
+
+  const state = await useScannerStore
+    .getState()
+    .processBarcode("0123456789012", "ean13");
+  const finalState = useScannerStore.getState();
+
+  assert.equal(state, null);
+  assert.equal(finalState.status, "error");
+  assert.equal(finalState.error.category, "network_error");
+  assert.equal(finalState.error.code, "barcode_lookup_failed");
 });
 
 test("non-retail barcodes check the local cache before taking the not_found path", async () => {

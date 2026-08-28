@@ -13,7 +13,6 @@ import { buildScanDebugMetadata } from "@src/data/dsldSourceDecision";
 import { maybeFetchDsldScanMatch } from "@src/data/getDsldScanProduct";
 import { fetchEanSearchProduct } from "@src/data/getEanSearchProduct";
 import { fetchGoUpcProduct } from "@src/data/getGoUpcProduct";
-import { searchBarcodeWithOpenAi } from "@src/data/searchBarcodeWithOpenAi";
 import { fetchIngredientMatchCatalog } from "@src/data/getIngredientMatchCatalog";
 import {
   persistDsldProduct,
@@ -22,6 +21,10 @@ import {
 import { queueMissingActiveIngredients } from "@src/data/queueMissingActiveIngredients";
 import { scanSupplementPhotos } from "@src/data/scanSupplementPhotos";
 import { enrichProductImageIfNeeded } from "@src/lib/productImages";
+import {
+  createLatencyTrace,
+  createLatencyTraceId,
+} from "@src/lib/latencyTelemetry";
 import { supabase } from "@src/lib/supabase";
 import {
   buildPartialProductDetailFailure,
@@ -52,17 +55,14 @@ function trimString(value) {
 const PROVISIONAL_BARCODE_SOURCE_CONFIG = {
   go_upc: {
     source: "go_upc",
-    enrichedSource: "go_upc_plus_openai",
     unverifiedStatus: "go_upc_unverified",
   },
   ean_search: {
     source: "ean_search",
-    enrichedSource: "ean_search_plus_openai",
     unverifiedStatus: "ean_search_unverified",
   },
   open_food_facts: {
     source: "open_food_facts",
-    enrichedSource: "open_food_facts_plus_openai",
     unverifiedStatus: "open_food_facts_unverified",
   },
 };
@@ -249,6 +249,7 @@ function createInitialState() {
     permissionState: null,
     scanSessionId: 0,
     scanRequestId: null,
+    latencyTraceId: null,
     barcode: "",
     barcodeType: null,
     product: null,
@@ -447,26 +448,6 @@ function buildIngredientsTextFromActiveIngredients(product) {
     .join(", ");
 }
 
-function isIncompleteBarcodeProduct(product) {
-  if (!product || typeof product !== "object") {
-    return true;
-  }
-
-  if (getIngredientCount(product) === 0) {
-    return true;
-  }
-
-  return getActiveIngredientsJson(product).length === 0;
-}
-
-function isIncompleteProvisionalBarcodeProduct(product) {
-  if (!isIncompleteBarcodeProduct(product)) {
-    return false;
-  }
-
-  return Boolean(getProvisionalBarcodeSource(product));
-}
-
 function isVerifiedMasterBarcodeProduct(product) {
   return Boolean(
     trimString(product?.productId) &&
@@ -475,179 +456,8 @@ function isVerifiedMasterBarcodeProduct(product) {
   );
 }
 
-function getProductDisplayName(product) {
-  return (
-    trimString(product?.displayName) ||
-    trimString(product?.display_name) ||
-    trimString(product?.productName) ||
-    trimString(product?.name)
-  );
-}
-
-function chooseBetterDisplayName(goUpcProduct, openAiProduct) {
-  const goUpcName = getProductDisplayName(goUpcProduct);
-  const openAiName = getProductDisplayName(openAiProduct);
-
-  if (!openAiName) {
-    return goUpcName;
-  }
-
-  if (!goUpcName) {
-    return openAiName;
-  }
-
-  const normalizedGoUpcName = goUpcName.toLowerCase();
-  const normalizedOpenAiName = openAiName.toLowerCase();
-  if (normalizedGoUpcName === normalizedOpenAiName) {
-    return goUpcName;
-  }
-
-  if (
-    normalizedOpenAiName.includes(normalizedGoUpcName) ||
-    openAiName.length > goUpcName.length + 8
-  ) {
-    return openAiName;
-  }
-
-  return goUpcName;
-}
-
-function hasOpenAiBarcodeImprovement(goUpcProduct, openAiProduct) {
-  if (!openAiProduct || typeof openAiProduct !== "object") {
-    return false;
-  }
-
-  const openAiHasIngredients =
-    getActiveIngredientsJson(openAiProduct).length > 0 ||
-    (Array.isArray(openAiProduct.sourceIngredients) &&
-      openAiProduct.sourceIngredients.length > 0);
-  const openAiServingSize = trimString(openAiProduct.servingSizeText);
-  const betterDisplayName =
-    chooseBetterDisplayName(goUpcProduct, openAiProduct) !==
-    getProductDisplayName(goUpcProduct);
-
-  return Boolean(
-    openAiHasIngredients || openAiServingSize || betterDisplayName,
-  );
-}
-
-function mergeGoUpcWithOpenAiProduct(goUpcProduct, openAiProduct) {
-  if (!hasOpenAiBarcodeImprovement(goUpcProduct, openAiProduct)) {
-    return goUpcProduct;
-  }
-
-  const provisionalSourceConfig =
-    getProvisionalBarcodeSourceConfig(goUpcProduct) ??
-    PROVISIONAL_BARCODE_SOURCE_CONFIG.go_upc;
-  const displayName = chooseBetterDisplayName(goUpcProduct, openAiProduct);
-  const openAiActiveIngredients = getActiveIngredientsJson(openAiProduct);
-  const goUpcActiveIngredients = getActiveIngredientsJson(goUpcProduct);
-  const activeIngredients =
-    openAiActiveIngredients.length > 0
-      ? openAiActiveIngredients
-      : goUpcActiveIngredients;
-  const openAiSourceIngredients = Array.isArray(
-    openAiProduct?.sourceIngredients,
-  )
-    ? openAiProduct.sourceIngredients
-    : [];
-  const goUpcSourceIngredients = Array.isArray(goUpcProduct?.sourceIngredients)
-    ? goUpcProduct.sourceIngredients
-    : [];
-  const sourceIngredients =
-    openAiSourceIngredients.length > 0
-      ? openAiSourceIngredients
-      : goUpcSourceIngredients;
-  const ingredientCount =
-    activeIngredients.length > 0
-      ? activeIngredients.length
-      : (getIngredientCount(openAiProduct) ?? getIngredientCount(goUpcProduct));
-
-  return {
-    ...goUpcProduct,
-    active_ingredients_json: activeIngredients,
-    activeIngredientsJson: activeIngredients,
-    ingredient_count: ingredientCount,
-    ingredientCount,
-    serving_size_text:
-      trimString(openAiProduct?.servingSizeText) ||
-      trimString(openAiProduct?.serving_size_text) ||
-      trimString(goUpcProduct?.servingSizeText) ||
-      trimString(goUpcProduct?.serving_size_text) ||
-      null,
-    ingredientsText:
-      trimString(openAiProduct?.ingredientsText) ||
-      trimString(goUpcProduct?.ingredientsText),
-    sourceIngredients,
-    servingSizeText:
-      trimString(openAiProduct?.servingSizeText) ||
-      trimString(goUpcProduct?.servingSizeText) ||
-      null,
-    productName: displayName || null,
-    name: displayName || null,
-    displayName,
-    display_name: displayName,
-    sourceStatusVerbose: provisionalSourceConfig.enrichedSource,
-    scanDataSource: provisionalSourceConfig.enrichedSource,
-    source: provisionalSourceConfig.enrichedSource,
-    barcode:
-      trimString(goUpcProduct?.barcode) || trimString(openAiProduct?.barcode),
-    product_id:
-      trimString(goUpcProduct?.product_id) ||
-      trimString(goUpcProduct?.productId) ||
-      trimString(openAiProduct?.product_id) ||
-      trimString(openAiProduct?.productId) ||
-      null,
-    productId:
-      trimString(goUpcProduct?.productId) ||
-      trimString(goUpcProduct?.product_id) ||
-      trimString(openAiProduct?.productId) ||
-      trimString(openAiProduct?.product_id) ||
-      null,
-    image_url:
-      trimString(goUpcProduct?.image_url) ||
-      trimString(goUpcProduct?.imageUrl) ||
-      trimString(openAiProduct?.image_url) ||
-      trimString(openAiProduct?.imageUrl) ||
-      null,
-    imageUrl:
-      trimString(goUpcProduct?.imageUrl) ||
-      trimString(goUpcProduct?.image_url) ||
-      trimString(openAiProduct?.imageUrl) ||
-      null,
-    image_source_url:
-      trimString(goUpcProduct?.image_source_url) ||
-      trimString(goUpcProduct?.imageSourceUrl) ||
-      trimString(openAiProduct?.image_source_url) ||
-      trimString(openAiProduct?.imageSourceUrl) ||
-      null,
-    imageSourceUrl:
-      trimString(goUpcProduct?.imageSourceUrl) ||
-      trimString(goUpcProduct?.image_source_url) ||
-      trimString(openAiProduct?.imageSourceUrl) ||
-      trimString(openAiProduct?.image_source_url) ||
-      null,
-    imageProvider:
-      trimString(goUpcProduct?.imageProvider) ||
-      trimString(openAiProduct?.imageProvider) ||
-      null,
-    verificationStatus:
-      trimString(goUpcProduct?.verificationStatus) ||
-      trimString(openAiProduct?.verificationStatus) ||
-      provisionalSourceConfig.unverifiedStatus,
-    verification_status:
-      trimString(goUpcProduct?.verification_status) ||
-      trimString(openAiProduct?.verification_status) ||
-      provisionalSourceConfig.unverifiedStatus,
-    sourceUrls: Array.isArray(openAiProduct?.sourceUrls)
-      ? openAiProduct.sourceUrls
-      : goUpcProduct?.sourceUrls,
-    hasIncompleteDetails: true,
-  };
-}
-
-async function persistCanonicalDsldProduct(product, barcodeType) {
-  const persisted = await persistDsldProduct(product, barcodeType);
+async function persistCanonicalDsldProduct(product, barcodeType, telemetry) {
+  const persisted = await persistDsldProduct(product, barcodeType, telemetry);
   if (!persisted || typeof persisted !== "object") {
     return product;
   }
@@ -674,8 +484,8 @@ function logScannerSource(source, product) {
   });
 }
 
-async function persistProvisionalGoUpcProduct(product, barcodeType) {
-  const persisted = await persistGoUpcProduct(product, barcodeType);
+async function persistProvisionalGoUpcProduct(product, barcodeType, telemetry) {
+  const persisted = await persistGoUpcProduct(product, barcodeType, telemetry);
   if (!persisted || typeof persisted !== "object") {
     return product;
   }
@@ -865,155 +675,6 @@ async function maybeApplyImageFallback(product) {
   }
 }
 
-async function maybeEnrichIncompleteProvisionalBarcodeProduct(
-  product,
-  barcode,
-  barcodeType,
-  scanRequestId,
-) {
-  if (!isIncompleteProvisionalBarcodeProduct(product)) {
-    return product;
-  }
-
-  const provisionalSourceConfig =
-    getProvisionalBarcodeSourceConfig(product) ??
-    PROVISIONAL_BARCODE_SOURCE_CONFIG.go_upc;
-
-  try {
-    logScanTiming(scanRequestId, "fallback_lookup_started", {
-      fallback: "openai_incomplete_provisional_enrichment",
-      source: provisionalSourceConfig.source,
-    });
-    const openAiProduct = await searchBarcodeWithOpenAi(barcode, {
-      barcodeType,
-      fallbackSource: `${provisionalSourceConfig.source}_incomplete`,
-      productName:
-        trimString(product?.productName) ||
-        trimString(product?.displayName) ||
-        trimString(product?.name) ||
-        null,
-      brand: trimString(product?.brand) || null,
-    });
-    const mergedProduct = mergeGoUpcWithOpenAiProduct(product, openAiProduct);
-
-    if (mergedProduct === product) {
-      logScanTiming(scanRequestId, "fallback_lookup_completed", {
-        fallback: "openai_incomplete_provisional_enrichment",
-        improved: false,
-      });
-      return product;
-    }
-
-    const persistedProduct = await persistProvisionalGoUpcProduct(
-      mergedProduct,
-      barcodeType,
-    );
-    logScanTiming(scanRequestId, "fallback_lookup_completed", {
-      fallback: "openai_incomplete_provisional_enrichment",
-      improved: true,
-    });
-    return persistedProduct;
-  } catch (openAiBarcodeError) {
-    logScanTiming(scanRequestId, "fallback_lookup_completed", {
-      fallback: "openai_incomplete_provisional_enrichment",
-      failed: true,
-    });
-    logBuildAwareDiagnostic(
-      "warn",
-      "[scanner] OpenAI barcode enrichment failed after incomplete provisional barcode match",
-      {
-        developmentDetails: {
-          message:
-            typeof openAiBarcodeError?.message === "string"
-              ? openAiBarcodeError.message
-              : "Unknown error",
-        },
-      },
-    );
-    return product;
-  }
-}
-
-function queueDeferredMasterProductEnrichment({
-  product,
-  barcode,
-  barcodeType,
-  scanRequestId,
-  scanSessionId,
-  get,
-  set,
-}) {
-  if (!product) {
-    return;
-  }
-
-  logScanTiming(scanRequestId, "background_enrichment_scheduled", {
-    source: trimString(product?.scanDataSource) || null,
-  });
-
-  setTimeout(() => {
-    const stateBeforeEnrichment = get();
-    if (
-      stateBeforeEnrichment.scanSessionId !== scanSessionId ||
-      stateBeforeEnrichment.scanRequestId !== scanRequestId ||
-      stateBeforeEnrichment.barcode !== barcode
-    ) {
-      logScanTiming(scanRequestId, "background_enrichment_skipped", {
-        reason: "stale_scan_session",
-      });
-      return;
-    }
-
-    logScanTiming(scanRequestId, "background_enrichment_started", {
-      source: trimString(product?.scanDataSource) || null,
-    });
-    maybeEnrichIncompleteProvisionalBarcodeProduct(
-      product,
-      barcode,
-      barcodeType,
-      scanRequestId,
-    )
-      .then((enrichedProduct) => {
-        if (!enrichedProduct || enrichedProduct === product) {
-          logScanTiming(scanRequestId, "background_enrichment_completed", {
-            improved: false,
-          });
-          return;
-        }
-
-        let applied = false;
-        set((currentState) => {
-          if (
-            currentState.scanSessionId !== scanSessionId ||
-            currentState.scanRequestId !== scanRequestId ||
-            currentState.barcode !== barcode
-          ) {
-            return currentState;
-          }
-
-          applied = true;
-          return {
-            product: enrichedProduct,
-            extractionSource:
-              trimString(enrichedProduct?.scanDataSource) ||
-              currentState.extractionSource,
-          };
-        });
-        logScanTiming(scanRequestId, "background_enrichment_completed", {
-          improved: true,
-          applied,
-          stale: !applied,
-        });
-      })
-      .catch((error) => {
-        logScanTiming(scanRequestId, "background_enrichment_completed", {
-          failed: true,
-          error: trimString(error?.message) || "unknown_error",
-        });
-      });
-  }, 0);
-}
-
 function queueDeferredVerifiedMasterIngredientMatching({
   product,
   ingredients,
@@ -1152,6 +813,14 @@ export const useScannerStore = create((set, get) => ({
     const scanRequestId =
       trimString(options?.scanRequestId) ||
       createScanRequestId(nextScanSessionId);
+    const latencyTrace = createLatencyTrace({
+      traceId:
+        trimString(options?.latencyTraceId) ||
+        createLatencyTraceId("barcode_scan"),
+      flow: "barcode_scan",
+      action: "resolve_unknown_barcode",
+    });
+    const finishScanResolution = latencyTrace.start("scan_resolution_total");
 
     logScanTiming(scanRequestId, "store_barcode_normalized", {
       barcode: nextBarcode,
@@ -1187,6 +856,7 @@ export const useScannerStore = create((set, get) => ({
         error: invalid.error,
         scanSessionId: nextScanSessionId,
         scanRequestId,
+        latencyTraceId: latencyTrace.traceId,
         barcode: nextBarcode,
         barcodeType: nextBarcodeType,
         product: null,
@@ -1204,6 +874,11 @@ export const useScannerStore = create((set, get) => ({
       logScanTiming(scanRequestId, "scanner_state_updated", {
         status: invalid.status,
       });
+      finishScanResolution({
+        resultStatus: invalid.status,
+        success: false,
+        errorCategory: "invalid_barcode",
+      });
 
       return null;
     }
@@ -1213,6 +888,7 @@ export const useScannerStore = create((set, get) => ({
       error: null,
       scanSessionId: nextScanSessionId,
       scanRequestId,
+      latencyTraceId: latencyTrace.traceId,
       barcode: nextBarcode,
       barcodeType: nextBarcodeType,
       product: null,
@@ -1240,8 +916,12 @@ export const useScannerStore = create((set, get) => ({
       let dsldChecked = false;
       let dsldCacheHit = false;
       let dsldConfidence = null;
-      let deferredMasterEnrichmentProduct = null;
+      const lookupFailures = [];
 
+      const finishMasterLookup = latencyTrace.start(
+        "master_database_lookup",
+        { provider: "supplement_products_master" },
+      );
       try {
         logScanTiming(scanRequestId, "master_lookup_started", {
           barcode: nextBarcode,
@@ -1252,6 +932,13 @@ export const useScannerStore = create((set, get) => ({
           nextBarcodeType,
           { scanRequestId },
         );
+        finishMasterLookup({
+          cacheHit: Boolean(product),
+          cacheStatus: product ? "hit" : "miss",
+          found: Boolean(product),
+          masterDatabaseHit: Boolean(product),
+          success: true,
+        });
         logScanTiming(scanRequestId, "master_lookup_completed", {
           found: Boolean(product),
           productId: trimString(product?.productId) || null,
@@ -1267,11 +954,13 @@ export const useScannerStore = create((set, get) => ({
         extractionSource = trimString(product?.scanDataSource) || null;
         if (product) {
           logScannerSource("local", product);
-          if (isIncompleteProvisionalBarcodeProduct(product)) {
-            deferredMasterEnrichmentProduct = product;
-          }
         }
       } catch (localLookupError) {
+        lookupFailures.push(localLookupError);
+        finishMasterLookup({
+          success: false,
+          error: localLookupError,
+        });
         logScanTiming(scanRequestId, "master_lookup_completed", {
           found: false,
           failed: true,
@@ -1295,11 +984,27 @@ export const useScannerStore = create((set, get) => ({
         logScanTiming(scanRequestId, "fallback_lookup_started", {
           fallback: "dsld",
         });
-        const dsldResult = await maybeFetchDsldScanMatch({
-          barcode: nextBarcode,
-          barcodeType: nextBarcodeType,
-          productName: "",
+        const finishDsld = latencyTrace.start("dsld_total", {
+          provider: "dsld",
         });
+        let dsldResult;
+        try {
+          dsldResult = await maybeFetchDsldScanMatch({
+            barcode: nextBarcode,
+            barcodeType: nextBarcodeType,
+            productName: "",
+            telemetry: latencyTrace,
+          });
+          finishDsld({
+            cacheHit: dsldResult.cacheHit,
+            cacheStatus: dsldResult.cacheHit ? "hit" : "miss",
+            found: Boolean(dsldResult.dsldMatch),
+            success: true,
+          });
+        } catch (error) {
+          finishDsld({ success: false, error });
+          throw error;
+        }
         dsldChecked = dsldResult.checked;
         dsldCacheHit = dsldResult.cacheHit;
         dsldConfidence = dsldResult.confidence;
@@ -1324,10 +1029,24 @@ export const useScannerStore = create((set, get) => ({
               logScanTiming(scanRequestId, "fallback_lookup_started", {
                 fallback: "go_upc_cosmetic_enrichment",
               });
-              const goUpcCosmetics = await fetchGoUpcProduct(
-                nextBarcode,
-                nextBarcodeType,
+              const finishGoUpcCosmetics = latencyTrace.start(
+                "external_provider_call",
+                { mode: "cosmetic_enrichment", provider: "go_upc" },
               );
+              let goUpcCosmetics;
+              try {
+                goUpcCosmetics = await fetchGoUpcProduct(
+                  nextBarcode,
+                  nextBarcodeType,
+                );
+                finishGoUpcCosmetics({
+                  found: Boolean(goUpcCosmetics),
+                  success: true,
+                });
+              } catch (error) {
+                finishGoUpcCosmetics({ success: false, error });
+                throw error;
+              }
               if (goUpcCosmetics) {
                 product = enrichDsldProductWithGoUpcCosmetics(
                   product,
@@ -1349,7 +1068,16 @@ export const useScannerStore = create((set, get) => ({
               );
             }
           }
-          product = await persistCanonicalDsldProduct(product, nextBarcodeType);
+          product = await latencyTrace.measure(
+            "product_persistence",
+            () =>
+              persistCanonicalDsldProduct(
+                product,
+                nextBarcodeType,
+                latencyTrace,
+              ),
+            { provider: "supabase", source: "dsld" },
+          );
           extractionSource = "dsld";
           logScannerSource("dsld", product);
         } else {
@@ -1357,27 +1085,40 @@ export const useScannerStore = create((set, get) => ({
             logScanTiming(scanRequestId, "fallback_lookup_started", {
               fallback: "go_upc",
             });
-            product = await fetchGoUpcProduct(nextBarcode, nextBarcodeType);
-            if (product) {
-              product = await persistProvisionalGoUpcProduct(
-                product,
+            const finishGoUpc = latencyTrace.start("external_provider_call", {
+              provider: "go_upc",
+            });
+            try {
+              product = await fetchGoUpcProduct(
+                nextBarcode,
                 nextBarcodeType,
+              );
+              finishGoUpc({ found: Boolean(product), success: true });
+            } catch (error) {
+              finishGoUpc({ success: false, error });
+              throw error;
+            }
+            if (product) {
+              product = await latencyTrace.measure(
+                "product_persistence",
+                () =>
+                  persistProvisionalGoUpcProduct(
+                    product,
+                    nextBarcodeType,
+                    latencyTrace,
+                  ),
+                { provider: "supabase", source: "go_upc" },
               );
               product = {
                 ...product,
                 hasIncompleteDetails: true,
               };
-              product = await maybeEnrichIncompleteProvisionalBarcodeProduct(
-                product,
-                nextBarcode,
-                nextBarcodeType,
-                scanRequestId,
-              );
               extractionSource =
                 trimString(product?.scanDataSource) || "go_upc";
               logScannerSource(extractionSource, product);
             }
           } catch (goUpcError) {
+            lookupFailures.push(goUpcError);
             logBuildAwareDiagnostic(
               "warn",
               "[scanner] Go-UPC lookup failed after DSLD miss",
@@ -1397,30 +1138,41 @@ export const useScannerStore = create((set, get) => ({
               logScanTiming(scanRequestId, "fallback_lookup_started", {
                 fallback: "ean_search",
               });
-              product = await fetchEanSearchProduct(
-                nextBarcode,
-                nextBarcodeType,
+              const finishEanSearch = latencyTrace.start(
+                "external_provider_call",
+                { provider: "ean_search" },
               );
-              if (product) {
-                product = await persistProvisionalGoUpcProduct(
-                  product,
+              try {
+                product = await fetchEanSearchProduct(
+                  nextBarcode,
                   nextBarcodeType,
+                );
+                finishEanSearch({ found: Boolean(product), success: true });
+              } catch (error) {
+                finishEanSearch({ success: false, error });
+                throw error;
+              }
+              if (product) {
+                product = await latencyTrace.measure(
+                  "product_persistence",
+                  () =>
+                    persistProvisionalGoUpcProduct(
+                      product,
+                      nextBarcodeType,
+                      latencyTrace,
+                    ),
+                  { provider: "supabase", source: "ean_search" },
                 );
                 product = {
                   ...product,
                   hasIncompleteDetails: true,
                 };
-                product = await maybeEnrichIncompleteProvisionalBarcodeProduct(
-                  product,
-                  nextBarcode,
-                  nextBarcodeType,
-                  scanRequestId,
-                );
                 extractionSource =
                   trimString(product?.scanDataSource) || "ean_search";
                 logScannerSource(extractionSource, product);
               }
             } catch (eanSearchError) {
+              lookupFailures.push(eanSearchError);
               logBuildAwareDiagnostic(
                 "warn",
                 "[scanner] EAN-Search lookup failed after Go-UPC miss",
@@ -1441,38 +1193,22 @@ export const useScannerStore = create((set, get) => ({
       if (!product && retailBarcode) {
         try {
           logScanTiming(scanRequestId, "fallback_lookup_started", {
-            fallback: "openai_web_search",
-          });
-          product = await searchBarcodeWithOpenAi(nextBarcode, nextBarcodeType);
-          extractionSource = trimString(product?.scanDataSource) || null;
-          if (product) {
-            logScannerSource("openai_web_search", product);
-          }
-        } catch (openAiBarcodeError) {
-          logBuildAwareDiagnostic(
-            "warn",
-            "[scanner] OpenAI barcode fallback failed after EAN-Search miss",
-            {
-              developmentDetails: {
-                message:
-                  typeof openAiBarcodeError?.message === "string"
-                    ? openAiBarcodeError.message
-                    : "Unknown error",
-              },
-            },
-          );
-        }
-      }
-
-      if (!product && retailBarcode) {
-        try {
-          logScanTiming(scanRequestId, "fallback_lookup_started", {
             fallback: "open_food_facts",
           });
-          product = await fetchOpenFoodFactsProduct(
-            nextBarcode,
-            nextBarcodeType,
+          const finishOpenFoodFacts = latencyTrace.start(
+            "external_provider_call",
+            { provider: "open_food_facts" },
           );
+          try {
+            product = await fetchOpenFoodFactsProduct(
+              nextBarcode,
+              nextBarcodeType,
+            );
+            finishOpenFoodFacts({ found: Boolean(product), success: true });
+          } catch (error) {
+            finishOpenFoodFacts({ success: false, error });
+            throw error;
+          }
           offFound = Boolean(product);
           offQuality = product
             ? trimString(product?.ingredientsText)
@@ -1480,25 +1216,36 @@ export const useScannerStore = create((set, get) => ({
               : "metadata_only"
             : "missing";
           if (product) {
-            product = await persistProvisionalGoUpcProduct(
-              product,
-              nextBarcodeType,
+            product = await latencyTrace.measure(
+              "product_persistence",
+              () =>
+                persistProvisionalGoUpcProduct(
+                  product,
+                  nextBarcodeType,
+                  latencyTrace,
+                ),
+              { provider: "supabase", source: "open_food_facts" },
             );
             product = {
               ...product,
               hasIncompleteDetails: true,
             };
-            product = await maybeApplyImageFallback(product);
+            product = await latencyTrace.measure(
+              "product_image_enrichment",
+              () => maybeApplyImageFallback(product),
+              { provider: "enrich_product_image" },
+            );
             extractionSource =
               trimString(product?.scanDataSource) || "open_food_facts";
             logScannerSource("open_food_facts", product);
           }
         } catch (openFoodFactsError) {
+          lookupFailures.push(openFoodFactsError);
           offFound = false;
           offQuality = "missing";
           logBuildAwareDiagnostic(
             "warn",
-            "[scanner] Open Food Facts lookup failed after OpenAI miss",
+            "[scanner] Open Food Facts lookup failed after database provider misses",
             {
               developmentDetails: {
                 status:
@@ -1517,8 +1264,28 @@ export const useScannerStore = create((set, get) => ({
       }
 
       if (!product) {
+        if (lookupFailures.length > 0) {
+          throw createScannerFailure({
+            category: SCANNER_FAILURE_CATEGORIES.networkError,
+            code: "barcode_lookup_failed",
+            message:
+              "We couldn't finish checking product databases. Please try again.",
+          });
+        }
         throw { code: "product_not_found" };
       }
+
+      const finishClientProcessing = latencyTrace.start(
+        "client_result_processing",
+        {
+          externalEnrichment:
+            trimString(product?.scanDataSource) !==
+            "supplement_products_master",
+          masterDatabaseHit:
+            trimString(product?.scanDataSource) ===
+            "supplement_products_master",
+        },
+      );
 
       logScanTiming(scanRequestId, "ingredient_extraction_started", {
         sourceIngredientCount: product?.sourceIngredients?.length ?? 0,
@@ -1585,9 +1352,6 @@ export const useScannerStore = create((set, get) => ({
           ...product,
           sourceDecision,
         };
-        if (deferredMasterEnrichmentProduct) {
-          deferredMasterEnrichmentProduct = product;
-        }
       }
       logDevelopmentDiagnostic(
         "log",
@@ -1617,14 +1381,20 @@ export const useScannerStore = create((set, get) => ({
         logScanTiming(scanRequestId, "scanner_state_updated", {
           status: "no_ingredients",
         });
-        queueDeferredMasterProductEnrichment({
-          product: deferredMasterEnrichmentProduct,
-          barcode: nextBarcode,
-          barcodeType: nextBarcodeType,
-          scanRequestId,
-          scanSessionId: nextScanSessionId,
-          get,
-          set,
+        finishClientProcessing({
+          ingredientCount: 0,
+          resultStatus: "no_ingredients",
+          success: true,
+        });
+        finishScanResolution({
+          externalEnrichment:
+            trimString(product?.scanDataSource) !==
+            "supplement_products_master",
+          masterDatabaseHit:
+            trimString(product?.scanDataSource) ===
+            "supplement_products_master",
+          resultStatus: "no_ingredients",
+          success: true,
         });
 
         return get();
@@ -1661,6 +1431,18 @@ export const useScannerStore = create((set, get) => ({
           scanSessionId: nextScanSessionId,
           get,
           set,
+        });
+
+        finishClientProcessing({
+          ingredientCount: ingredients.length,
+          resultStatus: "success",
+          success: true,
+        });
+        finishScanResolution({
+          cacheStatus: "hit",
+          masterDatabaseHit: true,
+          resultStatus: "success",
+          success: true,
         });
 
         return get();
@@ -1703,16 +1485,6 @@ export const useScannerStore = create((set, get) => ({
         matchedIngredientCount: matchedIngredients.length,
         unmatchedIngredientCount: unmatchedIngredients.length,
       });
-      queueDeferredMasterProductEnrichment({
-        product: deferredMasterEnrichmentProduct,
-        barcode: nextBarcode,
-        barcodeType: nextBarcodeType,
-        scanRequestId,
-        scanSessionId: nextScanSessionId,
-        get,
-        set,
-      });
-
       if (
         trimString(product?.scanDataSource) === "supplement_products_master" &&
         trimString(product?.productId) &&
@@ -1732,6 +1504,22 @@ export const useScannerStore = create((set, get) => ({
         });
       }
 
+      finishClientProcessing({
+        ingredientCount: ingredients.length,
+        resultStatus: "success",
+        success: true,
+      });
+      finishScanResolution({
+        externalEnrichment:
+          trimString(product?.scanDataSource) !==
+          "supplement_products_master",
+        masterDatabaseHit:
+          trimString(product?.scanDataSource) ===
+          "supplement_products_master",
+        resultStatus: "success",
+        success: true,
+      });
+
       return get();
     } catch (error) {
       const normalized = normalizeBarcodeScanFailure(error);
@@ -1741,6 +1529,7 @@ export const useScannerStore = create((set, get) => ({
         error: normalized.error,
         scanSessionId: nextScanSessionId,
         scanRequestId,
+        latencyTraceId: latencyTrace.traceId,
         barcode: nextBarcode,
         barcodeType: nextBarcodeType,
         product: null,
@@ -1756,6 +1545,13 @@ export const useScannerStore = create((set, get) => ({
       logScanTiming(scanRequestId, "scanner_state_updated", {
         status: normalized.status,
       });
+      finishScanResolution({
+        externalEnrichment: isRetailBarcodeType(nextBarcodeType),
+        masterDatabaseHit: false,
+        resultStatus: normalized.status,
+        success: false,
+        error,
+      });
 
       return null;
     }
@@ -1764,8 +1560,18 @@ export const useScannerStore = create((set, get) => ({
   enhanceScanWithPhotos: async ({
     scanSessionId,
     ingredientsPhoto,
+    latencyTraceId,
     productPhoto,
   }) => {
+    const latencyTrace = createLatencyTrace({
+      traceId:
+        trimString(latencyTraceId) || createLatencyTraceId("photo_improvement"),
+      flow: "photo_improvement",
+      action: "improve_with_photos",
+    });
+    const finishStoreProcessing = latencyTrace.start(
+      "client_store_processing_total",
+    );
     const currentState = get();
     const requestedScanSessionId = Number.parseInt(
       String(scanSessionId ?? ""),
@@ -1787,6 +1593,8 @@ export const useScannerStore = create((set, get) => ({
         photoRescueError: normalizePhotoRescueFailure(error),
       }));
 
+      finishStoreProcessing({ success: false, error });
+
       throw error;
     }
 
@@ -1803,6 +1611,8 @@ export const useScannerStore = create((set, get) => ({
         photoRescueError: normalizePhotoRescueFailure(error),
       }));
 
+      finishStoreProcessing({ success: false, error });
+
       throw error;
     }
 
@@ -1818,16 +1628,22 @@ export const useScannerStore = create((set, get) => ({
         ),
       });
 
-      const extraction = await scanSupplementPhotos({
-        scanSessionId: String(requestedScanSessionId),
-        barcode: currentState.barcode,
-        barcodeType: currentState.barcodeType,
-        productId: trimString(currentState.product?.productId) || undefined,
-        currentProduct: currentState.product,
-        ingredientsImage,
-        productImage,
-      });
+      const extraction = await scanSupplementPhotos(
+        {
+          scanSessionId: String(requestedScanSessionId),
+          barcode: currentState.barcode,
+          barcodeType: currentState.barcodeType,
+          productId: trimString(currentState.product?.productId) || undefined,
+          currentProduct: currentState.product,
+          ingredientsImage,
+          productImage,
+        },
+        { telemetry: latencyTrace },
+      );
 
+      const finishAfterEdge = latencyTrace.start(
+        "client_store_processing_after_edge_return",
+      );
       const ingredients = extractIngredientCandidatesFromList(
         extraction.ingredients,
       );
@@ -1951,6 +1767,12 @@ export const useScannerStore = create((set, get) => ({
         wroteCanonicalData: extraction.wroteCanonicalData,
         unmatchedIngredientCount: unmatchedIngredients.length,
       });
+      finishAfterEdge({
+        ingredientCount: ingredients.length,
+        resultStatus: "usable",
+        success: true,
+      });
+      finishStoreProcessing({ resultStatus: "success", success: true });
       return get();
     } catch (error) {
       const normalized = normalizePhotoRescueFailure(error);
@@ -1959,6 +1781,8 @@ export const useScannerStore = create((set, get) => ({
         photoRescueStatus: "error",
         photoRescueError: normalized,
       }));
+
+      finishStoreProcessing({ success: false, error });
 
       throw normalized;
     }

@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isTrustedEdgeFunctionRequest } from "../_shared/auth-policy.js";
 
 declare const EdgeRuntime:
   | {
@@ -28,10 +29,13 @@ const REVIEW_TYPES = {
 const RESEARCH_FUNCTION = "research-pending-supplements";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
-const supabaseServiceRoleKey = normalizeSecretToken(
-  Deno.env.get("INTERNAL_SERVICE_ROLE_KEY") ??
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+const serviceRoleKey = normalizeSecretToken(
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
 );
+const internalServiceRoleKey = normalizeSecretToken(
+  Deno.env.get("INTERNAL_SERVICE_ROLE_KEY")
+);
+const supabaseServiceRoleKey = internalServiceRoleKey || serviceRoleKey;
 
 const adminSupabase =
   supabaseUrl && supabaseServiceRoleKey
@@ -63,22 +67,13 @@ function normalizeSecretToken(value: unknown) {
     .trim();
 }
 
-function parseJwtPayload(token: string) {
-  try {
-    const [, payload] = token.split(".");
-    if (!payload) return null;
-    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
-    return JSON.parse(atob(padded)) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
 function isServiceRoleRequest(req: Request) {
-  const token = trimString(req.headers.get("Authorization")?.replace(/^Bearer\s+/i, ""));
-  const payload = parseJwtPayload(token);
-  return payload?.role === "service_role";
+  return isTrustedEdgeFunctionRequest({
+    authorizationHeader: req.headers.get("Authorization") ?? "",
+    apiKeyHeader: req.headers.get("apikey") ?? "",
+    serviceRoleKey,
+    internalServiceRoleKey,
+  });
 }
 
 function normalizeWhitespace(value: unknown): string {
