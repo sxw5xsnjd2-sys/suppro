@@ -23,6 +23,7 @@ const MISSING_PACKAGE_ERROR_MESSAGE =
 const PAYWALL_UNAVAILABLE_ERROR_MESSAGE =
   "The RevenueCat paywall could not be presented.";
 const PAYWALL_LOADING_TIMEOUT_MS = 15000;
+const REOPEN_PAYWALL_LABEL = "Continue Suppro Premium";
 
 function getPaywallTimeoutMessage(status) {
   if (status === "presenting_paywall") {
@@ -110,9 +111,11 @@ export default function OnboardingPaywallScreen({
         configurationError,
         hasCurrentOffering: Boolean(paywallOffering),
         hasPaywallPackages,
+        hasDismissedPaywall: !usesEmbeddedPaywall && hasAttemptedPaywall,
       }),
     [
       configurationError,
+      hasAttemptedPaywall,
       hasPaywallPackages,
       isIdentitySyncing,
       isLoading,
@@ -123,8 +126,44 @@ export default function OnboardingPaywallScreen({
       originParam,
       paywallOffering,
       premiumActive,
+      usesEmbeddedPaywall,
     ],
   );
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    console.log("[PAYWALL_DEBUG] state", {
+      status: viewState.status,
+      hasAttemptedPaywall,
+      usesEmbeddedPaywall,
+      premiumActive,
+      isReady,
+      isLoading,
+      isRefreshing,
+      isRestoring,
+      isPresentingPaywall,
+      isIdentitySyncing,
+      configurationError,
+      actionError,
+      originParam,
+      paywallOfferingId: paywallOffering?.identifier,
+    });
+  }, [
+    viewState.status,
+    hasAttemptedPaywall,
+    usesEmbeddedPaywall,
+    premiumActive,
+    isReady,
+    isLoading,
+    isRefreshing,
+    isRestoring,
+    isPresentingPaywall,
+    isIdentitySyncing,
+    configurationError,
+    actionError,
+    originParam,
+    paywallOffering?.identifier,
+  ]);
 
   const continueToAccount = useCallback(async () => {
     if (isCompletingRef.current) return;
@@ -186,12 +225,24 @@ export default function OnboardingPaywallScreen({
 
     setHasAttemptedPaywall(true);
 
+    if (__DEV__) {
+      console.log("[PAYWALL_DEBUG] presentPremiumPaywall: calling", {
+        offeringId: paywallOffering?.identifier,
+      });
+    }
+
     const unlocked = await presentPremiumPaywall({
       ifNeeded: false,
       offering: paywallOffering,
       checkExistingSubscription: true,
       restoreExistingSubscription: true,
     });
+
+    if (__DEV__) {
+      console.log("[PAYWALL_DEBUG] presentPremiumPaywall: resolved", {
+        unlocked,
+      });
+    }
 
     if (unlocked) {
       await continueToAccount();
@@ -343,6 +394,17 @@ export default function OnboardingPaywallScreen({
               size="md"
               onPress={handleRetry}
               disabled={isRefreshing || (!spinnerTimedOut && viewState.isBusy)}
+              style={styles.retryButton}
+              textStyle={styles.retryButtonText}
+            />
+          </View>
+        ) : viewState.status === "paywall_dismissed" ? (
+          <View style={styles.errorState}>
+            <AppButton
+              label={REOPEN_PAYWALL_LABEL}
+              variant="primary"
+              size="md"
+              onPress={handleOpenPaywall}
               style={styles.retryButton}
               textStyle={styles.retryButtonText}
             />

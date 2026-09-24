@@ -256,6 +256,7 @@ export function resolveOnboardingPaywallViewState({
   configurationError = "",
   hasCurrentOffering = false,
   hasPaywallPackages = false,
+  hasDismissedPaywall = false,
 }) {
   const hasConfigurationError = hasNonEmptyMessage(configurationError);
   const isBusy =
@@ -358,6 +359,19 @@ export function resolveOnboardingPaywallViewState({
       showRetryButton: true,
       shouldAutoContinue: false,
       shouldRouteToSettings,
+    };
+  }
+
+  if (hasDismissedPaywall) {
+    return {
+      status: "paywall_dismissed",
+      isBusy: false,
+      showActivity: false,
+      showPurchaseButton: true,
+      showRestoreButton: false,
+      showRetryButton: false,
+      shouldAutoContinue: false,
+      shouldRouteToSettings: false,
     };
   }
 

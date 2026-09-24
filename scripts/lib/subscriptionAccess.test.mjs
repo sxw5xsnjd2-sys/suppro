@@ -440,6 +440,75 @@ test("missing paywall package resolves to a retry state instead of loading forev
   assert.equal(viewState.showRetryButton, true);
 });
 
+test("dismissed native paywall shows a reopen action instead of loading forever", () => {
+  const { resolveOnboardingPaywallViewState } = loadSubscriptionAccessModule();
+
+  const viewState = resolveOnboardingPaywallViewState({
+    origin: "app",
+    hasActiveAccess: false,
+    isReady: true,
+    isLoading: false,
+    hasCurrentOffering: true,
+    hasPaywallPackages: true,
+    hasDismissedPaywall: true,
+  });
+
+  assert.equal(viewState.status, "paywall_dismissed");
+  assert.equal(viewState.showPurchaseButton, true);
+  assert.equal(viewState.showActivity, false);
+  assert.equal(viewState.shouldAutoContinue, false);
+  assert.equal(viewState.shouldRouteToSettings, false);
+});
+
+test("dismissed paywall still continues when premium access becomes active", () => {
+  const { resolveOnboardingPaywallViewState } = loadSubscriptionAccessModule();
+
+  const viewState = resolveOnboardingPaywallViewState({
+    origin: "app",
+    hasActiveAccess: true,
+    isReady: true,
+    isLoading: false,
+    hasCurrentOffering: true,
+    hasPaywallPackages: true,
+    hasDismissedPaywall: true,
+  });
+
+  assert.equal(viewState.status, "active");
+  assert.equal(viewState.shouldAutoContinue, true);
+});
+
+test("reopening a dismissed paywall shows activity while presenting", () => {
+  const { resolveOnboardingPaywallViewState } = loadSubscriptionAccessModule();
+
+  const viewState = resolveOnboardingPaywallViewState({
+    origin: "app",
+    hasActiveAccess: false,
+    isReady: true,
+    isLoading: false,
+    isPresentingPaywall: true,
+    hasCurrentOffering: true,
+    hasPaywallPackages: true,
+    hasDismissedPaywall: true,
+  });
+
+  assert.equal(viewState.status, "presenting_paywall");
+  assert.equal(viewState.showActivity, true);
+  assert.equal(viewState.showPurchaseButton, false);
+});
+
+test("onboarding screen offers reopen only for the native paywall", () => {
+  const source = readFileSync(
+    new URL("../../src/features/onboarding/OnboardingPaywallScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.equal(source.includes('"Continue Suppro Premium"'), true);
+  assert.equal(
+    source.includes("hasDismissedPaywall: !usesEmbeddedPaywall && hasAttemptedPaywall"),
+    true,
+  );
+});
+
 test("existing active entitlement skips RevenueCat paywall before onboarding presentation", () => {
   const { resolveExistingSubscriptionCheckResult } =
     loadRevenueCatProviderHelpers();
