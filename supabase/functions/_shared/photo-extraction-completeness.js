@@ -1908,10 +1908,11 @@ function buildDoseSearchPatterns(rawValue, rawUnit, originalText) {
 
   representations.forEach(({ value, unit: representationUnit }) => {
     const roundedValue = Math.round(value * 1e9) / 1e9;
-    const valueText = escapeRegExp(String(roundedValue)).replace(
-      "\\.",
-      "[.,]",
-    );
+    const escapedValue = escapeRegExp(String(roundedValue));
+    // Labels often pad decimals ("1.40 mg", "15.00 mg"), so accept trailing zeros.
+    const valueText = escapedValue.includes("\\.")
+      ? `${escapedValue.replace("\\.", "[.,]")}0*`
+      : `${escapedValue}(?:[.,]0+)?`;
     const unitVariants = unitVariantsByUnit[representationUnit] ?? [
       representationUnit,
     ];
@@ -1929,9 +1930,36 @@ function doseMatchesText(value, patterns) {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+// OCR commonly reads a capital "I" as "l" or "1" (e.g. "Iodine" -> "lodine").
+// Fold those to "i", but only in words that still have at least two other
+// letters and no other characters, so short or numbered names such as "b1",
+// "k1" and "b12" are never altered.
+function foldOcrConfusableLetters(identity) {
+  return identity
+    .split(" ")
+    .map((word) =>
+      /^\p{L}{2,}$/u.test(word.replace(/[l1]/gu, ""))
+        ? word.replace(/[l1]/gu, "i")
+        : word,
+    )
+    .join(" ");
+}
+
 function ingredientAppears(value, ingredientIdentity, normalizeIngredientName) {
   const lineIdentity = getIngredientIdentity(value, normalizeIngredientName);
   if (!lineIdentity || !ingredientIdentity) return false;
+  if (identitiesOverlap(lineIdentity, ingredientIdentity)) return true;
+
+  const foldedLineIdentity = foldOcrConfusableLetters(lineIdentity);
+  const foldedIngredientIdentity = foldOcrConfusableLetters(ingredientIdentity);
+  return (
+    (foldedLineIdentity !== lineIdentity ||
+      foldedIngredientIdentity !== ingredientIdentity) &&
+    identitiesOverlap(foldedLineIdentity, foldedIngredientIdentity)
+  );
+}
+
+function identitiesOverlap(lineIdentity, ingredientIdentity) {
   const paddedLineIdentity = ` ${lineIdentity} `;
   const paddedIngredientIdentity = ` ${ingredientIdentity} `;
   if (
@@ -1954,6 +1982,50 @@ function stripDoseAndReferenceText(value) {
     .replace(/\b(?:dv|nrv|rda|ri|daily value|reference intake)\b/giu, " ")
     .replace(/[\s|()[\]{}:;,*†‡-]+/gu, "")
     .trim();
+}
+
+function isSubDoseToken(rowPrefix) {
+  const openParens = (rowPrefix.match(/\(/gu) ?? []).length;
+  const closeParens = (rowPrefix.match(/\)/gu) ?? []).length;
+  return (
+    openParens > closeParens ||
+    /\b(?:equivalent(?: to)?|providing|from|yielding|of which)\s*$/iu.test(
+      rowPrefix,
+    )
+  );
+}
+
+// OCR often merges side-by-side table columns into one line, e.g.
+// "Calcium 120 mg 15% Vitamin C 80 mg 100%". Split such a line into one
+// segment per ingredient row so a name is only paired with its own dose.
+// Doses inside parentheses or after "equivalent to" stay with their row.
+function splitOcrLineIntoDoseRows(line) {
+  const text = normalizeWhitespace(line);
+  const tokens = parseDoseTokens(text);
+  if (tokens.length < 2) return [text];
+
+  const rows = [];
+  let rowStart = 0;
+  let segmentStart = 0;
+  tokens.forEach((token) => {
+    const tokenEnd = token.index + token.text.length;
+    const prefix = text.slice(segmentStart, token.index);
+    const startsNewRow =
+      rows.length > 0 &&
+      Boolean(stripDoseAndReferenceText(prefix)) &&
+      !isSubDoseToken(text.slice(rowStart, token.index));
+
+    if (!rows.length || startsNewRow) {
+      rows.push(text.slice(segmentStart, tokenEnd));
+      rowStart = segmentStart;
+    } else {
+      rows[rows.length - 1] += text.slice(segmentStart, tokenEnd);
+    }
+    segmentStart = tokenEnd;
+  });
+  rows[rows.length - 1] += text.slice(segmentStart);
+
+  return rows.map((row) => row.trim()).filter(Boolean);
 }
 
 function isDoseOnlyContinuation(value, patterns) {
@@ -2016,11 +2088,13 @@ export function verifyDoseAgainstWrappedOcr({
     .filter(Boolean);
 
   for (const line of lines) {
-    if (
-      ingredientAppears(line, ingredientIdentity, normalizeIngredientName) &&
-      doseMatchesText(line, patterns)
-    ) {
-      return { confidence: "verified", reason: null };
+    for (const row of splitOcrLineIntoDoseRows(line)) {
+      if (
+        ingredientAppears(row, ingredientIdentity, normalizeIngredientName) &&
+        doseMatchesText(row, patterns)
+      ) {
+        return { confidence: "verified", reason: null };
+      }
     }
   }
 

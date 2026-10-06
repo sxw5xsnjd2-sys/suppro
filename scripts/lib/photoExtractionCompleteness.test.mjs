@@ -2432,3 +2432,97 @@ test("dose verification does not borrow a dose from a neighbouring ingredient ro
     },
   );
 });
+
+// Mirrors the edge function's broad-name normalizer, which collapses any text
+// containing a vitamin alias to that vitamin's broad name.
+function normalizeVitaminFamily(value) {
+  const normalized = String(value || "")
+    .toLowerCase()
+    .replace(/\d+(?:[.,]\d+)?\s*(?:mcg|µg|μg|ug|mg|g|iu)\b/gu, " ")
+    .replace(/[^\p{L}\p{N}%]+/gu, " ")
+    .trim();
+  if (/\b(?:vitamin b2|riboflavin)\b/u.test(normalized)) return "vitamin b2";
+  if (/\b(?:vitamin b7|biotin)\b/u.test(normalized)) return "vitamin b7";
+  if (/\bvitamin c\b/u.test(normalized)) return "vitamin c";
+  return normalized;
+}
+
+function verifyMergedRow(ingredientName, rawDosageValue, rawDosageUnit, ocrText) {
+  return verifyDoseAgainstWrappedOcr({
+    ingredientName,
+    rawDosageValue,
+    rawDosageUnit,
+    dosageOriginalText: null,
+    ocrText,
+    normalizeIngredientName: normalizeVitaminFamily,
+  }).confidence;
+}
+
+test("dose verification checks each row of a line that merges two table columns", () => {
+  const ocrText = [
+    "Calcium 120 mg 15% Vitamin C 80 mg 100%",
+    "Biotin 100 µg 200% Riboflavin 1.4 mg 100%",
+  ].join("\n");
+
+  assert.equal(verifyMergedRow("Calcium", 120, "mg", ocrText), "verified");
+  assert.equal(verifyMergedRow("Vitamin C", 80, "mg", ocrText), "verified");
+  assert.equal(verifyMergedRow("Biotin", 100, "mcg", ocrText), "verified");
+  assert.equal(verifyMergedRow("Riboflavin", 1.4, "mg", ocrText), "verified");
+});
+
+test("dose verification does not borrow a dose from the neighbouring column", () => {
+  const ocrText = "Iron 15 mg 107% Zinc 10 mg 100%";
+
+  assert.equal(verifyMergedRow("Iron", 15, "mg", ocrText), "verified");
+  assert.equal(verifyMergedRow("Iron", 10, "mg", ocrText), "unverified");
+  assert.equal(verifyMergedRow("Zinc", 15, "mg", ocrText), "unverified");
+});
+
+test("dose verification keeps parenthetical and equivalent doses with their row", () => {
+  assert.equal(
+    verifyMergedRow("Vitamin D", 400, "IU", "Vitamin D 10 µg (400 IU) 200%"),
+    "verified",
+  );
+  assert.equal(
+    verifyMergedRow(
+      "Grape Seed Extract",
+      4.75,
+      "mg",
+      "Grape Seed Extract (20:1 extract, equivalent to 95 mg Grape Seed) 4.75 mg",
+    ),
+    "verified",
+  );
+});
+
+test("dose verification accepts label values padded with trailing zeros", () => {
+  assert.equal(
+    verifyMergedRow("Vitamin B2", 1.4, "mg", "Vitamin B2 1.40mg 100%"),
+    "verified",
+  );
+  assert.equal(
+    verifyMergedRow("Iron", 15, "mg", "Iron 15.00 mg 107%"),
+    "verified",
+  );
+  assert.equal(
+    verifyMergedRow("Iron", 1.5, "mg", "Iron 15 mg 107%"),
+    "unverified",
+  );
+});
+
+test("dose verification accepts a capital I misread as l or 1 by OCR", () => {
+  assert.equal(verifyMergedRow("Iodine", 150, "mcg", "lodine 150µg 100%"), "verified");
+  assert.equal(verifyMergedRow("Iodine", 150, "mcg", "1odine 150µg 100%"), "verified");
+  assert.equal(
+    verifyMergedRow("Iodine", 150, "mcg", "Potassium 150mg 8% lodine 150µg 100%"),
+    "verified",
+  );
+  assert.equal(verifyMergedRow("Iodine", 100, "mcg", "lodine 150µg 100%"), "unverified");
+});
+
+test("OCR letter folding never merges numbered vitamins", () => {
+  assert.equal(verifyMergedRow("Vitamin B1", 2.5, "mcg", "Vitamin B12 2.5µg"), "unverified");
+  assert.equal(verifyMergedRow("Vitamin B12", 1.1, "mg", "Vitamin B1 1.1mg"), "unverified");
+  assert.equal(verifyMergedRow("Vitamin B1", 1.1, "mg", "Vitamin Bl 1.1mg"), "unverified");
+  assert.equal(verifyMergedRow("Vitamin K1", 75, "mcg", "Vitamin K2 75µg"), "unverified");
+  assert.equal(verifyMergedRow("Vitamin B12", 2.5, "mcg", "Vitamin B12 2.5µg"), "verified");
+});
