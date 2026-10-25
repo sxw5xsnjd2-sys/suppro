@@ -1,11 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -27,6 +26,11 @@ import { appTheme, shadows, spacing, typography } from "@/theme";
 import { SUPPLEMENT_ROUTES } from "@/features/supplements/types";
 import { useSupplementsStore } from "@/features/supplements/store";
 import { Icon } from "@/features/supplements/icons/Icon";
+import {
+  DoseTimePicker,
+  formatDoseTime,
+  normalizeDoseTimeMinutes,
+} from "@/features/supplements/components/DoseTimePicker";
 import {
   getSupplementScheduleLabel,
   normalizeSupplementSchedule,
@@ -246,21 +250,6 @@ function DatePickerModal({ visible, initialDate, onSelect, onClose, title }) {
   );
 }
 
-const TIME_OPTIONS = Array.from({ length: 24 * 4 }, (_, index) => {
-  const minutes = index * 15;
-  const hour = Math.floor(minutes / 60);
-  const minute = minutes % 60;
-  return {
-    minutes,
-    label: `${hour.toString().padStart(2, "0")}:${minute
-      .toString()
-      .padStart(2, "0")}`,
-  };
-});
-
-const TIME_ITEM_HEIGHT = 44;
-const TIME_PICKER_HEIGHT = 176;
-
 const DAYS = [
   { label: "S", value: 0 },
   { label: "M", value: 1 },
@@ -304,16 +293,7 @@ export default function SupplementModal() {
     (state) => state.deleteSupplement
   );
 
-  const initialTimeMinutes = supplement?.timeMinutes ?? 8 * 60;
-  const initialTimeIndex = Math.max(
-    0,
-    TIME_OPTIONS.findIndex((option) => option.minutes === initialTimeMinutes)
-  );
-  const initialTimeOffset = Math.max(
-    0,
-    initialTimeIndex * TIME_ITEM_HEIGHT -
-      (TIME_PICKER_HEIGHT - TIME_ITEM_HEIGHT) / 2
-  );
+  const initialTimeMinutes = normalizeDoseTimeMinutes(supplement?.timeMinutes);
   const initialSchedule = normalizeSupplementSchedule(supplement ?? {});
 
   const initialScannedName = typeof initialName === "string" ? initialName : "";
@@ -343,9 +323,6 @@ export default function SupplementModal() {
   const [frequency] = useState(initialSchedule.frequency);
   const [frequencyLabel] = useState(initialSchedule.frequencyLabel);
 
-  const timeScrollRef = useRef(null);
-  const hasScrolledInitial = useRef(false);
-
   const startDateValid = isValidISODate(startDate);
   const endDateValid = !endDate || isValidISODate(endDate);
   const chronologicalValid =
@@ -356,9 +333,7 @@ export default function SupplementModal() {
     startDateValid &&
     endDateValid &&
     chronologicalValid;
-  const timeLabel =
-    TIME_OPTIONS.find((option) => option.minutes === timeMinutes)?.label ??
-    "08:00";
+  const timeLabel = formatDoseTime(timeMinutes);
   const headerTopInsetOffset =
     Platform.OS === "android"
       ? (typeof appTheme.header.topInsetOffset === "number"
@@ -587,25 +562,6 @@ export default function SupplementModal() {
       },
     ]);
   };
-
-  useEffect(() => {
-    const index = TIME_OPTIONS.findIndex(
-      (option) => option.minutes === timeMinutes
-    );
-    if (index === -1) return;
-
-    const centerOffset =
-      index * TIME_ITEM_HEIGHT - (TIME_PICKER_HEIGHT - TIME_ITEM_HEIGHT) / 2;
-
-    timeScrollRef.current?.scrollTo({
-      y: Math.max(0, centerOffset),
-      animated: hasScrolledInitial.current,
-    });
-
-    if (!hasScrolledInitial.current) {
-      hasScrolledInitial.current = true;
-    }
-  }, [timeMinutes]);
 
   const dateValidationMessage = (() => {
     if (!startDateValid) return "Enter a valid start date.";
@@ -915,47 +871,7 @@ export default function SupplementModal() {
             )}
 
             <AppFormField label="Time">
-              <View style={styles.timePicker}>
-                <ScrollView
-                  ref={timeScrollRef}
-                  showsVerticalScrollIndicator={false}
-                  nestedScrollEnabled={Platform.OS === "android"}
-                  keyboardShouldPersistTaps="handled"
-                  snapToInterval={TIME_ITEM_HEIGHT}
-                  decelerationRate="fast"
-                  contentOffset={{ x: 0, y: initialTimeOffset }}
-                >
-                  {TIME_OPTIONS.map((option) => (
-                    <Pressable
-                      key={option.minutes}
-                      onPress={() => setTimeMinutes(option.minutes)}
-                      style={({ pressed }) => [
-                        styles.timeOption,
-                        option.minutes === timeMinutes && styles.timeOptionActive,
-                        pressed && styles.pressedOption,
-                      ]}
-                    >
-                      {option.minutes === timeMinutes ? (
-                        <LinearGradient
-                          pointerEvents="none"
-                          colors={appTheme.tabBar.fabGradient}
-                          start={{ x: 0.5, y: 0 }}
-                          end={{ x: 0.5, y: 1 }}
-                          style={styles.timeOptionGradient}
-                        />
-                      ) : null}
-                      <Text
-                        style={[
-                          styles.timeText,
-                          option.minutes === timeMinutes && styles.timeTextActive,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
+              <DoseTimePicker value={timeMinutes} onChange={setTimeMinutes} />
             </AppFormField>
           </AppSectionCard>
 
@@ -1232,38 +1148,6 @@ const styles = StyleSheet.create({
     height: 1.5,
     backgroundColor: appTheme.colors.textMuted,
     transform: [{ rotate: "-45deg" }],
-  },
-  timePicker: {
-    height: TIME_PICKER_HEIGHT,
-    borderRadius: appTheme.card.radius,
-    backgroundColor: appTheme.colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: appTheme.colors.borderSubtle,
-    overflow: "hidden",
-  },
-  timeOption: {
-    height: TIME_ITEM_HEIGHT,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  timeOptionActive: {
-    backgroundColor: "transparent",
-    ...shadows.card,
-  },
-  timeOptionGradient: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  timeText: {
-    position: "relative",
-    zIndex: 1,
-    fontSize: 16,
-    lineHeight: 20,
-    fontFamily: typography.fontFamily.body,
-    color: appTheme.colors.textSecondary,
-  },
-  timeTextActive: {
-    color: appTheme.colors.textStrong,
-    fontFamily: typography.fontFamily.bodySemiBold,
   },
   deleteText: {
     fontSize: 15,

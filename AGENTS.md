@@ -20,7 +20,7 @@
 - Run Android target: `npm run android`
 - Run web target: `npm run web`
 - Lint: `npm run lint`
-- Tests: no test runner is configured yet (`npm test` script does not exist).
+- Tests: `node --test` files in `scripts/lib/*.test.mjs` (e.g. `npm run test:reminders`); there is no `npm test` script.
 
 ## Code Style Rules
 
@@ -52,6 +52,10 @@
   - `features/supplements/store.js` (persisted with AsyncStorage)
   - `features/health/store.js` (persisted with AsyncStorage)
   - `features/ai/store.js` (chat state)
+- Supplement reminders: `features/reminders/` (local `expo-notifications`, wired from `app/_layout.jsx` and Settings).
+  - Finite queue of one-off notifications (max 60 / 28 days, below iOS's 64 pending limit), replanned on launch, foreground and store changes; no background refill.
+  - Per-account preference key `suppro.supplementReminders.enabled.v1:account:<id>` (missing = ON); one automatic OS prompt per device.
+  - Branded sound `assets/sounds/suppro_reminder.wav` (bundled via the plugin's `sounds`). Android channel sounds are fixed at creation: changing the sound needs a new channel ID (current `supplement-reminders-v2`) with the old ID added to `LEGACY_SUPPLEMENT_REMINDER_CHANNEL_IDS`.
 - Data layer:
   - public Supabase client in `src/lib/supabase.js`
   - scoped Supabase client via `getScopedSupabase()` with `x-client-id` header

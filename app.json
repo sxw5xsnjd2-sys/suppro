@@ -44,7 +44,15 @@
           }
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#1F2E52",
+          "sounds": ["./assets/sounds/suppro_reminder.wav"]
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

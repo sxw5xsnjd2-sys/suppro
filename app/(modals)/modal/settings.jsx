@@ -13,6 +13,8 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { BackdropScreen } from "@/components/common/layout/BackdropScreen";
 import { AppButton, AppHeader } from "@/components/common/ui";
+import { SupplementReminderSettings } from "@/features/reminders/components/SupplementReminderSettings";
+import { IS_SUPPLEMENT_REMINDERS_SUPPORTED } from "@/features/reminders/supplementReminders";
 import { resolveBackNavigationAction } from "@/features/subscriptions/accessPolicy";
 import { useRevenueCat } from "@/features/subscriptions/RevenueCatProvider";
 import AccountIcon from "@/assets/icons/profile/account.svg";
@@ -271,6 +273,9 @@ export default function SettingsScreen() {
         },
       ],
     },
+    ...(IS_SUPPLEMENT_REMINDERS_SUPPORTED
+      ? [{ key: "notifications", content: <SupplementReminderSettings /> }]
+      : []),
     {
       key: "preferences",
       items: [
@@ -358,9 +363,10 @@ export default function SettingsScreen() {
             {section.title ? (
               <Text style={styles.sectionLabel}>{section.title}</Text>
             ) : null}
-            {section.items.map((item) => (
-              <SettingsItemRow key={item.key} item={item} />
-            ))}
+            {section.content ??
+              section.items.map((item) => (
+                <SettingsItemRow key={item.key} item={item} />
+              ))}
           </React.Fragment>
         ))}
         <LegalFooter />

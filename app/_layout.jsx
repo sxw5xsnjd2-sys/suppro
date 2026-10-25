@@ -32,7 +32,19 @@ import {
   RevenueCatProvider,
   useRevenueCat,
 } from "@/features/subscriptions/RevenueCatProvider";
-import { syncSupplementsStoreAccountScope } from "@/features/supplements/store";
+import {
+  syncSupplementsStoreAccountScope,
+  useSupplementsStore,
+} from "@/features/supplements/store";
+import {
+  consumeSupplementTrackerOpen,
+  getTodayDateKey,
+  hasPendingSupplementTrackerOpen,
+  initializeSupplementReminders,
+  maybePromptForSupplementReminderPermission,
+  setSupplementReminderAccount,
+  subscribeSupplementTrackerOpen,
+} from "@/features/reminders/supplementReminders";
 import { GlobalToast } from "@/components/common/ui/GlobalToast";
 import { hasNonAnonymousUser } from "@src/lib/authState";
 import {
@@ -54,11 +66,15 @@ WebBrowser.maybeCompleteAuthSession();
 
 SplashScreen.preventAutoHideAsync();
 
+initializeSupplementReminders();
+
 export const unstable_settings = {
   anchor: "(tabs)",
 };
 
 const FALLBACK_GATE_STATE = "needs_questions";
+// Lets the home screen settle before the one-time notification prompt.
+const REMINDER_PERMISSION_PROMPT_DELAY_MS = 1200;
 const ONBOARDING_PAYWALL_TRANSITION_GATE_STATES = new Set([
   "needs_questions",
   "needs_rating",
@@ -139,12 +155,16 @@ function RootNavigator() {
   const [activeNavigationHandoff, setActiveNavigationHandoff] = useState(() =>
     getNavigationHandoff(),
   );
+  const [hasPendingReminderOpen, setHasPendingReminderOpen] = useState(() =>
+    hasPendingSupplementTrackerOpen(),
+  );
   const gateRequestRef = useRef(0);
   const lastRedirectHrefRef = useRef(null);
   const isOnboardingRoute = segments[0] === "onboarding";
   const isLoginRoute = segments[0] === "login";
   const isVerifyEmailRoute = segments[0] === "verify-email";
   const isResetPasswordRoute = segments[0] === "reset-password";
+  const isTabsRoute = segments[0] === "(tabs)";
   const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
   const stepParam = Array.isArray(params.step) ? params.step[0] : params.step;
   const sourceParam = Array.isArray(params.source)
@@ -187,6 +207,9 @@ function RootNavigator() {
           requiresAppleHealthStep: IS_APPLE_HEALTH_SUPPORTED_PLATFORM,
         });
         if (mounted && requestId === gateRequestRef.current) {
+          setSupplementReminderAccount(
+            nextState === "complete" ? scopedUser?.id ?? null : null,
+          );
           setGateState(nextState);
         }
         if (nextState === "complete") {
@@ -237,6 +260,11 @@ function RootNavigator() {
       subscribeNavigationHandoff((nextNavigationHandoff) => {
         setActiveNavigationHandoff(nextNavigationHandoff);
       }),
+    [],
+  );
+
+  useEffect(
+    () => subscribeSupplementTrackerOpen(setHasPendingReminderOpen),
     [],
   );
 
@@ -477,6 +505,58 @@ function RootNavigator() {
     isOnboardingRoute,
     isRetakeOnboarding,
   ]);
+
+  // Reminder taps wait for the normal auth/onboarding gate, then open today's
+  // tracker on the home tab.
+  useEffect(() => {
+    if (
+      !hasPendingReminderOpen ||
+      !gateResolved ||
+      effectiveGateState !== "complete" ||
+      activeNavigationHandoff ||
+      isLoginRoute ||
+      (isOnboardingRoute && !isRetakeOnboarding)
+    ) {
+      return;
+    }
+
+    if (!consumeSupplementTrackerOpen()) return;
+
+    useSupplementsStore.getState().setSelectedDate(getTodayDateKey());
+    if (isTabsRoute) {
+      router.navigate("/");
+    } else {
+      router.dismissTo("/");
+    }
+  }, [
+    activeNavigationHandoff,
+    effectiveGateState,
+    gateResolved,
+    hasPendingReminderOpen,
+    isLoginRoute,
+    isOnboardingRoute,
+    isRetakeOnboarding,
+    isTabsRoute,
+  ]);
+
+  // Onboarding owns the Apple Health, rating and camera prompts, so the
+  // notification prompt only appears once the signed-in home tabs are showing.
+  useEffect(() => {
+    if (
+      !gateResolved ||
+      effectiveGateState !== "complete" ||
+      !isTabsRoute ||
+      activeNavigationHandoff
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      maybePromptForSupplementReminderPermission();
+    }, REMINDER_PERMISSION_PROMPT_DELAY_MS);
+
+    return () => clearTimeout(timer);
+  }, [activeNavigationHandoff, effectiveGateState, gateResolved, isTabsRoute]);
 
   return (
     <>
